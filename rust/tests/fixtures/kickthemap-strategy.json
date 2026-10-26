@@ -1,0 +1,187 @@
+{
+  "cases": [
+    {
+      "job": {
+        "job_id": 42,
+        "title": "PS42",
+        "prefix": "fixture@example.test_2026-01-01_00-00-00"
+      },
+      "fields": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "PS42.tiff",
+        "displayTitle": "PS42",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": true
+      },
+      "templates": {
+        "projectId": "{job_id}",
+        "folder": "cloud",
+        "fileName": "{storage_prefix}.tiff",
+        "exportName": "{export_name}",
+        "displayTitle": "{safe_stem}",
+        "constant": "unchanged",
+        "secondary": "{job_id}",
+        "enabled": "True"
+      },
+      "rendered": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "PS42.tiff",
+        "displayTitle": "PS42",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": "True"
+      },
+      "safe_stem": "PS42"
+    },
+    {
+      "job": {
+        "job_id": 42,
+        "title": "Example  job / north",
+        "prefix": "fixture@example.test_2026-01-01_00-00-00"
+      },
+      "fields": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "Example_job_north.tiff",
+        "displayTitle": "Example  job / north",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": true
+      },
+      "templates": {
+        "projectId": "{job_id}",
+        "folder": "cloud",
+        "fileName": "{storage_prefix}.tiff",
+        "exportName": "{export_name}",
+        "displayTitle": "{title}",
+        "constant": "unchanged",
+        "secondary": "{job_id}",
+        "enabled": "True"
+      },
+      "rendered": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "Example_job_north.tiff",
+        "displayTitle": "Example  job / north",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": "True"
+      },
+      "safe_stem": "Example_job_north"
+    },
+    {
+      "job": {
+        "job_id": 42,
+        "title": "Café – water",
+        "prefix": "fixture@example.test_2026-01-01_00-00-00"
+      },
+      "fields": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "Caf_water.tiff",
+        "displayTitle": "Café – water",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": true
+      },
+      "templates": {
+        "projectId": "{job_id}",
+        "folder": "cloud",
+        "fileName": "{storage_prefix}.tiff",
+        "exportName": "{export_name}",
+        "displayTitle": "{title}",
+        "constant": "unchanged",
+        "secondary": "{job_id}",
+        "enabled": "True"
+      },
+      "rendered": {
+        "projectId": "42",
+        "folder": "cloud",
+        "fileName": "fixture@example.test_2026-01-01_00-00-00.tiff",
+        "exportName": "Caf_water.tiff",
+        "displayTitle": "Café – water",
+        "constant": "unchanged",
+        "secondary": "42",
+        "enabled": "True"
+      },
+      "safe_stem": "Caf_water"
+    }
+  ],
+  "responses": [
+    {
+      "payload": {
+        "status": true,
+        "payload": {
+          "asset": {
+            "link": "https://s3.amazonaws.com/original-fixture.tiff"
+          }
+        }
+      },
+      "expected": "https://s3.amazonaws.com/original-fixture.tiff"
+    },
+    {
+      "payload": {
+        "status": true,
+        "data": {
+          "url": "https://s3.amazonaws.com/original-fixture.tiff"
+        }
+      },
+      "expected": "https://s3.amazonaws.com/original-fixture.tiff"
+    },
+    {
+      "payload": {
+        "status": true,
+        "payload": {
+          "asset": {
+            "link": null
+          }
+        },
+        "data": {
+          "downloadUrl": "https://s3.amazonaws.com/original-fixture.tiff"
+        }
+      },
+      "expected": "https://s3.amazonaws.com/original-fixture.tiff"
+    },
+    {
+      "payload": {
+        "status": true,
+        "data": "https://s3.amazonaws.com/original-fixture.tiff"
+      },
+      "expected": "https://s3.amazonaws.com/original-fixture.tiff"
+    },
+    {
+      "payload": {
+        "status": true,
+        "url": "https://s3.amazonaws.com/original-fixture.tiff"
+      },
+      "expected": "https://s3.amazonaws.com/original-fixture.tiff"
+    },
+    {
+      "payload": {
+        "status": true,
+        "payload": {
+          "asset": {
+            "link": ""
+          }
+        },
+        "data": "https://s3.amazonaws.com/original-fixture.tiff"
+      },
+      "expected": null
+    },
+    {
+      "payload": {
+        "status": false,
+        "data": "https://s3.amazonaws.com/original-fixture.tiff"
+      },
+      "expected": null
+    }
+  ]
+}

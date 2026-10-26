@@ -1,0 +1,34 @@
+[
+  {
+    "label": "  Straat 2, 1234 AA Stad, provincie  ",
+    "expected": "Straat 2,\\P1234 AA Stad, provincie"
+  },
+  {
+    "label": " Alleen straat ",
+    "expected": "Alleen straat"
+  },
+  {
+    "label": "",
+    "expected": null
+  },
+  {
+    "label": "  ",
+    "expected": null
+  },
+  {
+    "label": "Straat,",
+    "expected": "Straat,\\P"
+  },
+  {
+    "label": " , Stad",
+    "expected": ",\\PStad"
+  },
+  {
+    "label": " Straat , Stad ",
+    "expected": "Straat,\\PStad"
+  },
+  {
+    "label": null,
+    "expected": null
+  }
+]

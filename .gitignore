@@ -1,0 +1,6 @@
+/rust/target/
+/rust/dist/
+/rust/dist-installer/
+__pycache__/
+*.pyc
+*.log

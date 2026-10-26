@@ -1,0 +1,89 @@
+{
+  "source_manifest": "46abfff1e13031781f38edf47c293f44db820514f13293126cd55dd399f72fb2",
+  "settings": [
+    {
+      "input": {
+        "map_export_background_source": "osm",
+        "dxf_trench_export_mode": "polygon",
+        "include_tiffs_in_dxf_export": true,
+        "include_klic_in_map_exports": true,
+        "dxf_label_gap": 7.25,
+        "dxf_centerline_color": "#123456",
+        "dxf_label_color": "#ABCDEF",
+        "template_client_logo_preset": "custom",
+        "template_client_logo_path": "C:/fixture/logo.png",
+        "template_include_cross_sections": false,
+        "template_generate_reverse_cross_section_sheet": false,
+        "template_show_profile_direction": false,
+        "template_enable_maaiveld_edit_points": false,
+        "template_avoid_multileader_collisions": false,
+        "template_clip_cross_section_markers_to_profile": true,
+        "template_cross_section_marker_diameter": 0.075,
+        "template_cross_section_diameter_text": "diam",
+        "kickthemap_object_layer_rules": [
+          {
+            "keywords": "water, leiding",
+            "target_layer": "WATER",
+            "color": 5,
+            "profile_label": "Water"
+          }
+        ]
+      },
+      "expected": {
+        "map_export_background_source": "osm",
+        "dxf_trench_export_mode": "polygon",
+        "include_tiffs_in_dxf_export": true,
+        "include_klic_in_map_exports": true,
+        "dxf_label_gap": 7.25,
+        "dxf_centerline_color": "#123456",
+        "dxf_label_color": "#ABCDEF",
+        "template_client_logo_preset": "custom",
+        "template_client_logo_path": "C:/fixture/logo.png",
+        "template_include_cross_sections": false,
+        "template_generate_reverse_cross_section_sheet": false,
+        "template_show_profile_direction": false,
+        "template_enable_maaiveld_edit_points": false,
+        "template_avoid_multileader_collisions": false,
+        "template_clip_cross_section_markers_to_profile": true,
+        "template_cross_section_marker_diameter": 0.075,
+        "template_cross_section_diameter_text": "diam",
+        "kickthemap_object_layer_rules": [
+          {
+            "keywords": "water, leiding",
+            "target_layer": "WATER",
+            "color": 5,
+            "profile_label": "Water"
+          }
+        ]
+      }
+    }
+  ],
+  "slots": [
+    {
+      "layer_key": "job:42",
+      "included": true,
+      "scale": 80,
+      "ps_number": "42",
+      "variant": true,
+      "variant_code": "B"
+    },
+    {
+      "layer_key": null,
+      "included": true,
+      "scale": null,
+      "ps_number": "",
+      "variant": false,
+      "variant_code": ""
+    }
+  ],
+  "metadata": {
+    "kickthemap_job_id": 42,
+    "template_export_order": 0,
+    "template_export_include": true,
+    "template_cross_section_scale_denominator": 80,
+    "template_export_ps_number": "42",
+    "template_export_variant": true,
+    "template_export_variant_code": "B",
+    "template_proefsleuf_label": "PS42B"
+  }
+}

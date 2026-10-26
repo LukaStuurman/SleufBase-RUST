@@ -1,0 +1,311 @@
+{
+  "source_manifest": "f5c84771ee143023c6f1604d4a65c6324e6d7d7f60038b862d46ec23051e167f",
+  "cases": [
+    {
+      "raw": [
+        {
+          "layer_key": "job:12",
+          "included": "false",
+          "scale": "1:40",
+          "ps_number": "0042",
+          "variant_code": "C",
+          "unknown": {
+            "preserve": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "layer_key": null,
+          "included": false,
+          "scale": 70,
+          "unknown_empty": true
+        },
+        {
+          "layer_key": "job:12",
+          "included": true,
+          "scale": null,
+          "ps_number": 43,
+          "variant": true
+        },
+        {
+          "layer_key": "job:404",
+          "ps_number": "404"
+        }
+      ],
+      "layers": [
+        {
+          "name": "PS12B",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 4,
+            "template_export_ps_number": "099",
+            "template_export_include": false,
+            "template_cross_section_scale_denominator": 80
+          }
+        },
+        {
+          "name": "PS2",
+          "job": 2,
+          "metadata": {
+            "template_export_order": 1
+          }
+        },
+        {
+          "name": "plain9",
+          "job": 0,
+          "metadata": {
+            "template_export_variant": true
+          }
+        },
+        {
+          "name": "PS7",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 2
+          }
+        }
+      ],
+      "expected": [
+        {
+          "name": "PS7",
+          "included": false,
+          "scale": 40,
+          "number": "42",
+          "variant": "C"
+        },
+        {
+          "name": null,
+          "included": true,
+          "scale": null,
+          "number": "",
+          "variant": ""
+        },
+        {
+          "name": "PS12B",
+          "included": true,
+          "scale": 80,
+          "number": "43",
+          "variant": "AUTO"
+        },
+        {
+          "name": "PS2",
+          "included": true,
+          "scale": null,
+          "number": "2",
+          "variant": ""
+        },
+        {
+          "name": "plain9",
+          "included": true,
+          "scale": null,
+          "number": "9",
+          "variant": "AUTO"
+        }
+      ],
+      "normalized": [
+        {
+          "layer_key": "job:12",
+          "included": false,
+          "scale": 40,
+          "variant": true,
+          "variant_code": "C",
+          "ps_number": "42"
+        },
+        {
+          "layer_key": null,
+          "included": false,
+          "scale": 70,
+          "variant": false,
+          "variant_code": ""
+        },
+        {
+          "layer_key": "job:12",
+          "included": true,
+          "scale": null,
+          "variant": true,
+          "variant_code": "AUTO",
+          "ps_number": "43"
+        },
+        {
+          "layer_key": "job:404",
+          "included": true,
+          "scale": null,
+          "variant": false,
+          "variant_code": "",
+          "ps_number": "404"
+        }
+      ]
+    },
+    {
+      "raw": [],
+      "layers": [
+        {
+          "name": "PS12B",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 4,
+            "template_export_ps_number": "099",
+            "template_export_include": false,
+            "template_cross_section_scale_denominator": 80
+          }
+        },
+        {
+          "name": "PS2",
+          "job": 2,
+          "metadata": {
+            "template_export_order": 1
+          }
+        },
+        {
+          "name": "plain9",
+          "job": 0,
+          "metadata": {
+            "template_export_variant": true
+          }
+        },
+        {
+          "name": "PS7",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 2
+          }
+        }
+      ],
+      "expected": [
+        {
+          "name": "PS2",
+          "included": true,
+          "scale": null,
+          "number": "2",
+          "variant": ""
+        },
+        {
+          "name": "PS7",
+          "included": true,
+          "scale": null,
+          "number": "7",
+          "variant": ""
+        },
+        {
+          "name": "PS12B",
+          "included": false,
+          "scale": 80,
+          "number": "99",
+          "variant": "B"
+        },
+        {
+          "name": "plain9",
+          "included": true,
+          "scale": null,
+          "number": "9",
+          "variant": "AUTO"
+        }
+      ],
+      "normalized": []
+    },
+    {
+      "raw": [
+        null,
+        4,
+        {
+          "layer_key": "virtual:plain9",
+          "included": "",
+          "scale": "bad",
+          "variant_code": ""
+        },
+        {
+          "layer_key": "",
+          "included": "0"
+        }
+      ],
+      "layers": [
+        {
+          "name": "PS12B",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 4,
+            "template_export_ps_number": "099",
+            "template_export_include": false,
+            "template_cross_section_scale_denominator": 80
+          }
+        },
+        {
+          "name": "PS2",
+          "job": 2,
+          "metadata": {
+            "template_export_order": 1
+          }
+        },
+        {
+          "name": "plain9",
+          "job": 0,
+          "metadata": {
+            "template_export_variant": true
+          }
+        },
+        {
+          "name": "PS7",
+          "job": 12,
+          "metadata": {
+            "template_export_order": 2
+          }
+        }
+      ],
+      "expected": [
+        {
+          "name": "plain9",
+          "included": true,
+          "scale": null,
+          "number": "9",
+          "variant": ""
+        },
+        {
+          "name": null,
+          "included": true,
+          "scale": null,
+          "number": "",
+          "variant": ""
+        },
+        {
+          "name": "PS2",
+          "included": true,
+          "scale": null,
+          "number": "2",
+          "variant": ""
+        },
+        {
+          "name": "PS7",
+          "included": true,
+          "scale": null,
+          "number": "7",
+          "variant": ""
+        },
+        {
+          "name": "PS12B",
+          "included": false,
+          "scale": 80,
+          "number": "99",
+          "variant": "B"
+        }
+      ],
+      "normalized": [
+        {
+          "layer_key": "virtual:plain9",
+          "included": true,
+          "scale": null,
+          "variant": false,
+          "variant_code": ""
+        },
+        {
+          "layer_key": null,
+          "included": false,
+          "scale": null,
+          "variant": false,
+          "variant_code": ""
+        }
+      ]
+    }
+  ]
+}

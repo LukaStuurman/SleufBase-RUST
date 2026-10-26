@@ -1,0 +1,362 @@
+{
+  "cases": [
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": [
+        "0",
+        "1",
+        "2"
+      ]
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": 3.2,
+          "surface_mode": " AUTO ",
+          "surface_status": " Pending ",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": 3.2,
+          "surface_mode": " AUTO ",
+          "surface_status": " Pending ",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": 3.2,
+          "surface_mode": " AUTO ",
+          "surface_status": " Pending ",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": [
+        "0",
+        "1",
+        "2"
+      ]
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": 1.7,
+          "surface_mode": "manual",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": 1.7,
+          "surface_mode": "manual",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": 1.7,
+          "surface_mode": "manual",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": 0.4,
+          "surface_mode": "start",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": 0.4,
+          "surface_mode": "start",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": 0.4,
+          "surface_mode": "start",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": 2.1,
+          "surface_mode": "auto",
+          "surface_status": "resolved",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": 2.1,
+          "surface_mode": "auto",
+          "surface_status": "resolved",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": 2.1,
+          "surface_mode": "auto",
+          "surface_status": "resolved",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "unavailable",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "unavailable",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "unavailable",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "auto",
+          "surface_status": "",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": "",
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": null,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": null,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": null,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    },
+    {
+      "points": [
+        {
+          "role": "start",
+          "point_id": "0",
+          "x": 155000,
+          "y": 463000,
+          "z": null,
+          "surface_mode": true,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "end",
+          "point_id": "1",
+          "x": 155001,
+          "y": 463000,
+          "z": null,
+          "surface_mode": true,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        },
+        {
+          "role": "object",
+          "point_id": "2",
+          "x": 155002,
+          "y": 463000,
+          "z": null,
+          "surface_mode": true,
+          "surface_status": "pending",
+          "sleufbase_depth_meters": 0.4
+        }
+      ],
+      "queued": []
+    }
+  ]
+}

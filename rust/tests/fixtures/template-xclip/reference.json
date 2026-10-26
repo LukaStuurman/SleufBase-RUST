@@ -1,0 +1,5723 @@
+{
+  "rejected": {
+    "ACAD_TABLE": {
+      "runtime_type": "AcadTableBlockContent",
+      "error": "CopyNotSupported",
+      "message": "Copying of tag storage ACAD_TABLE not supported."
+    },
+    "ACAD_PROXY_ENTITY": {
+      "runtime_type": "ACADProxyEntity",
+      "error": "CopyNotSupported",
+      "message": "Copying of ACAD_PROXY_ENTITY not supported."
+    }
+  },
+  "steps": [
+    {
+      "required": 9,
+      "expected": [
+        {
+          "layout": "Layout1",
+          "entities": []
+        },
+        {
+          "layout": "bLaD1",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad2",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "required": 17,
+      "expected": [
+        {
+          "layout": "Layout1",
+          "entities": []
+        },
+        {
+          "layout": "bLaD1",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad2",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad3",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "required": 33,
+      "expected": [
+        {
+          "layout": "Layout1",
+          "entities": []
+        },
+        {
+          "layout": "bLaD1",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad2",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad3",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad4",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "layout": "Blad5",
+          "entities": [
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  0
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  0
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  15.0,
+                  30.0,
+                  4.0
+                ],
+                "xscale": -1.25,
+                "yscale": 0.75,
+                "rotation": 32.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "height": 1.8750000000000004,
+                  "text": "Bron 0",
+                  "rotation": -32.500000000000014,
+                  "width": 1.666666666666666,
+                  "align_point": [
+                    -13.2944960917279,
+                    28.024207394773285,
+                    -4.000000000000002
+                  ],
+                  "extrusion": [
+                    -0.26832815729997483,
+                    -0.35777087639996635,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  8.0
+                ],
+                [
+                  0.0,
+                  8.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -29.38278653815825,
+                  -8.648044162023389
+                ],
+                [
+                  -17.344556734386856,
+                  -10.167726211429986
+                ],
+                [
+                  -17.481186684772503,
+                  -15.722895562079083
+                ],
+                [
+                  -29.519416488543893,
+                  -14.203213512672487
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  1
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  1
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  45.0,
+                  37.0,
+                  4.0
+                ],
+                "xscale": -2.25,
+                "yscale": 1.75,
+                "rotation": 62.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "height": 4.375000000000001,
+                  "text": "Bron 1",
+                  "rotation": -62.50000000000001,
+                  "width": 1.2857142857142856,
+                  "align_point": [
+                    -44.47440019850424,
+                    32.200391177536694,
+                    -4.000000000000009
+                  ],
+                  "extrusion": [
+                    -0.2683281572999747,
+                    -0.35777087639996646,
+                    -0.894427190999916
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 1,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  12.0,
+                  4.0
+                ],
+                [
+                  5.0,
+                  9.0
+                ],
+                [
+                  0.0,
+                  6.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -61.01184973682499,
+                  4.875326407138866
+                ],
+                [
+                  -41.98992549186214,
+                  12.922319070775567
+                ],
+                [
+                  -34.95288214042398,
+                  8.493469219684435
+                ],
+                [
+                  -44.227405983840995,
+                  -4.687236124634346
+                ],
+                [
+                  -56.16286198315661,
+                  -4.182046168588842
+                ]
+              ]
+            },
+            {
+              "filter_xdata": [
+                [
+                  1000,
+                  "filter metadata Ø"
+                ],
+                [
+                  1070,
+                  2
+                ]
+              ],
+              "filter_data": [
+                [
+                  1,
+                  "independent filter metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert_data": [
+                [
+                  1,
+                  "independent insert metadata"
+                ],
+                [
+                  90,
+                  2
+                ]
+              ],
+              "insert": {
+                "paperspace": 1,
+                "layer": "CLIPPED_SOURCE",
+                "attribs_follow": 1,
+                "name": "XCLIP_SHARED_SOURCE",
+                "insert": [
+                  75.0,
+                  44.0,
+                  4.0
+                ],
+                "xscale": -3.25,
+                "yscale": 2.75,
+                "rotation": 92.5,
+                "extrusion": [
+                  0.3,
+                  0.4,
+                  1.0
+                ]
+              },
+              "attributes": [
+                {
+                  "paperspace": 1,
+                  "layer": "0",
+                  "insert": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "height": 6.875000000000002,
+                  "text": "Bron 2",
+                  "rotation": -92.49999999999996,
+                  "oblique": 1.687538997430238e-14,
+                  "width": 1.1818181818181817,
+                  "align_point": [
+                    -78.0309086272248,
+                    37.626139874972566,
+                    -4.000000000000018
+                  ],
+                  "extrusion": [
+                    -0.2683281572999746,
+                    -0.3577708763999665,
+                    -0.8944271909999161
+                  ],
+                  "tag": "LABEL",
+                  "flags": 0,
+                  "attribute_type": 1
+                }
+              ],
+              "filter": {
+                "extrusion": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "origin": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "is_clipping_enabled": 0,
+                "has_front_clipping_plane": 1,
+                "front_clipping_plane_distance": 0.0,
+                "has_back_clipping_plane": 1,
+                "back_clipping_plane_distance": 7.25
+              },
+              "boundary": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "inverse": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "transform": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "block_clip": [
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  1.0
+                ],
+                [
+                  8.0,
+                  7.0
+                ],
+                [
+                  1.0,
+                  7.0
+                ]
+              ],
+              "wcs_clip": [
+                [
+                  -88.69318738346612,
+                  15.664087171649964
+                ],
+                [
+                  -77.28974927355034,
+                  32.52257308913999
+                ],
+                [
+                  -63.7160705241381,
+                  23.14698532818855
+                ],
+                [
+                  -75.11950863405389,
+                  6.288499410698522
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
