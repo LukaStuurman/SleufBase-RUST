@@ -11,7 +11,6 @@ pub(crate) struct Dialog {
     pub error: String,
     pub remote_selected: BTreeSet<u64>,
     pending_remote: BTreeSet<u64>,
-    remote_search: String,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Action {
@@ -30,7 +29,6 @@ impl Dialog {
             query: String::new(),
             error: String::new(),
             remote_selected:BTreeSet::new(),pending_remote:BTreeSet::new(),
-            remote_search:String::new(),
         }
     }
     pub fn remote_to_download(&mut self,live_jobs:&[Job],datasets:&[Dataset])->Vec<u64>{
@@ -151,55 +149,51 @@ pub(crate) fn show(
                                 ui.label("Bewerkbaar");
                                 ui.end_row();
                             }
+                            if live_verified{
+                                let loaded=datasets.iter().map(|d|d.job_id).collect::<BTreeSet<_>>();
+                                for job in live_jobs.iter().filter(|job|{
+                                    !loaded.contains(&job.job_id)
+                                    &&(query.is_empty()||format!("{} {} {} {}",
+                                        job.title,job.job_id,job.address,job.municipality)
+                                        .to_lowercase().contains(&query))
+                                }).take(500){
+                                    let mut chosen=state.remote_selected.contains(&job.job_id);
+                                    if ui.checkbox(&mut chosen,&job.title).changed(){
+                                        if chosen{state.remote_selected.insert(job.job_id);}
+                                        else{state.remote_selected.remove(&job.job_id);}
+                                    }
+                                    ui.label("KickTheMap live");
+                                    ui.label(&job.client_date);
+                                    ui.add(egui::Label::new(format!("{} · ID {}",job.address,job.job_id)).truncate());
+                                    ui.label(if job.downloadable{"Downloadbaar"}else{"Niet downloadbaar"});
+                                    ui.end_row();
+                                }
+                            }
                         });
                 });
             ui.separator();
-            ui.collapsing(format!("Live KickTheMap-bronnen ({} jobs)",if live_verified{live_jobs.len()}else{0}),|ui|{
-                if !live_verified{
-                    ui.label("Log via KickTheMap > Inloggen in om actuele jobs direct te selecteren. Offline cache is niet voldoende om te downloaden.");
-                }else{
-                    ui.horizontal(|ui|{
-                        ui.label("Zoeken in live jobs");
-                        ui.text_edit_singleline(&mut state.remote_search);
-                        if ui.small_button("Selectie wissen").clicked(){state.remote_selected.clear();}
-                    });
-                    let needle=state.remote_search.trim().to_lowercase();
-                    let loaded= datasets.iter().map(|job|job.job_id).collect::<BTreeSet<_>>();
-                    let visible=live_jobs.iter().filter(|job|{
-                        needle.is_empty()||job.title.to_lowercase().contains(&needle)
-                           ||job.job_id.to_string().contains(&needle)
-                           ||job.address.to_lowercase().contains(&needle)
-                    }).collect::<Vec<_>>();
-                    egui::ScrollArea::vertical().max_height(200.).show_rows(ui,25.,visible.len(),|ui,rows|{
-                        for row in rows{
-                            let job=visible[row];
-                            ui.horizontal(|ui|{
-                                let mut checked=state.remote_selected.contains(&job.job_id);
-                                if ui.checkbox(&mut checked,format!("{} (ID {})",job.title,job.job_id)).changed(){
-                                    if checked{state.remote_selected.insert(job.job_id);}
-                                    else{state.remote_selected.remove(&job.job_id);}
-                                }
-                                ui.small(if loaded.contains(&job.job_id){"Al geladen"}else if job.downloadable{"Downloadbaar"}else{"Niet downloadbaar"});
-                            });
-                        }
-                    });
-                    let needed=state.remote_selected.iter().filter(|id|!loaded.contains(id)
-                        &&live_jobs.iter().any(|job|job.job_id==**id&&job.downloadable)).count();
-                    ui.horizontal(|ui|{
-                        if ui.add_enabled(needed>0,egui::Button::new(format!("Download {needed} geselecteerde JobFeatures + laad")))
-                            .clicked(){
-                            action=Some(Action{overlay:false,open_jobs:false,queue_remote:true});
-                        }
-                        ui.small("Na het inladen zijn deze bronnen voor DXF aangevinkt; exporteer daarna.");
-                    });
-                    if !state.pending_remote.is_empty(){
-                        ui.small(format!("Nog {} gekozen live bronnen wachten op inladen. Mislukte downloads kun je opnieuw kiezen.",state.pending_remote.len()));
+            if !live_verified{
+                ui.small("Live jobs: log via KickTheMap > Inloggen in om bronnen direct in deze tabel te kunnen kiezen.");
+            }else{
+                let loaded=datasets.iter().map(|d|d.job_id).collect::<BTreeSet<_>>();
+                let needed=state.remote_selected.iter().filter(|id|!loaded.contains(id)
+                    &&live_jobs.iter().any(|job|job.job_id==**id&&job.downloadable)).count();
+                ui.horizontal(|ui|{
+                    if ui.add_enabled(needed>0,
+                        egui::Button::new(format!("Download {needed} live JobFeatures + laad")))
+                        .clicked(){
+                        action=Some(Action{overlay:false,open_jobs:false,queue_remote:true});
                     }
+                    ui.small("Geladen live bronnen worden automatisch aangevinkt voor DXF-export.");
+                });
+                if !state.pending_remote.is_empty(){
+                    ui.small(format!("Nog {} geselecteerde bronnen wachten op inladen.",state.pending_remote.len()));
                 }
-            });
+            }
             ui.separator();
             ui.checkbox(
                 &mut state.selection.include_endpoints,
+
                 "Begin- en eindpunten van virtuele proefsleuven meenemen",
             );
             ui.checkbox(
