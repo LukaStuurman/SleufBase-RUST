@@ -12,6 +12,7 @@ pub(crate) struct Dialog {
 #[derive(Clone, Copy)]
 pub(crate) struct Action {
     pub overlay: bool,
+    pub open_jobs: bool,
 }
 impl Dialog {
     pub fn new(datasets: usize, trenches: usize, label_gap: f64, generation: u64) -> Self {
@@ -51,11 +52,16 @@ pub(crate) fn show(
     let mut open = true;
     let mut action = None;
     let mut cancel = false;
-    egui::Window::new("Objecten naar DXF exporteren")
+    egui::Window::new("KickTheMap DXF-export")
         .open(&mut open)
-        .default_width(740.)
+        .default_width(1160.)
+        .default_height(700.)
+        .min_width(850.)
         .show(ctx, |ui| {
-            ui.label("Kies de geladen jobs en virtuele proefsleuven voor deze export.");
+            ui.label("Kies de bronnen voor DXF-export. Geladen jobs en virtuele proefsleuven kunnen direct worden geëxporteerd.");
+            if ui.button("KickTheMap Jobs openen...").clicked() {
+                action=Some(Action{overlay:false,open_jobs:true});
+            }
             ui.horizontal(|ui| {
                 ui.label("Zoeken");
                 ui.text_edit_singleline(&mut state.query);
@@ -77,6 +83,10 @@ pub(crate) fn show(
                     egui::Grid::new("export-sources")
                         .striped(true)
                         .show(ui, |ui| {
+                            for name in ["Bron", "Type", "Datum", "Details", "Status"]{
+                                ui.strong(name);
+                            }
+                            ui.end_row();
                             for (i, job) in datasets.iter().enumerate() {
                                 if !query.is_empty()
                                     && !format!(
@@ -91,8 +101,10 @@ pub(crate) fn show(
                                     continue;
                                 }
                                 ui.checkbox(&mut state.selection.datasets[i], &job.title);
-                                ui.label("Geladen job");
-                                ui.label(format!("{} objecten", job.features.len()));
+                                ui.label("JobFeatures");
+                                ui.label("—");
+                                ui.label(format!("{} objecten · ID {}", job.features.len(),job.job_id));
+                                ui.label("Geladen");
                                 ui.end_row();
                             }
                             for (i, trench) in trenches.iter().enumerate() {
@@ -103,6 +115,7 @@ pub(crate) fn show(
                                 }
                                 ui.checkbox(&mut state.selection.trenches[i], &trench.label);
                                 ui.label("Virtuele proefsleuf");
+                                ui.label("—");
                                 ui.label(format!(
                                     "{} punten",
                                     trench.objects.len()
@@ -112,6 +125,7 @@ pub(crate) fn show(
                                             0
                                         }
                                 ));
+                                ui.label("Bewerkbaar");
                                 ui.end_row();
                             }
                         });
@@ -155,10 +169,10 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(selected > 0 || state.extra_layers, |ui| {
                     if ui.button("Exporteren…").clicked() {
-                        action = Some(Action { overlay: false });
+                        action = Some(Action { overlay: false,open_jobs:false });
                     }
                     if ui.button("Exporteren en laden als overlay…").clicked() {
-                        action = Some(Action { overlay: true });
+                        action = Some(Action { overlay: true,open_jobs:false });
                     }
                 });
                 if ui.button("Annuleren").clicked() {
