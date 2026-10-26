@@ -384,11 +384,14 @@ pub(super) struct State {
     menu_name:String,
     menu_angle:String,
     menu_note:String,
+    rotating:Option<usize>,
+    rotate_generation:u64,
+    rotate_drag:Option<(f64,f64)>,
 }
 impl State {
     pub(super) fn reference_active(&self)->bool {matches!(self.mode,Some(Mode::Reference(_)))}
     pub fn captures(&self) -> bool {
-        self.mode.is_some() || self.capture
+        self.mode.is_some() || self.capture || self.rotating.is_some()
     }
 }
 impl SleufBaseApp {
@@ -436,6 +439,8 @@ impl SleufBaseApp {
     pub(super) fn cancel_virtual_map(&mut self) {
         self.virtual_map.mode = None;
         self.virtual_map.pointer = None;
+        self.virtual_map.rotating=None;
+        self.virtual_map.rotate_drag=None;
     }
     pub(super) fn refresh_virtual_references(&mut self) {
         self.virtual_map.references = self
@@ -553,6 +558,76 @@ impl SleufBaseApp {
         self.virtual_map.mode=Some(Mode::Dekband{target:Target::new(index,t),start:None});
         self.message="Prik begin en einde van de dekband op de meetas.".into();
     }
+    fn start_virtual_rotation(&mut self,index:usize){
+        if !self.begin_virtual_map(){return;}
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        if sleufbase_rust::virtual_trench_editor::is_measured(t){
+            self.message="Gemeten proefsleuven kunnen niet interactief worden gedraaid; maak eerst een handmatige kopie.".into();
+            return;
+        }
+        self.virtual_map.rotating=Some(index);
+        self.virtual_map.selected=Some(index);
+        self.virtual_map.rotate_generation=self.project_generation;
+        self.virtual_map.rotate_drag=None;
+        self.message="Sleep de oranje rotatiecirkel om de virtuele proefsleuf te draaien. Rechtsklik of Escape stopt.".into();
+    }
+    fn handle_virtual_rotation(&mut self,view:&raster_point_ui::View){
+        let Some(index)=self.virtual_map.rotating else{return};
+        let ctx=view.painter.ctx();
+        if self.virtual_map.rotate_generation!=self.project_generation
+            || index>=self.virtual_trenches.len()
+            || ctx.input(|i|i.key_pressed(egui::Key::Escape))
+            || view.response.secondary_clicked(){
+            self.cancel_virtual_map();
+            return;
+        }
+        let t=&self.virtual_trenches[index];
+        let center=[(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5];
+        let center_p=view.project(center);
+        let screen_center=[center_p.x as f64,center_p.y as f64];
+        let radius=(t.length()*view.scale*0.5+28.).clamp(42.,view.rect.width().min(view.rect.height()) as f64*0.45);
+        let initial=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
+        let angle=(initial+90.).to_radians();
+        let handle=[screen_center[0]+radius*angle.cos(),screen_center[1]-radius*angle.sin()];
+        if ctx.input(|i|i.pointer.button_pressed(egui::PointerButton::Primary))&&view.response.hovered(){
+            if let Some(p)=ctx.input(|i|i.pointer.interact_pos()){
+                let xy=[p.x as f64,p.y as f64];
+                let d=(xy[0]-screen_center[0]).hypot(xy[1]-screen_center[1]);
+                if (d-radius).abs()<=18.||(xy[0]-handle[0]).hypot(xy[1]-handle[1])<=16.{
+                    self.virtual_map.rotate_drag=Some((
+                        sleufbase_rust::geotiff_rotation::screen_angle(screen_center,xy),initial));
+                    self.virtual_map.capture=true;
+                }
+            }
+        }
+        if let Some((start,original))=self.virtual_map.rotate_drag{
+            if let Some(p)=ctx.input(|i|i.pointer.interact_pos()){
+                let angle=sleufbase_rust::geotiff_rotation::dragged(original,start,
+                    sleufbase_rust::geotiff_rotation::screen_angle(screen_center,[p.x as f64,p.y as f64]));
+                match angle{
+                    Ok(angle)=>self.rotate_virtual_tiff(index,angle),
+                    Err(e)=>{self.message=e;self.cancel_virtual_map();return;}
+                }
+            }
+            if ctx.input(|i|i.pointer.button_released(egui::PointerButton::Primary)){
+                self.virtual_map.rotate_drag=None;
+                self.virtual_map.capture=false;
+            }
+            ctx.request_repaint();
+        }
+        let t=&self.virtual_trenches[index];
+        let p0=view.project([t.start.x,t.start.y]);
+        let p1=view.project([t.end.x,t.end.y]);
+        let center=view.project([(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5]);
+        let current=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
+        let a=(current+90.).to_radians();
+        let point=center+egui::vec2(radius as f32*a.cos() as f32,-(radius as f32)*a.sin() as f32);
+        view.painter.circle_stroke(center,radius as f32,Stroke::new(2.,ORANGE));
+        view.painter.circle_filled(point,10.,ORANGE);
+        view.painter.line_segment([p0,p1],Stroke::new(2.,ORANGE));
+        view.painter.text(center+egui::vec2(0.,14.),egui::Align2::CENTER_TOP,
+            format!("{current:.1}°"),egui::FontId::proportional(13.),INK);
+    }
     /// Virtual layer right-click menu: keep the original command order and
     /// use the existing geometry operations, never mutate a measured axis.
     pub(super) fn show_virtual_tiff_context(&mut self,ui:&mut egui::Ui,index:usize){
@@ -584,6 +659,9 @@ impl SleufBaseApp {
                 }
             }
         });
+        if ui.button("Interactief draaien").clicked(){
+            self.start_virtual_rotation(index);ui.close_menu();
+        }
         if ui.button("Verplaats op kaart...").clicked(){
             self.start_virtual_move(index,None);ui.close_menu();
         }
@@ -719,6 +797,10 @@ impl SleufBaseApp {
     pub(super) fn handle_virtual_map(&mut self, view: &raster_point_ui::View) {
         let ctx = view.painter.ctx();
         self.poll_virtual_ahn(ctx);
+        if self.virtual_map.rotating.is_some(){
+            self.handle_virtual_rotation(view);
+            return;
+        }
         let released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
         let consumed = self.virtual_map.capture;
         if released {
