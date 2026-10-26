@@ -9,7 +9,7 @@ pub(super) struct State {
     pub installed: bool,
     pub extended: bool,
     pub coords: String,
-    marxact_open: bool,
+    pub(super) marxact_open: bool,
     marxact_generation:u64,
     marxact_index:usize,
     marxact_angle:f64,
