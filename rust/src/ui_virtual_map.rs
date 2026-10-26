@@ -557,6 +557,7 @@ impl SleufBaseApp {
     /// use the existing geometry operations, never mutate a measured axis.
     pub(super) fn show_virtual_tiff_context(&mut self,ui:&mut egui::Ui,index:usize){
         let Some(trench)=self.virtual_trenches.get(index) else{return};
+        let current=(trench.end.y-trench.start.y).atan2(trench.end.x-trench.start.x).to_degrees();
         if self.virtual_map.menu_target!=Some(index){
             self.virtual_map.menu_target=Some(index);
             self.virtual_map.menu_name=trench.label.clone();
@@ -586,7 +587,6 @@ impl SleufBaseApp {
         if ui.button("Verplaats op kaart...").clicked(){
             self.start_virtual_move(index,None);ui.close_menu();
         }
-        let current=(trench.end.y-trench.start.y).atan2(trench.end.x-trench.start.x).to_degrees();
         if ui.button("Draai 90 graden linksom").clicked(){
             self.rotate_virtual_tiff(index,current+90.);ui.close_menu();
         }
