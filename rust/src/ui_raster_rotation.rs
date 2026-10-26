@@ -93,6 +93,45 @@ impl SleufBaseApp {
         self.message =
             "Sleep aan de rotatiecirkel. Rechtsklik of Escape sluit de draaibediening.".into();
     }
+    /// Physical TIFF popup actions in original menu order. The angle editor
+    /// lives inside a submenu rather than the global "TIFF draaien" foldout.
+    pub(super) fn show_physical_rotation_menu(&mut self,ui:&mut egui::Ui){
+        let Some(path)=self.raster_points.selected.clone()else{return};
+        let Some(raster)=self.geotiffs.iter().find(|r|r.path==path)else{return};
+        let current=rotation::angle(raster);
+        if self.raster_rotation.draft_path.as_ref()!=Some(&path){
+            self.raster_rotation.draft_path=Some(path.clone());
+            self.raster_rotation.draft=current.to_string();
+        }
+        if ui.button("Draai 90 graden linksom").clicked(){
+            self.apply_raster_rotation(&path,current+90.);
+            ui.close_menu();
+        }
+        if ui.button("Draai 90 graden rechtsom").clicked(){
+            self.apply_raster_rotation(&path,current-90.);
+            ui.close_menu();
+        }
+        if ui.button("Interactief draaien").clicked(){
+            self.start_raster_rotation(path.clone());
+            ui.close_menu();
+        }
+        ui.menu_button("Hoek invullen...",|ui|{
+            ui.label("Hoek (graden)");
+            ui.add(egui::TextEdit::singleline(&mut self.raster_rotation.draft)
+                .desired_width(100.).char_limit(128));
+            if ui.button("Toepassen").clicked(){
+                match rotation::parse(&self.raster_rotation.draft){
+                    Ok(angle)=>self.apply_raster_rotation(&path,angle),
+                    Err(error)=>self.message=error,
+                }
+                ui.close_menu();
+            }
+        });
+        if ui.button("Reset rotatie").clicked(){
+            self.apply_raster_rotation(&path,0.);
+            ui.close_menu();
+        }
+    }
     pub(super) fn show_raster_rotation_controls(&mut self, ui: &mut egui::Ui) {
         let Some(path) = self.raster_points.selected.clone() else {
             return;

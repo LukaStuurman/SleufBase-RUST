@@ -326,6 +326,72 @@ mod tests {
             app.virtual_trenches[0].boundary_3d.clear();app.virtual_trenches[0].start_metadata=serde_json::json!({"surface_mode":"auto"});
         }
     }
+    #[test]
+    fn cancelling_rotation_releases_pointer_capture_and_edit_dialogs_capture_canvas(){
+        let mut app=app();
+        app.virtual_map.capture=true;
+        app.virtual_map.rotating=Some(0);
+        assert!(app.virtual_map.captures());
+        app.cancel_virtual_map();
+        assert!(!app.virtual_map.captures());
+        app.open_chainage_dialog(0);
+        assert!(app.virtual_map.captures());
+        app.virtual_map.chainage=None;
+        app.open_dekband_dialog(0);
+        assert!(app.virtual_map.captures());
+        app.virtual_map.dekband=None;
+        assert!(!app.virtual_map.captures());
+    }
+    #[test]
+    fn measured_rotation_rejection_keeps_existing_virtual_map_mode(){
+        let mut app=app();
+        app.start_virtual_copy(0);
+        assert!(app.virtual_map.mode.is_some());
+        let start=app.virtual_trenches[0].start;
+        let end=app.virtual_trenches[0].end;
+        app.virtual_trenches[0].boundary_3d=vec![start,end,start];
+        app.start_virtual_rotation(0);
+        assert!(app.virtual_map.mode.is_some(),"Rejected rotation must not end pending copy");
+        assert!(app.virtual_map.rotating.is_none());
+    }
+    #[test]
+    fn physical_tiff_virtual_copy_preserves_raster_and_creates_editable_geometry(){
+        let payload:serde_json::Value=serde_json::from_str(
+            include_str!("../tests/fixtures/raster-rotation/reference.json")).unwrap();
+        let raster:sleufbase_rust::geotiff::GeoTiffInfo=
+            serde_json::from_value(payload["cases"][0]["input"].clone()).unwrap();
+        let initial=raster.clone();
+        let mut app=SleufBaseApp{geotiffs:vec![raster],..Default::default()};
+        app.make_virtual_from_raster(0);
+        assert_eq!(app.geotiffs[0].transform,initial.transform);
+        assert_eq!(app.geotiffs[0].metadata,initial.metadata);
+        assert_eq!(app.virtual_trenches.len(),1);
+        let copy=&app.virtual_trenches[0];
+        assert_eq!(copy.source_path,Some(initial.path));
+        assert_eq!(copy.job_id,1);
+        assert!(copy.width_meters>0.1);
+        assert!(copy.length()>0.5);
+        assert_eq!(app.virtual_map.selected,Some(0));
+    }
+    #[test]
+    fn virtual_rotation_mode_and_exact_angle_keep_original_measurements(){
+        let mut app=app();
+        let before=app.virtual_trenches[0].clone();
+        let before_len=before.length();
+        let index=0;
+        if sleufbase_rust::virtual_trench_editor::is_measured(&before){
+            app.virtual_trenches[0].boundary_3d.clear();
+            app.virtual_trenches[0].alignment=None;
+        }
+        app.start_virtual_rotation(index);
+        assert_eq!(app.virtual_map.rotating,Some(index));
+        assert!(app.virtual_map.captures());
+        app.rotate_virtual_tiff(index,90.);
+        assert!((app.virtual_trenches[index].length()-before_len).abs()<1e-6);
+        app.cancel_virtual_map();
+        assert_eq!(app.virtual_map.rotating,None);
+        assert!(!app.virtual_map.captures());
+    }
 }
 impl Target {
     fn new(index: usize, t: &VirtualTrench) -> Self {
@@ -345,6 +411,15 @@ impl Target {
                 && t.objects.len() == self.objects
         })
     }
+}
+struct ChainageDialog {
+    target:Target,generation:u64,step:u8,
+    distance:f64,name:String,source:String,depth:f64,
+}
+struct DekbandDialog {
+    target:Target,generation:u64,adding:bool,
+    from:f64,to:f64,name:String,rgb:[u8;3],start_depth:f64,
+    end_depth:f64,same_depth:bool,
 }
 enum Mode {
     Create {
@@ -380,11 +455,21 @@ pub(super) struct State {
     band_rgb:[u8;3],
     band_start_depth:f64,
     band_end_depth:f64,
+    menu_target:Option<usize>,
+    menu_name:String,
+    menu_angle:String,
+    menu_note:String,
+    chainage:Option<ChainageDialog>,
+    dekband:Option<DekbandDialog>,
+    rotating:Option<usize>,
+    rotate_generation:u64,
+    rotate_drag:Option<(f64,f64)>,
 }
 impl State {
     pub(super) fn reference_active(&self)->bool {matches!(self.mode,Some(Mode::Reference(_)))}
     pub fn captures(&self) -> bool {
-        self.mode.is_some() || self.capture
+        self.mode.is_some() || self.capture || self.rotating.is_some()
+            || self.chainage.is_some() || self.dekband.is_some()
     }
 }
 impl SleufBaseApp {
@@ -432,6 +517,9 @@ impl SleufBaseApp {
     pub(super) fn cancel_virtual_map(&mut self) {
         self.virtual_map.mode = None;
         self.virtual_map.pointer = None;
+        self.virtual_map.rotating=None;
+        self.virtual_map.rotate_drag=None;
+        self.virtual_map.capture=false;
     }
     pub(super) fn refresh_virtual_references(&mut self) {
         self.virtual_map.references = self
@@ -549,6 +637,407 @@ impl SleufBaseApp {
         self.virtual_map.mode=Some(Mode::Dekband{target:Target::new(index,t),start:None});
         self.message="Prik begin en einde van de dekband op de meetas.".into();
     }
+    pub(super) fn make_virtual_from_raster(&mut self,index:usize){
+        if self.file_intent.is_some()||self.export_intent.is_some()
+            ||self.template_job.is_some()||self.trench_editor.is_some(){
+            self.message="Rond de lopende bewerking eerst af.".into();
+            return;
+        }
+        let Some(raster)=self.geotiffs.get(index) else{return};
+        if raster.epsg.is_some_and(|epsg|epsg!=28992){
+            self.message="Virtuele kopie vereist een GeoTIFF met RD-coördinaten (EPSG:28992).".into();
+            return;
+        }
+        let t=raster.transform;
+        let w=raster.width as f64;
+        let h=raster.height as f64;
+        let col=(t.a*w).hypot(t.d*w);
+        let row=(t.b*h).hypot(t.e*h);
+        if !col.is_finite()||!row.is_finite()||col.max(row)<0.5||col.min(row)<0.1{
+            self.message="De GeoTIFF is te klein of heeft ongeldige kaartafmetingen.".into();
+            return;
+        }
+        // Trace the image's georeferenced centreline to an editable virtual
+        // trench while retaining the original TIFF as an unchanged source.
+        let (start,end,width)=if col>=row{
+            (t.pixel_to_world(0.,h/2.),t.pixel_to_world(w,h/2.),row)
+        }else{
+            (t.pixel_to_world(w/2.,0.),t.pixel_to_world(w/2.,h),col)
+        };
+        let name=sleufbase_rust::virtual_map::next_name(self.virtual_trenches.iter()
+            .map(|x|std::borrow::Cow::Borrowed(x.label.as_str()))
+            .chain(self.geotiffs.iter().filter_map(|x|
+                x.path.file_stem().map(|v|v.to_string_lossy()))));
+        let result=VirtualTrench::new(name,
+            Vertex{x:start.0,y:start.1,z:None},
+            Vertex{x:end.0,y:end.1,z:None},width);
+        match result{
+            Ok(mut copy)=>{
+                copy.source_path=Some(raster.path.clone());
+                copy.job_id=raster.kickthemap_job_id.unwrap_or(0);
+                copy.metadata=serde_json::json!({
+                    "virtual_copy_source":raster.path.to_string_lossy().to_string(),
+                    "virtual_copy_geometry":"raster_centreline",
+                    "tiff_comment_text":raster.metadata.get("tiff_comment_text").and_then(|x|x.as_str()).unwrap_or("")
+                });
+                self.cancel_virtual_map();
+                self.stop_raster_rotation();
+                self.virtual_trenches.push(copy);
+                let new_index=self.virtual_trenches.len()-1;
+                self.virtual_map.selected=Some(new_index);
+                self.raster_points.selected=None;
+                self.trench_markers.clear();
+                self.dirty=true;
+                self.message="Virtuele kopie van GeoTIFF-geometrie aangemaakt. De originele afbeelding blijft apart geladen.".into();
+                self.open_virtual_editor(new_index);
+            }
+            Err(e)=>self.message=format!("Virtuele kopie mislukt: {e}"),
+        }
+    }
+    fn open_chainage_dialog(&mut self,index:usize){
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        self.virtual_map.chainage=Some(ChainageDialog{
+            target:Target::new(index,t),generation:self.project_generation,
+            step:0,distance:t.length()*0.5,name:format!("Punt {}",t.objects.len()+1),
+            source:String::new(),depth:0.6,
+        });
+    }
+    fn open_dekband_dialog(&mut self,index:usize){
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        self.virtual_map.dekband=Some(DekbandDialog{
+            target:Target::new(index,t),generation:self.project_generation,
+            adding:false,from:0.,to:t.length(),name:"Dekband".into(),
+            rgb:[17,24,39],start_depth:0.6,end_depth:0.6,same_depth:true,
+        });
+    }
+    pub(super) fn show_virtual_form_dialogs(&mut self,ctx:&egui::Context){
+        if let Some(mut d)=self.virtual_map.chainage.take(){
+            if d.generation==self.project_generation&&d.target.valid(&self.virtual_trenches){
+                let mut open=true;let mut save=false;let mut request_close=false;
+                let length=self.virtual_trenches[d.target.index].length();
+                egui::Window::new(if d.step==0{"Punt op kettingmaat"}else{"Virtueel meetpunt"})
+                    .open(&mut open).default_width(600.).default_height(320.)
+                    .min_width(560.).min_height(280.)
+                    .show(ctx,|ui|{
+                        if d.step==0{
+                            ui.label("Afstand langs de meetas vanaf het beginpunt.");
+                            ui.horizontal(|ui|{
+                                ui.label("Afstand (m)");
+                                ui.add(egui::DragValue::new(&mut d.distance).range(0. ..=length).speed(0.1));
+                            });
+                            ui.small(format!("Maximaal {length:.2} m"));
+                            if ui.button("Verder").clicked(){d.step=1;}
+                        }else{
+                            ui.horizontal(|ui|{ui.label("Objectnaam");ui.text_edit_singleline(&mut d.name);});
+                            ui.horizontal(|ui|{ui.label("Discipline / bron");ui.text_edit_singleline(&mut d.source);});
+                            ui.horizontal(|ui|{ui.label("Diepte onder beginmaaiveld (m)");ui.add(egui::DragValue::new(&mut d.depth).range(0. ..=1000.).speed(0.05));});
+                            ui.horizontal(|ui|{
+                                if ui.button("Terug").clicked(){d.step=0;}
+                                if ui.button("Meetpunt opslaan").clicked(){save=true;}
+                            });
+                        }
+                        if ui.button("Annuleren").clicked(){request_close=true;}
+                    });
+                if request_close{open=false;}
+                if save{
+                    let index=d.target.index;
+                    let t=&self.virtual_trenches[index];
+                    let fraction=(d.distance/t.length()).clamp(0.,1.);
+                    let x=t.start.x+(t.end.x-t.start.x)*fraction;
+                    let y=t.start.y+(t.end.y-t.start.y)*fraction;
+                    let z=t.start.z.map(|height|height-d.depth);
+                    let point=sleufbase_rust::virtual_trench::TrenchPoint{
+                        metadata:serde_json::json!({"surface_mode":"start",
+                            "sleufbase_depth_meters":d.depth,"surface_z":t.start.z}),
+                        role:"object".into(),object_name:d.name.trim().into(),
+                        source_name:d.source.trim().into(),position:Vertex{x,y,z},
+                        attributes:Default::default(),
+                    };
+                    match sleufbase_rust::virtual_trench_editor::replace_object(
+                        &mut self.virtual_trenches[index],None,point){
+                        Ok(())=>{
+                            self.dirty=true;self.trench_markers.clear();
+                            self.message="Virtueel meetpunt toegevoegd op kettingmaat.".into();
+                            open=false;
+                        }
+                        Err(e)=>self.message=e,
+                    }
+                }
+                if open{self.virtual_map.chainage=Some(d);}
+            }
+        }
+        if let Some(mut d)=self.virtual_map.dekband.take(){
+            if d.generation==self.project_generation{
+                let index=d.target.index;
+                let valid=self.virtual_trenches.get(index).is_some_and(|t|
+                    t.label==d.target.label&&t.start==d.target.start&&t.end==d.target.end);
+                if valid{
+                    let mut open=true;let mut save=false;let mut remove=None;let mut request_close=false;
+                    let t=&self.virtual_trenches[index];let length=t.length();
+                    egui::Window::new(if d.adding{"Dekband toevoegen"}else{"Dekbanden beheren"})
+                        .open(&mut open).default_width(if d.adding{860.}else{760.})
+                        .default_height(if d.adding{680.}else{420.})
+                        .show(ctx,|ui|{
+                            if d.adding{
+                                ui.label("Kies de positie van de dekband langs de meetas.");
+                                ui.horizontal(|ui|{
+                                    ui.label("Vanaf (m)");
+                                    ui.add(egui::DragValue::new(&mut d.from).range(0. ..=length).speed(0.1));
+                                    ui.label("Tot (m)");
+                                    ui.add(egui::DragValue::new(&mut d.to).range(0. ..=length).speed(0.1));
+                                });
+                                ui.horizontal(|ui|{
+                                    ui.label("Omschrijving");
+                                    ui.text_edit_singleline(&mut d.name);
+                                    ui.color_edit_button_srgb(&mut d.rgb);
+                                });
+                                ui.horizontal(|ui|{
+                                    ui.label("Begindiepte (m)");
+                                    ui.add(egui::DragValue::new(&mut d.start_depth).range(0. ..=1000.));
+                                    ui.checkbox(&mut d.same_depth,"Zelfde einddiepte");
+                                });
+                                if d.same_depth{d.end_depth=d.start_depth;}
+                                else{ui.horizontal(|ui|{
+                                    ui.label("Einddiepte (m)");
+                                    ui.add(egui::DragValue::new(&mut d.end_depth).range(0. ..=1000.));
+                                });}
+                                ui.horizontal(|ui|{
+                                    if ui.button("Dekband opslaan").clicked(){save=true;}
+                                    if ui.button("Terug").clicked(){d.adding=false;}
+                                });
+                            }else{
+                                egui::ScrollArea::vertical().max_height(300.).show(ui,|ui|{
+                                    for (i,row) in t.dekband_rows.iter().enumerate(){
+                                        ui.horizontal(|ui|{
+                                            ui.label(format!("{}: {:.2} – {:.2} m",
+                                                row.source_name,row.start_chainage,row.end_chainage));
+                                            if ui.small_button("Verwijder").clicked(){remove=Some(i);}
+                                        });
+                                    }
+                                });
+                                if ui.button("Nieuwe dekband...").clicked(){d.adding=true;}
+                            }
+                            if ui.button("Sluiten").clicked(){request_close=true;}
+                        });
+                    if request_close{open=false;}
+                    if let Some(row)=remove{
+                        let mut candidate=self.virtual_trenches[index].clone();
+                        candidate.dekband_rows.remove(row);
+                        match candidate.validate(){
+                            Ok(())=>{self.virtual_trenches[index]=candidate;self.dirty=true;
+                                self.message="Dekband verwijderd".into();},
+                            Err(e)=>self.message=e,
+                        }
+                    }
+                    if save{
+                        if d.from<0.||d.to>length||d.to<=d.from+1e-6{
+                            self.message="Dekband moet binnen de sleuf vallen en een positieve lengte hebben.".into();
+                        }else{
+                            let t=&self.virtual_trenches[index];
+                            let point=|distance:f64|[
+                                t.start.x+(t.end.x-t.start.x)*distance/length,
+                                t.start.y+(t.end.y-t.start.y)*distance/length];
+                            let a=point(d.from);let b=point(d.to);
+                            match map::add_dekband_with_depth(&mut self.virtual_trenches[index],
+                                a,b,d.name.clone(),Some(d.rgb),d.start_depth,d.end_depth){
+                                Ok(changed)=>{self.dirty|=changed;self.trench_markers.clear();
+                                    d.adding=false;self.message="Dekband toegevoegd".into();},
+                                Err(e)=>self.message=e,
+                            }
+                        }
+                    }
+                    if open{self.virtual_map.dekband=Some(d);}
+                }
+            }
+        }
+    }
+    fn start_virtual_rotation(&mut self,index:usize){
+        // Reject unsupported layers *before* cancelling the user's current
+        // drawing operation. Failed commands must not destroy interaction state.
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        if sleufbase_rust::virtual_trench_editor::is_measured(t){
+            self.message="Gemeten proefsleuven kunnen niet interactief worden gedraaid; maak eerst een handmatige kopie.".into();
+            return;
+        }
+        if !self.begin_virtual_map(){return;}
+        self.virtual_map.rotating=Some(index);
+        self.virtual_map.selected=Some(index);
+        self.virtual_map.rotate_generation=self.project_generation;
+        self.virtual_map.rotate_drag=None;
+        self.message="Sleep de oranje rotatiecirkel om de virtuele proefsleuf te draaien. Rechtsklik of Escape stopt.".into();
+    }
+    fn handle_virtual_rotation(&mut self,view:&raster_point_ui::View){
+        let Some(index)=self.virtual_map.rotating else{return};
+        let ctx=view.painter.ctx();
+        if self.virtual_map.rotate_generation!=self.project_generation
+            || index>=self.virtual_trenches.len()
+            || ctx.input(|i|i.key_pressed(egui::Key::Escape))
+            || view.response.secondary_clicked(){
+            self.cancel_virtual_map();
+            return;
+        }
+        let t=&self.virtual_trenches[index];
+        let center=[(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5];
+        let center_p=view.project(center);
+        let screen_center=[center_p.x as f64,center_p.y as f64];
+        let max_radius=(view.rect.width().min(view.rect.height()) as f64*0.45).max(42.);
+        let radius=(t.length()*view.scale*0.5+28.).clamp(42.,max_radius);
+        let initial=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
+        let angle=(initial+90.).to_radians();
+        let handle=[screen_center[0]+radius*angle.cos(),screen_center[1]-radius*angle.sin()];
+        if ctx.input(|i|i.pointer.button_pressed(egui::PointerButton::Primary))&&view.response.hovered(){
+            if let Some(p)=ctx.input(|i|i.pointer.interact_pos()){
+                let xy=[p.x as f64,p.y as f64];
+                let d=(xy[0]-screen_center[0]).hypot(xy[1]-screen_center[1]);
+                if (d-radius).abs()<=18.||(xy[0]-handle[0]).hypot(xy[1]-handle[1])<=16.{
+                    self.virtual_map.rotate_drag=Some((
+                        sleufbase_rust::geotiff_rotation::screen_angle(screen_center,xy),initial));
+                    self.virtual_map.capture=true;
+                }
+            }
+        }
+        if let Some((start,original))=self.virtual_map.rotate_drag{
+            if let Some(p)=ctx.input(|i|i.pointer.interact_pos()){
+                let angle=sleufbase_rust::geotiff_rotation::dragged(original,start,
+                    sleufbase_rust::geotiff_rotation::screen_angle(screen_center,[p.x as f64,p.y as f64]));
+                match angle{
+                    Ok(angle)=>self.rotate_virtual_tiff(index,angle),
+                    Err(e)=>{self.message=e;self.cancel_virtual_map();return;}
+                }
+            }
+            if ctx.input(|i|i.pointer.button_released(egui::PointerButton::Primary)){
+                self.virtual_map.rotate_drag=None;
+                self.virtual_map.capture=false;
+            }
+            ctx.request_repaint();
+        }
+        let t=&self.virtual_trenches[index];
+        let p0=view.project([t.start.x,t.start.y]);
+        let p1=view.project([t.end.x,t.end.y]);
+        let center=view.project([(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5]);
+        let current=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
+        let a=(current+90.).to_radians();
+        let point=center+egui::vec2(radius as f32*(a.cos() as f32),-(radius as f32)*(a.sin() as f32));
+        view.painter.circle_stroke(center,radius as f32,Stroke::new(2.0_f32,ORANGE));
+        view.painter.circle_filled(point,10.,ORANGE);
+        view.painter.line_segment([p0,p1],Stroke::new(2.0_f32,ORANGE));
+        view.painter.text(center+egui::vec2(0.,14.),egui::Align2::CENTER_TOP,
+            format!("{current:.1}°"),egui::FontId::proportional(13.),INK);
+    }
+    /// Virtual layer right-click menu: keep the original command order and
+    /// use the existing geometry operations, never mutate a measured axis.
+    pub(super) fn show_virtual_tiff_context(&mut self,ui:&mut egui::Ui,index:usize){
+        let Some(trench)=self.virtual_trenches.get(index) else{return};
+        let current=(trench.end.y-trench.start.y).atan2(trench.end.x-trench.start.x).to_degrees();
+        if self.virtual_map.menu_target!=Some(index){
+            self.virtual_map.menu_target=Some(index);
+            self.virtual_map.menu_name=trench.label.clone();
+            self.virtual_map.menu_angle=(trench.end.y-trench.start.y)
+                .atan2(trench.end.x-trench.start.x).to_degrees().to_string();
+            self.virtual_map.menu_note=sleufbase_rust::map_comments::text(&trench.metadata)
+                .unwrap_or_default();
+        }
+        if ui.button("Virtuele proefsleuf bewerken...").clicked(){
+            self.open_virtual_editor(index);ui.close_menu();
+        }
+        ui.menu_button("Naam wijzigen...",|ui|{
+            ui.text_edit_singleline(&mut self.virtual_map.menu_name);
+            if ui.button("Opslaan").clicked(){
+                let name=self.virtual_map.menu_name.trim();
+                if name.is_empty()||name.len()>256||name.chars().any(char::is_control){
+                    self.message="Geef een geldige naam van maximaal 256 tekens".into();
+                }else if self.virtual_trenches.iter().enumerate()
+                    .any(|(i,t)|i!=index&&t.label.eq_ignore_ascii_case(name)){
+                    self.message="Een virtuele proefsleuf met deze naam bestaat al".into();
+                }else{
+                    self.virtual_trenches[index].label=name.to_owned();
+                    self.dirty=true;ui.close_menu();
+                }
+            }
+        });
+        if ui.button("Interactief draaien").clicked(){
+            self.start_virtual_rotation(index);ui.close_menu();
+        }
+        if ui.button("Verplaats op kaart...").clicked(){
+            self.start_virtual_move(index,None);ui.close_menu();
+        }
+        if ui.button("Draai 90 graden linksom").clicked(){
+            self.rotate_virtual_tiff(index,current+90.);ui.close_menu();
+        }
+        if ui.button("Draai 90 graden rechtsom").clicked(){
+            self.rotate_virtual_tiff(index,current-90.);ui.close_menu();
+        }
+        ui.menu_button("Hoek invullen...",|ui|{
+            ui.text_edit_singleline(&mut self.virtual_map.menu_angle);
+            if ui.button("Toepassen").clicked(){
+                match self.virtual_map.menu_angle.trim().parse::<f64>(){
+                    Ok(angle)=>self.rotate_virtual_tiff(index,angle),
+                    Err(_)=>self.message="Vul een geldige hoek in graden in".into(),
+                }
+                ui.close_menu();
+            }
+        });
+        if ui.button("Reset rotatie").clicked(){
+            self.rotate_virtual_tiff(index,0.);ui.close_menu();
+        }
+        if ui.button("Virtuele kopie plaatsen...").clicked(){
+            self.start_virtual_copy(index);ui.close_menu();
+        }
+        if ui.button("Punt op kaart toevoegen...").clicked(){
+            self.start_virtual_points(index,true);ui.close_menu();
+        }
+        if ui.button("Punt op kettingmaat...").clicked(){
+            self.open_chainage_dialog(index);ui.close_menu();
+        }
+        if ui.button("Dekbanden beheren...").clicked(){
+            self.open_dekband_dialog(index);ui.close_menu();
+        }
+        ui.menu_button("Opmerking bewerken...",|ui|{
+            ui.add(egui::TextEdit::multiline(&mut self.virtual_map.menu_note)
+                .desired_width(240.).desired_rows(4).char_limit(65536));
+            if ui.button("Opslaan").clicked(){
+                self.change_virtual_comment(index,Some(self.virtual_map.menu_note.clone()));
+                ui.close_menu();
+            }
+        });
+        if ui.button("Opmerking wissen").clicked(){
+            self.change_virtual_comment(index,None);ui.close_menu();
+        }
+    }
+    fn rotate_virtual_tiff(&mut self,index:usize,angle:f64){
+        if !angle.is_finite()||angle.abs()>360_000.{
+            self.message="Ongeldige rotatiehoek".into();return;
+        }
+        let Some(source)=self.virtual_trenches.get(index)else{return};
+        let mut changed=source.clone();
+        let cx=(source.start.x+source.end.x)*0.5;
+        let cy=(source.start.y+source.end.y)*0.5;
+        let half=source.length()*0.5;
+        let (sin,cos)=angle.to_radians().sin_cos();
+        let start=[cx-cos*half,cy-sin*half];
+        let end=[cx+cos*half,cy+sin*half];
+        match map::transform_axis(&mut changed,start,end){
+            Ok(true)=>{self.virtual_trenches[index]=changed;self.dirty=true;
+                self.trench_markers.clear();self.refresh_virtual_references();
+                self.message="Virtuele proefsleuf gedraaid".into();},
+            Ok(false)=>{},
+            Err(e)=>self.message=e,
+        }
+    }
+    fn change_virtual_comment(&mut self,index:usize,note:Option<String>){
+        let Some(source)=self.virtual_trenches.get(index)else{return};
+        let mut candidate=source.clone();
+        let text=note.unwrap_or_default();
+        if text.len()>65536{self.message="Opmerking is te lang".into();return;}
+        let mut object=candidate.metadata.as_object().cloned().unwrap_or_default();
+        if text.trim().is_empty(){object.remove(sleufbase_rust::map_comments::KEY);}
+        else{object.insert(sleufbase_rust::map_comments::KEY.into(),serde_json::Value::String(text));}
+        candidate.metadata=serde_json::Value::Object(object);
+        match candidate.point_metadata_bytes(){
+            Ok(_)=>{self.virtual_trenches[index]=candidate;self.dirty=true;},
+            Err(e)=>self.message=e,
+        }
+    }
     pub(super) fn show_virtual_map_controls(&mut self, ui: &mut egui::Ui) {
         if ui.button("Nieuwe sleuf op kaart tekenen").clicked() {
             self.start_virtual_creation();
@@ -610,6 +1099,14 @@ impl SleufBaseApp {
     pub(super) fn handle_virtual_map(&mut self, view: &raster_point_ui::View) {
         let ctx = view.painter.ctx();
         self.poll_virtual_ahn(ctx);
+        if self.virtual_map.chainage.is_some() || self.virtual_map.dekband.is_some()
+            || self.shell.marxact_open {
+            return; // Dialogs own the pointer until accepted or cancelled.
+        }
+        if self.virtual_map.rotating.is_some(){
+            self.handle_virtual_rotation(view);
+            return;
+        }
         let released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
         let consumed = self.virtual_map.capture;
         if released {

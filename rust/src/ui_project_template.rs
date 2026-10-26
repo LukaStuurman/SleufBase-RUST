@@ -96,7 +96,7 @@ impl SleufBaseApp {
         let raster_previews = &self.raster_textures;
         if let Some(dialog) = &mut self.project_template_dialog {
             let mut clicked_row=None;let mut sync_editor=false;
-            egui::Window::new("Project naar sjabloon-DXF — volledig native Rust")
+            egui::Window::new("DXF-sjabloon exporteren")
                 .open(&mut open)
                 .default_width(730.)
                 .default_height(650.)

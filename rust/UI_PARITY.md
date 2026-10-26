@@ -4,6 +4,41 @@ Status: het volledige UI-doel is **open**. De oorspronkelijke hoofd-shell, het t
 
 Deze inventaris is een statische audit van bronbestanden en codeobjecten. Hiervoor zijn geen app, accounts, gebruikersinstellingen of bestaande gebruikerssessies geopend. Er zijn geen Cargo- of Git-opdrachten uitgevoerd.
 
+## Update van de huidige UI-branch (26 oktober 2026)
+
+De vergelijkende tabel hieronder beschrijft de **oude uitgangssituatie op `main`**;
+zij is niet automatisch de toestand van de open PR. In
+[PR #1](https://github.com/LukaStuurman/SleufBase-RUST/pull/1)
+zijn inmiddels de volgende UI-oppervlakken aangepast:
+
+- KickTheMap Jobs: zeven kolommen met aparte filters, Jobs-kaart en Open job
+  in het eigen Edge-profiel; echte accountacceptatie nog niet voltooid.
+- Fysieke TIFF-lijst: afzonderlijk rechtermuisknopmenu met rotatie,
+  commentaar en een bewerkbare virtuele geometriekopie.
+  Dit is **geen kopie van de rasterpixels**.
+- Virtuele TIFF-lijst: naam, verplaatsen, 90°/handmatige/interactieve rotatie,
+  reset, virtuele kopie, puntbewerking en opmerkingen. Geometrische validatie
+  blijft leidend bij gemeten sleuven.
+- Punt- en dekbandvensters: aparte kettingmaatstappen en dekbandbeheer met
+  begindiepte, einddiepte en annuleren.
+- marXact: dialoog 'MarXact kabel-/leidingoriëntatie' met bronkeuze,
+  correctie van -90° tot +90° en automatische herberekening.
+- DXF-export: titel en bronkolommen van het origineel; geselecteerde
+  geauthenticeerde live jobs zijn vanuit hetzelfde venster te downloaden,
+  komen daarna in de bronlijst en worden automatisch aangevinkt.
+- CAD-overlap: popup 'Gevonden lagen (N)' om een van meerdere treffers te kiezen.
+- Aanvullende UI-regressies: na annuleren van virtuele rotatie komt de muiscapture
+  vrij; een geweigerde rotatie onderbreekt geen andere kaartbewerking; gekoppelde
+  live-DXF-selecties hebben een consequent alles-selecteren/wissen-gedrag.
+
+**Bewijslimiet:** De eerdere Jobs-baseline heeft een groene Windows-run.
+Voor de nieuwste branch moeten alle Cargo-tests, Clippy, releasebuild en
+portable packaging slagen. Daardoor zijn de nieuwe interacties nog niet
+automatisch volledig geaccepteerd. Er is geen visuele Tk-versus-egui-pixeldiff
+en geen eind-tot-eindtest met een echte KickTheMap-account. De oorspronkelijke
+aparte Toplevel-vensters, de volledige instellingsvelden, oorspronkelijke
+tooltip-/focusvolgorde en overige context-/exportdetails blijven open.
+
 ## Bewijs en scope
 
 - Native werkboom: deze repository, `LukaStuurman/SleufBase-RUST`.

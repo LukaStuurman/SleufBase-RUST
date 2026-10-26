@@ -136,6 +136,19 @@ impl Browser {
     pub fn browser_jobs(&self)->Result<Vec<crate::jobs_cache::Job>,String>{
         crate::kickthemap_live::parse_live_jobs(&self.browser_job_payload()?)
     }
+    /// Open the selected job in a new tab of *our own* KickTheMap Edge profile.
+    /// Identity comes from a current, authenticated jobs response, never from a
+    /// stale cache or a guessed job URL.
+    pub fn open_job(&self,job_id:u64)->Result<(),String>{
+        let payload=self.browser_job_payload()?;
+        let url=job_view_url(&payload,job_id)?;
+        let response=self.command("Target.createTarget",
+            json!({"url":url.as_str()}),None)?;
+        if response["targetId"].as_str().is_none_or(str::is_empty){
+            return Err("Edge kon het KickTheMap-jobtabblad niet openen".into());
+        }
+        Ok(())
+    }
     pub fn browser_job_payload(&self)->Result<String,String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
         let script=r#"(async()=>{let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
@@ -147,6 +160,45 @@ impl Browser {
         if content.len()>MAX_CDP_RESPONSE{return Err("KickTheMap browser-resultaat te groot".into());}
         Ok(content.to_owned())
     }
+}
+
+/// Build only an original KickTheMap viewJob path from one verified live job.
+fn job_view_url(payload:&str,job_id:u64)->Result<reqwest::Url,String>{
+    let raw:Value=serde_json::from_str(payload).map_err(|_|"Ongeldige live joblijst".to_owned())?;
+    let arrays=[
+        raw.as_array(),
+        raw.get("data").and_then(Value::as_array),
+        raw.get("jobs").and_then(Value::as_array),
+        raw.get("projects").and_then(Value::as_array),
+        raw.get("data").and_then(|v|v.get("jobs")).and_then(Value::as_array),
+        raw.get("data").and_then(|v|v.get("projects")).and_then(Value::as_array),
+        raw.get("data").and_then(|v|v.get("data")).and_then(Value::as_array),
+    ];
+    let job=arrays.into_iter().flatten().flatten().find(|j|{
+        j.get("Id").or_else(||j.get("id")).and_then(|v|{
+            v.as_u64().or_else(||v.as_str().and_then(|s|s.parse::<u64>().ok()))
+        })==Some(job_id)
+    }).ok_or("Job niet gevonden in de huidige KickTheMap-sessie")?;
+    let text=|key:&str|->String{
+        match job.get(key){
+            Some(Value::String(s))=>s.trim().to_owned(),
+            Some(Value::Number(n))=>n.to_string(),
+            _=>String::new(),
+        }
+    };
+    let owner= if !text("user_id").is_empty(){text("user_id")}
+        else if !text("project_mail").is_empty(){text("project_mail")}
+        else {text("email")};
+    let date= if !text("project_date").is_empty(){text("project_date")}
+        else{text("created_at")};
+    if owner.is_empty()||date.is_empty()||owner.len()>254||date.len()>100
+       ||owner.chars().any(char::is_control)||date.chars().any(char::is_control){
+        return Err("Job heeft geen betrouwbare browseridentiteit".into());
+    }
+    let mut url=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
+    url.path_segments_mut().map_err(|_|"KickTheMap-URL heeft geen pad")?
+        .push("viewJob").push(&format!("{owner}_{date}"));
+    Ok(url)
 }
 
 /// A lightweight capability limited to this process's own Edge debug port.
@@ -234,6 +286,19 @@ impl Drop for Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn open_job_uses_live_verified_identity_not_guessed_urls() {
+        let payload=r#"{"data":[{"Id":42,"user_id":"fixture@example.test","project_date":"2026-10-25T12:00:00Z"}]}"#;
+        let url=job_view_url(payload,42).unwrap();
+        assert_eq!(url.origin().ascii_serialization(),ORIGIN);
+        assert!(url.path().starts_with("/viewJob/"));
+        assert!(url.path().contains("fixture"));
+        assert!(job_view_url(payload,43).is_err());
+        assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":12345,"project_date":"2026-10-26"}]}"#,42)
+            .unwrap().path().contains("12345_2026-10-26"));
+        assert!(job_view_url(r#"{"data":[{"Id":42,"project_date":"now"}]}"#,42).is_err());
+        assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":"bob","project_date":"\\n"}]}"#,42).is_ok());
+    }
     #[test]
     fn only_private_origin_cookies_are_adopted() {
         let cookie=json!({"cookies":[

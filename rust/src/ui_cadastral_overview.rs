@@ -52,6 +52,21 @@ impl SleufBaseApp {
             Ok(settings)=>{self.overview_ui.settings=settings;self.overview_ui.error.clear();self.overview_ui.open=true;},Err(error)=>self.message=error,
         }
     }
+    /// The original Acties menu asks immediately for an output DXF; options
+    /// remain configured via Instellingen and the advanced export screen.
+    pub(super) fn export_cadastral_from_actions(&mut self){
+        self.open_cadastral_overview();
+        if !self.overview_ui.open{return;}
+        if let Some(path)=rfd::FileDialog::new()
+            .add_filter("AutoCAD DXF",&["dxf"])
+            .set_file_name("SleufBase-Kadastraal.dxf").save_file(){
+            if let Err(error)=self.start_cadastral_overview(path){
+                self.overview_ui.error=error.clone();self.message=error;
+            }
+        }else{
+            self.overview_ui.open=false;
+        }
+    }
     pub(super) fn start_cadastral_overview(&mut self,output:PathBuf)->Result<(),String>{
         if self.project_sources_owned()||self.template_job.is_some()||self.export_intent.is_some()||self.file_intent.is_some()||self.pending_project_action.is_some()||self.trench_editor.is_some(){return Err("Rond de lopende taak eerst af".into());}
         if output.exists(){return Err("Het uitvoerbestand bestaat al; kies een andere naam".into());}

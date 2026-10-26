@@ -9,6 +9,10 @@ pub(super) struct State {
     pub installed: bool,
     pub extended: bool,
     pub coords: String,
+    pub(super) marxact_open: bool,
+    marxact_generation:u64,
+    marxact_index:usize,
+    marxact_angle:f64,
     tiff_height: Option<f32>,
     klic_height: Option<f32>,
     last_sidebar_height: Option<f32>,
@@ -25,6 +29,8 @@ impl Default for State {
             installed: false,
             extended: false,
             coords: "RD: -".into(),
+            marxact_open:false,marxact_generation:0,
+            marxact_index:0,marxact_angle:0.,
             tiff_height: None,
             klic_height: None,
             last_sidebar_height: None,
@@ -158,7 +164,7 @@ impl SleufBaseApp {
                                 ui.close_menu();
                             }
                         });
-                    action = action.or(menu(ui, "marXact", &[("marXact import", "marxact")]));
+                    action = action.or(menu(ui, "marXact", &[("marXact import", "marxact"),("Oriëntatie aanpassen...", "marxact_orientation")]));
                 });
             });
         if ctx.input_mut(|i| {
@@ -210,18 +216,30 @@ impl SleufBaseApp {
                 self.pan = egui::Vec2::ZERO;
             }
             "addresses" => self.open_tiff_addresses(),
-            "maps" => self.open_map_export(),
-            "cadastral" => self.open_cadastral_overview(),
+            "maps" => {
+                if let Some(folder)=rfd::FileDialog::new().set_title("Kies exportmap voor kaarten").pick_folder(){
+                    self.start_maps_export(folder);
+                }
+            }
+            "cadastral" => self.export_cadastral_from_actions(),
             "template" => self.open_template_export(),
             "clear_refs" => self.clear_raster_references(),
             "starts" => self.load_all_shell_start_points(),
             "clear_comments" => self.clear_map_comments(),
             "clear" => self.request_project_action(ProjectAction::ClearLayers, ctx),
             "excel" => self.save_excel(),
-            "jobs" | "login" => self.open_kickthemap_workspace(),
+            "jobs" => {
+                self.browser_ui.show_login = false;
+                self.open_kickthemap_workspace();
+            }
+            "login" => {
+                self.browser_ui.show_login = true;
+                self.open_kickthemap_workspace();
+            },
             "objects" => self.save_dxf(),
             "logout" => self.logout_live_jobs(),
             "ai" => self.open_ai_maaiveld(),
+            "marxact_orientation" => self.open_marxact_orientation(),
             "marxact" => {
                 if let Some(files) = rfd::FileDialog::new()
                     .add_filter("marXact DXF", &["dxf"])
@@ -234,6 +252,113 @@ impl SleufBaseApp {
         }
     }
 
+    fn marxact_indices(&self)->Vec<usize>{
+        self.virtual_trenches.iter().enumerate()
+            .filter_map(|(i,t)|(t.alignment.is_some()||!t.boundary_3d.is_empty()).then_some(i))
+            .collect()
+    }
+    pub(super) fn open_marxact_orientation(&mut self){
+        let indices=self.marxact_indices();
+        let Some(&index)=indices.first() else{
+            self.message="Er zijn geen geladen MarXact-proefsleuven.".into();return;
+        };
+        self.shell.marxact_open=true;
+        self.shell.marxact_generation=self.project_generation;
+        self.shell.marxact_index=index;
+        self.shell.marxact_angle=self.virtual_trenches[index].alignment
+            .as_ref().map_or(0.,|a|a.rotation_degrees);
+    }
+    pub(super) fn show_marxact_orientation(&mut self,ctx:&egui::Context){
+        if !self.shell.marxact_open{return;}
+        if self.shell.marxact_generation!=self.project_generation{
+            self.shell.marxact_open=false;return;
+        }
+        let indices=self.marxact_indices();
+        if indices.is_empty(){self.shell.marxact_open=false;return;}
+        if !indices.contains(&self.shell.marxact_index){
+            self.shell.marxact_index=indices[0];
+            self.shell.marxact_angle=self.virtual_trenches[indices[0]].alignment
+                .as_ref().map_or(0.,|a|a.rotation_degrees);
+        }
+        let mut open=true;
+        let mut operation=None;
+        egui::Window::new("MarXact kabel-/leidingoriëntatie")
+            .open(&mut open).default_width(650.).default_height(310.)
+            .min_width(590.).min_height(290.)
+            .resizable(false).show(ctx,|ui|{
+                ui.heading("MarXact kabel-/leidingoriëntatie");
+                ui.label("De automatische richting volgt de gemeten 3D-POLYLINE-randen. De rotatiecorrectie draait de gekozen sleuf ten opzichte van de automatische uitlijning.");
+                ui.horizontal(|ui|{
+                    ui.label("Proefsleuf");
+                    let selected=self.shell.marxact_index;
+                    egui::ComboBox::from_id_salt("marxact-orientation-source")
+                        .width(390.).selected_text(&self.virtual_trenches[selected].label)
+                        .show_ui(ui,|ui|{
+                            for &index in &indices{
+                                if ui.selectable_label(index==self.shell.marxact_index,
+                                    &self.virtual_trenches[index].label).clicked(){
+                                    self.shell.marxact_index=index;
+                                    self.shell.marxact_angle=self.virtual_trenches[index].alignment
+                                        .as_ref().map_or(0.,|a|a.rotation_degrees);
+                                }
+                            }
+                        });
+                });
+                ui.horizontal(|ui|{
+                    ui.label("Rotatiecorrectie");
+                    if ui.add(egui::Slider::new(&mut self.shell.marxact_angle,-90. ..=90.)
+                        .suffix("°")).changed(){
+                        operation=Some("apply");
+                    }
+                    if ui.add(egui::DragValue::new(&mut self.shell.marxact_angle)
+                        .range(-90. ..=90.).speed(0.1).suffix("°")).changed(){
+                        operation=Some("apply");
+                    }
+                });
+                ui.small(format!("{:+.1}° ten opzichte van automatisch",self.shell.marxact_angle));
+                ui.horizontal(|ui|{
+                    for (label,delta) in [("−1°",-1.),("−0,1°",-0.1),("+0,1°",0.1),("+1°",1.)]{
+                        if ui.button(label).clicked(){
+                            self.shell.marxact_angle=(self.shell.marxact_angle+delta).clamp(-90.,90.);
+                            operation=Some("apply");
+                        }
+                    }
+                    if ui.button("Correctie 0°").clicked(){
+                        self.shell.marxact_angle=0.;operation=Some("apply");
+                    }
+                });
+                ui.horizontal(|ui|{
+                    if ui.button("Automatisch opnieuw bepalen").clicked(){operation=Some("recalculate");}
+                    if ui.button("Sluiten").clicked(){operation=Some("close");}
+                });
+            });
+        self.shell.marxact_open=open;
+        match operation{
+            Some("apply")|Some("recalculate")=>{
+                let index=self.shell.marxact_index;
+                let mut candidate=self.virtual_trenches[index].clone();
+                let result=if operation==Some("recalculate"){
+                    sleufbase_rust::marxact_alignment::recalculate(&mut candidate)
+                }else{
+                    sleufbase_rust::marxact_alignment::apply_rotation(
+                        &mut candidate,self.shell.marxact_angle)
+                };
+                match result{
+                    Ok(())=>{
+                        self.virtual_trenches[index]=candidate;
+                        if operation==Some("recalculate"){self.shell.marxact_angle=0.;}
+                        self.trench_markers.clear();
+                        self.refresh_virtual_references();
+                        self.dirty=true;
+                        self.message="MarXact-oriëntatie bijgewerkt.".into();
+                    }
+                    Err(e)=>self.message=format!("MarXact-oriëntatie: {e}"),
+                }
+            }
+            Some("close")=>self.shell.marxact_open=false,
+            _=>{}
+        }
+    }
     pub(super) fn show_original_sidebar(&mut self, ctx: &egui::Context) {
         let width = (ctx.screen_rect().width().max(1200.) * 0.255).clamp(360., 400.);
         egui::SidePanel::left("original-sidebar").default_width(width).min_width(340.)
@@ -341,7 +466,7 @@ impl SleufBaseApp {
                             if response.clicked() || response.secondary_clicked() {
                                 selected = Some((false, i));
                             }
-                            contexts.push(response.clone());
+                            contexts.push((false,i,response.clone()));
                             if let Some(error) = self.raster_errors.get(i).and_then(|e| e.as_ref())
                             {
                                 response.on_hover_text(error);
@@ -353,7 +478,7 @@ impl SleufBaseApp {
                             if response.clicked() || response.secondary_clicked() {
                                 selected = Some((true, i));
                             }
-                            contexts.push(response);
+                            contexts.push((true,i,response));
                         }
                     });
             });
@@ -383,17 +508,36 @@ impl SleufBaseApp {
         });
         // The menu belongs to each row. Making the entire card clickable after
         // its children would intercept ordinary selection and footer clicks.
-        for response in contexts {
+        for (is_virtual,index,response) in contexts {
             response.context_menu(|ui| {
-                self.show_raster_rotation_controls(ui);
-                self.show_tiff_comment_controls(ui);
-                if let Some(i) = self.virtual_map.selected {
-                    if ui.button("Proefsleuf bewerken").clicked() {
-                        self.open_virtual_editor(i);
+                if is_virtual {
+                    if self.virtual_trenches.get(index).is_some(){
+                        self.show_virtual_tiff_context(ui,index);
+                    }
+                } else if let Some(path)=self.geotiffs.get(index).map(|r|r.path.clone()) {
+                    // Right-click selects the row actually clicked, not a
+                    // previously selected layer (or another duplicate path).
+                    let old_virtual=self.virtual_map.selected;
+                    let old_raster=self.raster_points.selected.clone();
+                    self.virtual_map.selected=None;
+                    self.raster_points.selected=Some(path.clone());
+                    if old_virtual.is_some()||old_raster.as_ref()!=Some(&path){
+                        self.update_view_selection(old_virtual,old_raster.as_deref());
+                    }
+                    if ui.button("Maak virtuele kopie...").clicked(){
+                        self.make_virtual_from_raster(index);
                         ui.close_menu();
                     }
+                    ui.separator();
+                    self.show_physical_rotation_menu(ui);
+                    ui.separator();
+                    if ui.button("Opmerking bewerken...").clicked(){
+                        self.open_tiff_comment(&path);ui.close_menu();
+                    }
+                    if ui.button("Opmerking wissen").clicked(){
+                        self.clear_tiff_comment(&path);ui.close_menu();
+                    }
                 }
-                self.show_virtual_map_controls(ui);
             });
         }
     }

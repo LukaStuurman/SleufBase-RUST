@@ -700,7 +700,7 @@ mod tests {
             app.save_dxf();
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("cancelled.dxf");
-            app.finish_dxf_export(path.clone(), crate::export_dialog::Action { overlay: true });
+            app.finish_dxf_export(path.clone(), crate::export_dialog::Action { overlay: true,open_jobs:false,queue_remote:false });
             started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
             assert!(app.datasets.is_empty());
             assert!(app.virtual_trenches.is_empty());

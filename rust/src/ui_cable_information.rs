@@ -91,15 +91,15 @@ fn feature_distance(
     }
     best
 }
-fn pick(
+fn pick_all(
     overlays: &[DxfOverlay],
     view: &raster_point_ui::View,
     pointer: Pos2,
-) -> Option<(usize, usize)> {
-    let tolerance = tolerance_pixels(view.scale)?;
+) -> Vec<(usize, usize)> {
+    let Some(tolerance) = tolerance_pixels(view.scale) else {return Vec::new()};
     let rect = view.rect.intersect(view.painter.clip_rect());
     if !rect.is_positive() || !rect.contains(pointer) {
-        return None;
+        return Vec::new();
     }
     let clip = [
         f64::from(rect.min.x),
@@ -108,7 +108,7 @@ fn pick(
         f64::from(rect.max.y),
     ];
     let pointer = [f64::from(pointer.x), f64::from(pointer.y)];
-    let mut best: Option<(f64, String, String, String, usize, usize)> = None;
+    let mut found:Vec<(f64, String, String, String, usize, usize)> = Vec::new();
     for (overlay_index, overlay) in overlays.iter().enumerate().filter(|(_, o)| o.visible) {
         for index in 0..overlay.features.len() + overlay.expanded.features.len() {
             // rendered_features deliberately omits raw INSERT origins, drawing
@@ -124,12 +124,6 @@ fn pick(
             }
             let distance = feature_distance(&feature, view, pointer, clip);
             if distance > tolerance || !distance.is_finite() {
-                continue;
-            }
-            if best
-                .as_ref()
-                .is_some_and(|candidate| distance > candidate.0)
-            {
                 continue;
             }
             let display = if feature.layer.is_empty() {
@@ -150,14 +144,48 @@ fn pick(
                 overlay_index,
                 index,
             );
-            if best.as_ref().is_none_or(|candidate| key < *candidate) {
-                best = Some(key);
-            }
+            found.push(key);
         }
     }
-    best.map(|(_, _, _, _, overlay, feature)| (overlay, feature))
+    found.sort_by(|a,b|a.0.total_cmp(&b.0)
+        .then_with(||a.1.cmp(&b.1)).then_with(||a.2.cmp(&b.2))
+        .then_with(||a.3.cmp(&b.3)).then_with(||a.4.cmp(&b.4))
+        .then_with(||a.5.cmp(&b.5)));
+    found.into_iter().map(|(_,_,_,_,overlay,feature)|(overlay,feature)).collect()
+}
+fn pick(overlays:&[DxfOverlay],view:&raster_point_ui::View,pointer:Pos2)->Option<(usize,usize)>{
+    pick_all(overlays,view,pointer).into_iter().next()
 }
 impl SleufBaseApp {
+    pub(super) fn show_found_layers_popup(&mut self,ctx:&egui::Context){
+        if !self.found_layers_open{return;}
+        let mut open=true;
+        let mut request_close=false;
+        let mut selected=None;
+        egui::Window::new(format!("Gevonden lagen ({})",self.found_layers.len()))
+            .default_width(380.).default_height(260.)
+            .default_pos(self.found_layers_pos.unwrap_or(egui::pos2(180.,160.))+egui::vec2(10.,10.))
+            .open(&mut open).show(ctx,|ui|{
+                ui.small("Klik op een van de gevonden objecten voor de kabelinformatie.");
+                egui::ScrollArea::vertical().max_height(260.).show(ui,|ui|{
+                    for &(overlay_index,feature_index) in &self.found_layers{
+                        let Some(layer)=self.overlays.get(overlay_index)else{continue};
+                        let Some(feature)=layer.inspect_feature(feature_index)else{continue};
+                        let filename=layer.path.file_name().unwrap_or_default().to_string_lossy();
+                        let title=format!("{} — {} ({})",feature.layer,filename,feature.source.entity_type);
+                        if ui.selectable_label(self.dxf_selection.as_ref().is_some_and(|s|
+                            s.overlay==overlay_index&&s.feature==feature_index),title).clicked(){
+                            selected=Some((overlay_index,feature_index));
+                        }
+                    }
+                });
+                if ui.button("Sluiten").clicked(){request_close=true;}
+            });
+        if let Some((overlay,feature))=selected{
+            self.select_dxf(overlay,feature);
+        }
+        self.found_layers_open=open&&!request_close;
+    }
     pub(super) fn handle_cable_information(&mut self, view: &raster_point_ui::View) {
         if self.project_sources_owned()
             || self.virtual_map.captures()
@@ -176,7 +204,10 @@ impl SleufBaseApp {
         let Some(pointer) = view.clicked else {
             return;
         };
-        if let Some((overlay, feature)) = pick(&self.overlays, view, pointer) {
+        self.found_layers=pick_all(&self.overlays,view,pointer);
+        self.found_layers_pos=Some(pointer);
+        self.found_layers_open=!self.found_layers.is_empty();
+        if let Some((overlay, feature)) = self.found_layers.first().copied() {
             self.select_dxf(overlay, feature);
             if let Some(selection) = &self.dxf_selection {
                 let layer = selection

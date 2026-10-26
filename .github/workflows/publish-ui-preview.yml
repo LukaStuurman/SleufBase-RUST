@@ -1,0 +1,96 @@
+name: Publish SleufBase Rust UI preview 2
+
+on:
+  workflow_run:
+    workflows: ["Rust Windows"]
+    types: [completed]
+
+# This workflow is deliberately one-shot. It never publishes a later UI build
+# under the same tag and it will not publish PR branch artifacts.
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that the completed build is still main
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          TAG: v0.1.0-preview.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$RUN_SHA" != "$current" ]]; then
+            echo "The successful build is not the current main. Skipping a stale release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Never overwrite published binaries."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout verified source
+        if: steps.guard.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Download portable and installer artifacts from passing run
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name SleufBase-Rust-Windows-portable-preview --dir release
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name SleufBase-Rust-Windows-installer-preview --dir release
+          ls -lah release
+
+      - name: Verify both packaged files and their checksums
+        if: steps.guard.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          test -s SleufBase-Rust-portable-preview.zip
+          test -s SleufBase-Rust-portable-preview.sha256
+          test -s SleufBase-Rust-preview-Setup.exe
+          test -s SleufBase-Rust-preview-Setup.sha256
+          sha256sum --check SleufBase-Rust-portable-preview.sha256
+          sha256sum --check SleufBase-Rust-preview-Setup.sha256
+
+      - name: Publish one-time preview release and Windows downloads
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          TAG: v0.1.0-preview.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            release/SleufBase-Rust-portable-preview.zip \
+            release/SleufBase-Rust-portable-preview.sha256 \
+            release/SleufBase-Rust-preview-Setup.exe \
+            release/SleufBase-Rust-preview-Setup.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RUN_SHA" \
+            --title "SleufBase Rust 0.1.0 - UI preview 2" \
+            --notes-file rust/RELEASE_NOTES_UI_PREVIEW.md \
+            --prerelease
