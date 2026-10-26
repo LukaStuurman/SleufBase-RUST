@@ -486,11 +486,12 @@ pub(crate) fn show(
     };
     egui::Window::new("DXF-sjabloon exporteren")
         .open(&mut open)
-        .default_width(900.)
+        .default_width(1000.)
+        .default_height(730.)
         .max_width((ctx.screen_rect().width() - 48.).max(280.))
         .max_height((ctx.screen_rect().height() - 48.).max(200.))
         .vscroll(true)
-        .resizable(true)
+        .resizable(false)
         .show(ctx, contents);
 
     if !open || cancel {
