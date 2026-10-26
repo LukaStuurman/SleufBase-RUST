@@ -218,7 +218,14 @@ impl SleufBaseApp {
             "clear_comments" => self.clear_map_comments(),
             "clear" => self.request_project_action(ProjectAction::ClearLayers, ctx),
             "excel" => self.save_excel(),
-            "jobs" | "login" => self.open_kickthemap_workspace(),
+            "jobs" => {
+                self.browser_ui.show_login = false;
+                self.open_kickthemap_workspace();
+            }
+            "login" => {
+                self.browser_ui.show_login = true;
+                self.open_kickthemap_workspace();
+            },
             "objects" => self.save_dxf(),
             "logout" => self.logout_live_jobs(),
             "ai" => self.open_ai_maaiveld(),
