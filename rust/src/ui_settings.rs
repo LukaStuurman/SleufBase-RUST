@@ -161,14 +161,13 @@ impl Dialog {
         settings.kickthemap_material_choices = choices(&self.materials)?;
         settings.kickthemap_profile_extra_choices = choices(&self.extras)?;
         settings.marxact_name_mappings = mappings(&self.mappings)?;
-        settings.validate()?;
         if let Some(viewer) = &self.viewer {
-            use sleufbase_rust::project_view::BackgroundProvider;
-            if !matches!(BackgroundProvider::from_label(&viewer.background_source),
-                BackgroundProvider::PdokAerial | BackgroundProvider::Cadastral | BackgroundProvider::OpenStreetMap) {
-                return Err("Kies een geldige achtergrond op het kaartscherm".into());
-            }
+            settings.viewer = sleufbase_rust::settings_compat::ViewerPreferences {
+                background_source: viewer.background_source.clone(),
+                use_background: viewer.use_background,
+            };
         }
+        settings.validate()?;
         Ok(Saved {
             viewer: self.viewer.clone(),
             settings,
@@ -284,7 +283,7 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
                     ui.selectable_value(&mut viewer.background_source, source.label().into(), display(source));
                 }
             });
-        ui.small("SleufBase start standaard met PDOK Luchtfoto. Hiervoor is geen account nodig.");
+        ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
         ui.checkbox(&mut viewer.use_background, "Achtergrondkaart tonen op het kaartscherm");
         ui.separator();
     }
@@ -296,13 +295,24 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     };
     egui::ComboBox::from_id_salt("settings-export-background").selected_text(label(background))
         .show_ui(ui, |ui| {
-            for value in ["pdok", "cadastral", "osm"] {
+            for value in ["pdok", "cadastral", "osm", "white"] {
                 ui.selectable_value(background, value.into(), label(value));
             }
         });
     ui.add_space(12.);
     ui.checkbox(&mut state.draft.map_export.include_cad,
         "KLIC-overlays meenemen in kaartexport en sjabloonkaarten");
+    ui.add_space(12.);
+    super::theme::strong(ui,"A4-kaarten exporteren");
+    ui.horizontal(|ui| {
+        ui.label("Resolutie (DPI)");
+        ui.add(egui::DragValue::new(&mut state.draft.map_export.dpi).range(30..=600));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Schaal 1:");
+        ui.add(egui::DragValue::new(&mut state.draft.map_export.scale).range(1. ..=100_000.).speed(1.));
+    });
+    ui.small("Deze schaal en resolutie gelden voor Acties → Export kaarten.");
 }
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     let p = &mut state.draft.export_preferences;

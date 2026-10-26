@@ -246,7 +246,7 @@ impl Default for SleufBaseApp {
             shell:Default::default(),
             overview_ui:Default::default(),
             ai_maaiveld_ui:Default::default(),
-            project_view:Default::default(),project_settings:None,project_exchange:None,exchange_deferred:None,
+            project_view:migrated_settings.viewer.project_view(),project_settings:None,project_exchange:None,exchange_deferred:None,
             background_restore_pending:false,pdok_source:pdok_wms::Source::Aerial,
             raster_rotation:Default::default(),
             virtual_map:Default::default(),
@@ -399,7 +399,7 @@ impl SleufBaseApp {
 
     fn apply_project(&mut self,doc:NativeProject,path:Option<PathBuf>,restored:bool,markers:Vec<Vec<sleufbase_rust::cross_section::Marker>>,_ctx:&egui::Context) {
         self.clear_project_requests();
-        let view=doc.view.clone().unwrap_or_default();
+        let view=doc.view.clone().unwrap_or_else(||self.migrated_settings.viewer.project_view());
         self.project_view=view;
         self.background_restore_pending=self.project_view.use_background&&self.project_view.camera.is_some();
         self.project_settings=doc.project_settings;
@@ -1464,6 +1464,7 @@ impl SleufBaseApp {
         if let Some(state)=crate::template_dialog::show(ctx,&mut self.template_order_dialog,&self.geotiffs,&self.datasets,self.project_generation){
             if let Some(path)=rfd::FileDialog::new().add_filter("DXF",&["dxf"]).set_file_name(if !state.paired && state.reverse{"SleufBase-Proefsleuven-omgekeerd.dxf"}else{"SleufBase-Proefsleuven.dxf"}).save_file(){self.finish_template_export(path,state);}
         }
+        self.handle_layer_shortcuts(ctx);
 
     }
 }

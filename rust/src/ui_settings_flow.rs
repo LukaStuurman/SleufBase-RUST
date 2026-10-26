@@ -7,6 +7,9 @@ impl SleufBaseApp {
             return;
         }
         let mut dialog = settings_ui::Dialog::new(&self.migrated_settings, &self.backup_settings);
+        if let Some(project_settings) = &self.project_settings {
+            dialog.draft.map_export = project_settings.map_export.clone();
+        }
         dialog.viewer = Some(settings_ui::ViewerDraft {
             background_source: self.project_view.background_source.clone(),
             use_background: self.project_view.use_background,
@@ -21,6 +24,14 @@ impl SleufBaseApp {
     }
 
     fn apply_saved_settings(&mut self, saved: settings_ui::Saved, generation: Option<u64>) {
+        if generation == Some(self.project_generation) {
+            if let Some(project_settings) = &mut self.project_settings {
+                if project_settings.map_export != saved.settings.map_export {
+                    project_settings.map_export = saved.settings.map_export.clone();
+                    self.dirty = true;
+                }
+            }
+        }
         self.migrated_settings = saved.settings;
         self.backup_settings = saved.autosave;
         self.rule_editor = None;
@@ -144,4 +155,54 @@ mod tests {
         assert!(!app.dirty);
         assert!(app.message.contains("vorige project"));
     }
+    #[test]
+    fn saved_defaults_survive_disk_roundtrip_and_new_projects_but_not_override_saved_views() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let mut app = SleufBaseApp::default();
+        app.open_settings();
+        let draft = app.settings_dialog.as_mut().unwrap();
+        let viewer = draft.viewer.as_mut().unwrap();
+        viewer.background_source = "OpenStreetMap".into();
+        viewer.use_background = false;
+        draft.draft.map_export.background = "white".into();
+        draft.draft.map_export.dpi = 150;
+        draft.draft.map_export.scale = 500.;
+        let saved = draft.try_save(&mut |settings, autosave|
+            settings_store::save_pair(root.path(), settings, autosave)).unwrap();
+        app.apply_saved_settings(saved, app.shell.settings_generation);
+        let (settings, _) = settings_store::read_pair(root.path()).unwrap();
+        assert_eq!(settings.viewer, app.migrated_settings.viewer);
+        assert_eq!(settings.map_export.background, "white");
+        assert_eq!(settings.map_export.dpi, 150);
+        assert_eq!(settings.map_export.scale, 500.);
+        let mut restarted = SleufBaseApp {migrated_settings: settings, ..Default::default()};
+        restarted.apply_project(NativeProject::default(), None, false, Vec::new(), &ctx);
+        assert_eq!(restarted.project_view.background_source, "OpenStreetMap");
+        assert!(!restarted.project_view.use_background);
+        let saved_view = sleufbase_rust::project_view::ProjectView::default();
+        restarted.apply_project(NativeProject {view:Some(saved_view.clone()), ..Default::default()},
+            None, false, Vec::new(), &ctx);
+        assert_eq!(restarted.project_view, saved_view);
+    }
+
+    #[test]
+    fn map_settings_edit_the_active_project_scope_and_keep_other_export_preferences() {
+        let mut app = SleufBaseApp::default();
+        let mut project_settings = app.migrated_settings.clone();
+        project_settings.map_export.dpi = 150;
+        project_settings.dxf_label_gap = 12.;
+        app.project_settings = Some(project_settings);
+        app.open_settings();
+        let draft = app.settings_dialog.as_mut().unwrap();
+        assert_eq!(draft.draft.map_export.dpi, 150);
+        draft.draft.map_export.dpi = 200;
+        let saved = draft.try_save(&mut |_, _| Ok(())).unwrap();
+        app.apply_saved_settings(saved, app.shell.settings_generation);
+        assert_eq!(app.project_settings.as_ref().unwrap().map_export.dpi, 200);
+        assert_eq!(app.project_settings.as_ref().unwrap().dxf_label_gap, 12.);
+        assert_eq!(app.migrated_settings.map_export.dpi, 200);
+        assert!(app.dirty);
+    }
+
 }

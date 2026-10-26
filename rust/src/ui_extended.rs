@@ -704,6 +704,9 @@ impl SleufBaseApp {
             Some(&mut self.navigation),
         );
         if let Some(view) = view {
+            if view.response.clicked() || view.response.drag_started() {
+                view.response.request_focus();
+            }
             if let Some(pos) = view.response.hover_pos() {
                 let p = view.world(pos);
                 self.shell.coords = format!("RD: {:.2} / {:.2}", p[0], p[1]);
