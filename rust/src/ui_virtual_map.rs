@@ -326,6 +326,44 @@ mod tests {
             app.virtual_trenches[0].boundary_3d.clear();app.virtual_trenches[0].start_metadata=serde_json::json!({"surface_mode":"auto"});
         }
     }
+    #[test]
+    fn physical_tiff_virtual_copy_preserves_raster_and_creates_editable_geometry(){
+        let payload:serde_json::Value=serde_json::from_str(
+            include_str!("../tests/fixtures/raster-rotation/reference.json")).unwrap();
+        let raster:sleufbase_rust::geotiff::GeoTiffInfo=
+            serde_json::from_value(payload["cases"][0]["input"].clone()).unwrap();
+        let initial=raster.clone();
+        let mut app=SleufBaseApp{geotiffs:vec![raster],..Default::default()};
+        app.make_virtual_from_raster(0);
+        assert_eq!(app.geotiffs[0].transform,initial.transform);
+        assert_eq!(app.geotiffs[0].metadata,initial.metadata);
+        assert_eq!(app.virtual_trenches.len(),1);
+        let copy=&app.virtual_trenches[0];
+        assert_eq!(copy.source_path,Some(initial.path));
+        assert_eq!(copy.job_id,1);
+        assert!(copy.width_meters>0.1);
+        assert!(copy.length()>0.5);
+        assert_eq!(app.virtual_map.selected,Some(0));
+    }
+    #[test]
+    fn virtual_rotation_mode_and_exact_angle_keep_original_measurements(){
+        let mut app=app();
+        let before=app.virtual_trenches[0].clone();
+        let before_len=before.length();
+        let index=0;
+        if sleufbase_rust::virtual_trench_editor::is_measured(&before){
+            app.virtual_trenches[0].boundary_3d.clear();
+            app.virtual_trenches[0].alignment=None;
+        }
+        app.start_virtual_rotation(index);
+        assert_eq!(app.virtual_map.rotating,Some(index));
+        assert!(app.virtual_map.captures());
+        app.rotate_virtual_tiff(index,90.);
+        assert!((app.virtual_trenches[index].length()-before_len).abs()<1e-6);
+        app.cancel_virtual_map();
+        assert_eq!(app.virtual_map.rotating,None);
+        assert!(!app.virtual_map.captures());
+    }
 }
 impl Target {
     fn new(index: usize, t: &VirtualTrench) -> Self {
@@ -642,7 +680,8 @@ impl SleufBaseApp {
         let center=[(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5];
         let center_p=view.project(center);
         let screen_center=[center_p.x as f64,center_p.y as f64];
-        let radius=(t.length()*view.scale*0.5+28.).clamp(42.,view.rect.width().min(view.rect.height()) as f64*0.45);
+        let max_radius=(view.rect.width().min(view.rect.height()) as f64*0.45).max(42.);
+        let radius=(t.length()*view.scale*0.5+28.).clamp(42.,max_radius);
         let initial=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
         let angle=(initial+90.).to_radians();
         let handle=[screen_center[0]+radius*angle.cos(),screen_center[1]-radius*angle.sin()];
@@ -678,7 +717,7 @@ impl SleufBaseApp {
         let center=view.project([(t.start.x+t.end.x)*0.5,(t.start.y+t.end.y)*0.5]);
         let current=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
         let a=(current+90.).to_radians();
-        let point=center+egui::vec2(radius as f32*a.cos() as f32,-(radius as f32)*a.sin() as f32);
+        let point=center+egui::vec2(radius as f32*(a.cos() as f32),-(radius as f32)*(a.sin() as f32));
         view.painter.circle_stroke(center,radius as f32,Stroke::new(2.,ORANGE));
         view.painter.circle_filled(point,10.,ORANGE);
         view.painter.line_segment([p0,p1],Stroke::new(2.,ORANGE));
