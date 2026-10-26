@@ -93,6 +93,10 @@ mod shell_ui;
 #[path="ui_extended.rs"]
 mod extended_ui;
 
+#[cfg(test)]
+#[path="ui_navigation_tests.rs"]
+mod navigation_tests;
+
 pub fn viewport()->egui::ViewportBuilder { theme::viewport() }
 
 const ORANGE: Color32 = Color32::from_rgb(249, 115, 22);
@@ -1031,7 +1035,8 @@ fn canvas(
     let painter=ui.painter_at(rect);
     painter.rect_filled(rect,18.0,Color32::WHITE);
 
-    let mut bounds=union_bounds(Bounds::from_datasets(datasets),pdok_bounds);
+    // Backgrounds are samples of the camera, never an input to fitting it.
+    let mut bounds=Bounds::from_datasets(datasets);
     for raster in rasters {
         bounds=union_bounds(bounds,Some(raster.bounds));
     }
@@ -1063,24 +1068,65 @@ fn canvas(
     let bounds=bounds.or_else(||focus.map(|f|Bounds{min_x:f.center[0]-1.,max_x:f.center[0]+1.,min_y:f.center[1]-1.,max_y:f.center[1]+1.}));
     let Some(bounds)=bounds else {return None;};
 
-    if response.hovered() {
-        let scroll=ui.input(|i|i.smooth_scroll_delta.y);
-        if scroll!=0.0 {
-            *zoom=(*zoom*(1.0+f64::from(scroll)*0.002).clamp(0.25,4.0))
-                .clamp(0.05,300.0);
-        }
-    }
-    if response.dragged()&&(!navigation.as_ref().is_some_and(|n|n.pointer_tool)||response.dragged_by(egui::PointerButton::Middle)) {*pan+=response.drag_delta();}
-
     let width=(bounds.max_x-bounds.min_x).max(1.0);
     let height=(bounds.max_y-bounds.min_y).max(1.0);
     let screen_width=(rect.width()-56.0).max(1.0) as f64;
     let screen_height=(rect.height()-56.0).max(1.0) as f64;
-    let scale=focus.map_or_else(||(screen_width/width).min(screen_height/height),|f|1./f.meters_per_pixel) * *zoom;
-    let cx=focus.map_or((bounds.min_x+bounds.max_x)*0.5,|f|f.center[0]);
-    let cy=focus.map_or((bounds.min_y+bounds.max_y)*0.5,|f|f.center[1]);
+    let base_scale=focus.map_or_else(||(screen_width/width).min(screen_height/height),|f|1./f.meters_per_pixel);
+    let mut cx=focus.map_or((bounds.min_x+bounds.max_x)*0.5,|f|f.center[0]);
+    let mut cy=focus.map_or((bounds.min_y+bounds.max_y)*0.5,|f|f.center[1]);
+    // Fit once. Resize, visibility toggles and asynchronous background arrivals
+    // retain world centre and logical metres per pixel until an explicit fit.
+    if let Some(nav)=navigation.as_deref_mut(){
+        nav.camera_changed=false;
+        nav.focus=Some(location_ui::Focus{center:[cx,cy],meters_per_pixel:1./base_scale});
+    }
+    let old_scale=base_scale * *zoom;
+    let old_pan=*pan;
+    let mut scale=old_scale;
+    if response.hovered() {
+        // Handle each wheel event once: egui's smoothed scrolling can continue
+        // after the pointer has moved from a list onto the map (or vice versa).
+        let (scroll,pinch)=ui.input_mut(|i|{
+            let scroll=i.raw_scroll_delta;
+            let pinch=i.events.iter().filter_map(|event|match event{
+                egui::Event::Zoom(factor)=>Some(f64::from(*factor)),_=>None
+            }).product::<f64>();
+            i.raw_scroll_delta=egui::Vec2::ZERO;
+            i.smooth_scroll_delta=egui::Vec2::ZERO;
+            (scroll,pinch)
+        });
+        let factor=(f64::from(scroll.y)*0.002).clamp(-20.,20.).exp()*pinch;
+        if factor.is_finite() && factor>0. && factor!=1. {
+            // Absolute world scale, rather than a small range relative to the
+            // first TIFF. Both a street detail and the whole country are reachable.
+            scale=(old_scale*factor).clamp(0.0001,1000.);
+            if let Some(pointer)=response.hover_pos(){
+                let anchor=pointer-rect.center();
+                if navigation.is_some(){
+                    // Move the f64 world origin, avoiding enormous f32 pixel
+                    // offsets when zooming from a country view into a detail.
+                    cx+=f64::from(anchor.x-pan.x)*(1./old_scale-1./scale);
+                    cy-=f64::from(anchor.y-pan.y)*(1./old_scale-1./scale);
+                }else{
+                    *pan=anchor-(anchor-*pan)*(scale/old_scale) as f32;
+                }
+            }
+            *zoom=scale/base_scale;
+        }
+        pan.x+=scroll.x;
+    }
+    let panning=response.dragged_by(egui::PointerButton::Middle)
+        || (response.dragged_by(egui::PointerButton::Primary)
+            && !navigation.as_ref().is_some_and(|n|n.pointer_tool));
+    if panning {*pan+=response.drag_delta();}
+    if let Some(nav)=navigation.as_deref_mut(){
+        nav.camera_changed=scale!=old_scale || *pan!=old_pan;
+    }
     let center=rect.center()+*pan;
-    if let Some(nav)=navigation.as_deref_mut(){nav.viewport=Some(Bounds{
+    if let Some(nav)=navigation.as_deref_mut(){
+        nav.focus=Some(location_ui::Focus{center:[cx,cy],meters_per_pixel:1./base_scale});
+        nav.viewport=Some(Bounds{
         min_x:cx-f64::from(rect.width()/2.+pan.x)/scale,max_x:cx+f64::from(rect.width()/2.-pan.x)/scale,
         min_y:cy-f64::from(rect.height()/2.-pan.y)/scale,max_y:cy+f64::from(rect.height()/2.+pan.y)/scale,
     });}

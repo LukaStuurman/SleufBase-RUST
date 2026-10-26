@@ -712,11 +712,18 @@ impl SleufBaseApp {
             let camera = project_view_ui::capture_camera(&view);
             self.update_map_background(&view);
             if self.project_view.camera.as_ref() != Some(&camera)
-                && (view.response.dragged()
-                    || (view.response.hovered() && ui.input(|i| i.smooth_scroll_delta.y != 0.)))
+                && self.navigation.camera_changed
             {
                 self.dirty = true;
             }
+            // Keep navigation in f64 world coordinates. Carrying an ever larger
+            // f32 pixel pan through street-to-country zooms loses pick precision.
+            self.navigation.focus = Some(location_ui::Focus {
+                center: camera.center,
+                meters_per_pixel: camera.meters_per_pixel,
+            });
+            self.zoom = 1.;
+            self.pan = egui::Vec2::ZERO;
             self.project_view.camera = Some(camera);
             let old_virtual = self.virtual_map.selected;
             let old_raster = self.raster_points.selected.clone();
