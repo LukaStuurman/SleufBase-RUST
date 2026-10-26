@@ -1,5 +1,6 @@
 use eframe::egui;
-use sleufbase_rust::{object_selection::Selection, virtual_trench::VirtualTrench, Dataset};
+use sleufbase_rust::{jobs_cache::Job, object_selection::Selection, virtual_trench::VirtualTrench, Dataset};
+use std::collections::BTreeSet;
 pub(crate) struct Dialog {
     pub selection: Selection,
     pub extra_layers: bool,
@@ -8,11 +9,15 @@ pub(crate) struct Dialog {
     generation: u64,
     query: String,
     pub error: String,
+    pub remote_selected: BTreeSet<u64>,
+    pending_remote: BTreeSet<u64>,
+    remote_search: String,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Action {
     pub overlay: bool,
     pub open_jobs: bool,
+    pub queue_remote: bool,
 }
 impl Dialog {
     pub fn new(datasets: usize, trenches: usize, label_gap: f64, generation: u64) -> Self {
@@ -24,7 +29,17 @@ impl Dialog {
             generation,
             query: String::new(),
             error: String::new(),
+            remote_selected:BTreeSet::new(),pending_remote:BTreeSet::new(),
+            remote_search:String::new(),
         }
+    }
+    pub fn remote_to_download(&mut self,live_jobs:&[Job],datasets:&[Dataset])->Vec<u64>{
+        let loaded=datasets.iter().map(|d|d.job_id).collect::<BTreeSet<_>>();
+        let jobs=live_jobs.iter().filter(|j|self.remote_selected.contains(&j.job_id)
+            &&j.downloadable&&!loaded.contains(&j.job_id))
+            .take(500).map(|j|j.job_id).collect::<Vec<_>>();
+        self.pending_remote.extend(jobs.iter().copied());
+        jobs
     }
     pub fn options(&self) -> sleufbase_rust::object_dxf::Options {
         sleufbase_rust::object_dxf::Options {
@@ -39,6 +54,8 @@ pub(crate) fn show(
     dialog: &mut Option<Dialog>,
     datasets: &[Dataset],
     trenches: &[VirtualTrench],
+    live_jobs: &[Job],
+    live_verified: bool,
     generation: u64,
 ) -> Option<Action> {
     let state = dialog.as_mut()?;
@@ -49,6 +66,12 @@ pub(crate) fn show(
     // Appended sources start unselected; a project replacement closes the dialog.
     state.selection.datasets.resize(datasets.len(), false);
     state.selection.trenches.resize(trenches.len(), false);
+    // Imported remote jobs become selected after FileLoader finishes.
+    // Never silently select unrelated appended datasets.
+    for (index,job) in datasets.iter().enumerate(){
+        if state.pending_remote.remove(&job.job_id){state.selection.datasets[index]=true;}
+    }
+    if !live_verified {state.remote_selected.clear();}
     let mut open = true;
     let mut action = None;
     let mut cancel = false;
@@ -60,7 +83,7 @@ pub(crate) fn show(
         .show(ctx, |ui| {
             ui.label("Kies de bronnen voor DXF-export. Geladen jobs en virtuele proefsleuven kunnen direct worden geëxporteerd.");
             if ui.button("KickTheMap Jobs openen...").clicked() {
-                action=Some(Action{overlay:false,open_jobs:true});
+                action=Some(Action{overlay:false,open_jobs:true,queue_remote:false});
             }
             ui.horizontal(|ui| {
                 ui.label("Zoeken");
@@ -131,6 +154,50 @@ pub(crate) fn show(
                         });
                 });
             ui.separator();
+            ui.collapsing(format!("Live KickTheMap-bronnen ({} jobs)",if live_verified{live_jobs.len()}else{0}),|ui|{
+                if !live_verified{
+                    ui.label("Log via KickTheMap > Inloggen in om actuele jobs direct te selecteren. Offline cache is niet voldoende om te downloaden.");
+                }else{
+                    ui.horizontal(|ui|{
+                        ui.label("Zoeken in live jobs");
+                        ui.text_edit_singleline(&mut state.remote_search);
+                        if ui.small_button("Selectie wissen").clicked(){state.remote_selected.clear();}
+                    });
+                    let needle=state.remote_search.trim().to_lowercase();
+                    let loaded= datasets.iter().map(|job|job.job_id).collect::<BTreeSet<_>>();
+                    let visible=live_jobs.iter().filter(|job|{
+                        needle.is_empty()||job.title.to_lowercase().contains(&needle)
+                           ||job.job_id.to_string().contains(&needle)
+                           ||job.address.to_lowercase().contains(&needle)
+                    }).collect::<Vec<_>>();
+                    egui::ScrollArea::vertical().max_height(200.).show_rows(ui,25.,visible.len(),|ui,rows|{
+                        for row in rows{
+                            let job=visible[row];
+                            ui.horizontal(|ui|{
+                                let mut checked=state.remote_selected.contains(&job.job_id);
+                                if ui.checkbox(&mut checked,format!("{} (ID {})",job.title,job.job_id)).changed(){
+                                    if checked{state.remote_selected.insert(job.job_id);}
+                                    else{state.remote_selected.remove(&job.job_id);}
+                                }
+                                ui.small(if loaded.contains(&job.job_id){"Al geladen"}else if job.downloadable{"Downloadbaar"}else{"Niet downloadbaar"});
+                            });
+                        }
+                    });
+                    let needed=state.remote_selected.iter().filter(|id|!loaded.contains(id)
+                        &&live_jobs.iter().any(|job|job.job_id==**id&&job.downloadable)).count();
+                    ui.horizontal(|ui|{
+                        if ui.add_enabled(needed>0,egui::Button::new(format!("Download {needed} geselecteerde JobFeatures + laad")))
+                            .clicked(){
+                            action=Some(Action{overlay:false,open_jobs:false,queue_remote:true});
+                        }
+                        ui.small("Na het inladen zijn deze bronnen voor DXF aangevinkt; exporteer daarna.");
+                    });
+                    if !state.pending_remote.is_empty(){
+                        ui.small(format!("Nog {} gekozen live bronnen wachten op inladen. Mislukte downloads kun je opnieuw kiezen.",state.pending_remote.len()));
+                    }
+                }
+            });
+            ui.separator();
             ui.checkbox(
                 &mut state.selection.include_endpoints,
                 "Begin- en eindpunten van virtuele proefsleuven meenemen",
@@ -169,10 +236,10 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(selected > 0 || state.extra_layers, |ui| {
                     if ui.button("Exporteren…").clicked() {
-                        action = Some(Action { overlay: false,open_jobs:false });
+                        action = Some(Action { overlay: false,open_jobs:false,queue_remote:false });
                     }
                     if ui.button("Exporteren en laden als overlay…").clicked() {
-                        action = Some(Action { overlay: true,open_jobs:false });
+                        action = Some(Action { overlay: true,open_jobs:false,queue_remote:false });
                     }
                 });
                 if ui.button("Annuleren").clicked() {
