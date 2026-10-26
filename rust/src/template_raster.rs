@@ -306,22 +306,45 @@ struct CheckedPng<'a, W> {
     cancel: &'a AtomicBool,
     bytes: u64,
     limit: u64,
+    budget: Option<&'a crate::asset_budget::Budget>,
+    failure: &'a mut Option<String>,
 }
 impl<W: std::io::Write> std::io::Write for CheckedPng<'_, W> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        input::check(self.cancel).map_err(std::io::Error::other)?;
-        if self.bytes.saturating_add(data.len() as u64) > self.limit {
-            return Err(std::io::Error::other(
-                "Voorbereide PNG overschrijdt het bestandsbudget",
-            ));
+        let result = (|| {
+            input::check(self.cancel).map_err(std::io::Error::other)?;
+            if self.bytes.saturating_add(data.len() as u64) > self.limit {
+                return Err(std::io::Error::other(
+                    "Voorbereide PNG overschrijdt het bestandsbudget",
+                ));
+            }
+            let count = match self.budget {
+                Some(budget) => budget.write(&mut self.out, data)?,
+                None => self.out.write(data)?,
+            };
+            if count == 0 && !data.is_empty() {
+                return Err(std::io::Error::new(std::io::ErrorKind::WriteZero,
+                    "PNG kon niet volledig geschreven worden"));
+            }
+            self.bytes += count as u64;
+            Ok(count)
+        })();
+        if let Err(error) = &result {
+            // write_all retries Interrupted. Preserve that recovery without
+            // treating a transient interruption as a failed complete image.
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                self.failure.get_or_insert_with(|| error.to_string());
+            }
         }
-        let count = self.out.write(data)?;
-        self.bytes += count as u64;
-        Ok(count)
+        result
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        input::check(self.cancel).map_err(std::io::Error::other)?;
-        self.out.flush()
+        let result = input::check(self.cancel).map_err(std::io::Error::other)
+            .and_then(|()| self.out.flush());
+        if let Err(error) = &result {
+            self.failure.get_or_insert_with(|| error.to_string());
+        }
+        result
     }
 }
 /// Encode a new asset atomically. Errors/cancellation leave no partial PNG and
@@ -343,6 +366,23 @@ pub(crate) fn save_image_bounded(
     cancel: &AtomicBool,
     remaining: u64,
 ) -> Result<u64, String> {
+    save_image_inner(image, path, cancel, remaining, None)
+}
+pub(crate) fn save_image_budgeted(
+    image: &RgbaImage,
+    path: &Path,
+    cancel: &AtomicBool,
+    budget: &crate::asset_budget::Budget,
+) -> Result<u64, String> {
+    save_image_inner(image, path, cancel, 256*1024*1024, Some(budget))
+}
+fn save_image_inner(
+    image: &RgbaImage,
+    path: &Path,
+    cancel: &AtomicBool,
+    remaining: u64,
+    budget: Option<&crate::asset_budget::Budget>,
+) -> Result<u64, String> {
     use image::{
         codecs::png::{CompressionType, FilterType, PngEncoder},
         ImageEncoder,
@@ -352,11 +392,14 @@ pub(crate) fn save_image_bounded(
         path,
         false,
         |file| {
+            let mut failure = None;
             let writer = CheckedPng {
                 out: file,
                 cancel,
                 bytes: 0,
                 limit: remaining.min(256*1024*1024),
+                budget,
+                failure: &mut failure,
             };
             PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
                 .write_image(
@@ -365,9 +408,103 @@ pub(crate) fn save_image_bounded(
                     image.height(),
                     image::ExtendedColorType::Rgba8,
                 )
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+            // image's PNG wrapper finishes IEND in Drop and can suppress that
+            // final I/O error. The checked writer records it before staging is
+            // allowed to become a visible asset, keeping the encoder unchanged.
+            match failure {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
         },
         || input::check(cancel),
     )?;
     std::fs::metadata(path).map(|m|m.len()).map_err(|e|e.to_string())
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn png_tail_errors_are_detected_but_interrupted_writes_can_recover() {
+        use image::{codecs::png::{PngEncoder, CompressionType, FilterType}, ImageEncoder};
+        use std::io::{self, Write};
+        struct TailWriter<'a> {
+            bytes: &'a mut Vec<u8>,
+            fault_at: usize,
+            fault: Option<io::ErrorKind>,
+        }
+        impl Write for TailWriter<'_> {
+            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+                if self.bytes.len() >= self.fault_at {
+                    if let Some(kind) = self.fault.take() {
+                        return if kind == io::ErrorKind::WriteZero { Ok(0) }
+                            else { Err(io::Error::new(kind, "injected PNG tail failure")) };
+                    }
+                }
+                self.bytes.extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        }
+        let image = RgbaImage::from_pixel(3, 2, image::Rgba([31, 71, 11, 255]));
+        let encode = |out| PngEncoder::new_with_quality(out, CompressionType::Fast, FilterType::Adaptive)
+            .write_image(image.as_raw(), 3, 2, image::ExtendedColorType::Rgba8);
+        let mut expected = Vec::new();
+        encode(&mut expected).unwrap();
+        let cancel = AtomicBool::new(false);
+        for kind in [io::ErrorKind::Other, io::ErrorKind::WriteZero, io::ErrorKind::Interrupted] {
+            let mut bytes = Vec::new();
+            let mut failure = None;
+            let writer = CheckedPng {
+                out: TailWriter { bytes: &mut bytes, fault_at: expected.len() - 12, fault: Some(kind) },
+                cancel: &cancel, bytes: 0, limit: u64::MAX, budget: None, failure: &mut failure,
+            };
+            let result = PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
+                .write_image(image.as_raw(), 3, 2, image::ExtendedColorType::Rgba8);
+            if kind == io::ErrorKind::Interrupted {
+                result.unwrap();
+                assert!(failure.is_none());
+                assert_eq!(bytes, expected);
+            } else {
+                assert!(result.is_err() || failure.is_some(), "lost PNG tail failure: {kind:?}");
+            }
+        }
+    }
+    #[test]
+    fn shared_quota_preserves_encoder_bytes_and_atomic_no_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = RgbaImage::from_fn(17, 11, |x, y| image::Rgba([x as u8, y as u8, 81, 255]));
+        let cancel = AtomicBool::new(false);
+        let ordinary = dir.path().join("ordinary.png");
+        save_image(&image, &ordinary, &cancel).unwrap();
+        let expected = std::fs::read(&ordinary).unwrap();
+        let budget = crate::asset_budget::Budget::new(expected.len() as u64);
+        let output = dir.path().join("budgeted.png");
+        assert_eq!(save_image_budgeted(&image, &output, &cancel, &budget).unwrap(), expected.len() as u64);
+        assert_eq!(std::fs::read(&output).unwrap(), expected);
+        assert_eq!(budget.used(), expected.len() as u64);
+        // IEND is emitted by the encoder's Drop implementation. Errors in any
+        // part of that final chunk must reject both shared and single quotas.
+        for missing in 1..=12 {
+            let limit = expected.len() as u64 - missing;
+            let denied = dir.path().join(format!("tail-{missing}.png"));
+            assert!(save_image_budgeted(&image, &denied, &cancel, &crate::asset_budget::Budget::new(limit)).is_err());
+            assert!(!denied.exists());
+            assert!(save_image_bounded(&image, &denied, &cancel, limit).is_err());
+            assert!(!denied.exists());
+        }
+        let denied = dir.path().join("denied.png");
+        let short = crate::asset_budget::Budget::new(expected.len() as u64 - 1);
+        assert!(save_image_budgeted(&image, &denied, &cancel, &short).is_err());
+        assert!(!denied.exists());
+        assert!(short.used() < expected.len() as u64);
+        let previous = dir.path().join("previous.png");
+        std::fs::write(&previous, b"previous asset").unwrap();
+        assert!(save_image_budgeted(&image, &previous, &cancel, &crate::asset_budget::Budget::new(1)).is_err());
+        assert_eq!(std::fs::read(&previous).unwrap(), b"previous asset");
+        let full = crate::asset_budget::Budget::new(u64::MAX);
+        assert!(save_image_budgeted(&image, &previous, &cancel, &full).is_err());
+        assert_eq!(std::fs::read(&previous).unwrap(), b"previous asset");
+    }
 }

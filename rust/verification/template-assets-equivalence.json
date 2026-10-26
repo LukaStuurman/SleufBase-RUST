@@ -1,0 +1,229 @@
+{
+  "status": "passed",
+  "normalization": "owned bundle path and ordered AcDbDynamicBlockGUID/1000 identities only",
+  "timing_note": "Single-run wall timings; no speed claim.",
+  "worker_overrides": {
+    "SLEUFBASE_RESOURCE_MODE": null,
+    "SLEUFBASE_MAX_WORKERS": null,
+    "SLEUFBASE_MAP_WORKERS": "4",
+    "SLEUFBASE_RASTER_WORKERS": "4"
+  },
+  "executables": {
+    "baseline": {
+      "name": "baseline-8f94.exe",
+      "sha256": "7dcb3a134744759a5a58d840d9dbc3ed7c95f586fde20d0788fb5fd31e96d7d4"
+    },
+    "current": {
+      "name": "sleufbase-rust.exe",
+      "sha256": "fd1be76b660378ea8e5a5f50f6d6fa350d570fe8e41e4133e42a135ee9ef39b5"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "mixed",
+      "baseline": {
+        "wall_seconds": 1.1242851000279188,
+        "png_count": 9,
+        "png_sha256": {
+          "slot00001_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00001_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94",
+          "slot00003_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00003_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94",
+          "slot00004_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00004_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94"
+        },
+        "normalized_dxf_sha256": "a85d531481d54f9a7863764e580f683ef3b07b83eb293d63dcf88136cadcf449",
+        "dynamic_guid_count": 7
+      },
+      "current": {
+        "wall_seconds": 1.0679268001113087,
+        "png_count": 9,
+        "png_sha256": {
+          "slot00001_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00001_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94",
+          "slot00003_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00003_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94",
+          "slot00004_kaart.png": "a1f9f499fcbc8a2e9c1bdd79b7e31ada1caecfad021a842a23ac74930e1980c1",
+          "slot00004_photo01.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff.png": "64d3fe4f7bdf719bd6a8582882aaa68012da5c2f69d2a9bc48ecdacc82095f94"
+        },
+        "normalized_dxf_sha256": "a85d531481d54f9a7863764e580f683ef3b07b83eb293d63dcf88136cadcf449",
+        "dynamic_guid_count": 7
+      },
+      "equal": true
+    },
+    {
+      "name": "physical-paired",
+      "baseline": {
+        "wall_seconds": 1.7145066000521183,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "0bfa3c5901a4ffc927caed6f191251c1e255ee5c893b575a902803135589a68e",
+          "slot00001_kaart_reverse.png": "0bfa3c5901a4ffc927caed6f191251c1e255ee5c893b575a902803135589a68e",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00001_tiff_reverse.png": "66f35ec72a2a1b7c202cf2bcbe1bf8c5639941cddbdb3232a2c0933ede6adf7b",
+          "slot00003_kaart_normaal.png": "9831d8a378b9b41c966910a045b9c14466e8ace8ed760772dd4375fc7ffdea4b",
+          "slot00003_kaart_reverse.png": "9831d8a378b9b41c966910a045b9c14466e8ace8ed760772dd4375fc7ffdea4b",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00003_tiff_reverse.png": "66f35ec72a2a1b7c202cf2bcbe1bf8c5639941cddbdb3232a2c0933ede6adf7b",
+          "slot00004_kaart_normaal.png": "84193552a2912245af753ef56fe59c8de362111fe4102d9a98558a6f511cbabc",
+          "slot00004_kaart_reverse.png": "84193552a2912245af753ef56fe59c8de362111fe4102d9a98558a6f511cbabc",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00004_tiff_reverse.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de"
+        },
+        "normalized_dxf_sha256": "d91a048d33d1b4302c2ad6020710e3f8dd2fe80ca3b3ed59911b491c1c7d1cea",
+        "dynamic_guid_count": 10
+      },
+      "current": {
+        "wall_seconds": 1.53644649987109,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "0bfa3c5901a4ffc927caed6f191251c1e255ee5c893b575a902803135589a68e",
+          "slot00001_kaart_reverse.png": "0bfa3c5901a4ffc927caed6f191251c1e255ee5c893b575a902803135589a68e",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00001_tiff_reverse.png": "66f35ec72a2a1b7c202cf2bcbe1bf8c5639941cddbdb3232a2c0933ede6adf7b",
+          "slot00003_kaart_normaal.png": "9831d8a378b9b41c966910a045b9c14466e8ace8ed760772dd4375fc7ffdea4b",
+          "slot00003_kaart_reverse.png": "9831d8a378b9b41c966910a045b9c14466e8ace8ed760772dd4375fc7ffdea4b",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00003_tiff_reverse.png": "66f35ec72a2a1b7c202cf2bcbe1bf8c5639941cddbdb3232a2c0933ede6adf7b",
+          "slot00004_kaart_normaal.png": "84193552a2912245af753ef56fe59c8de362111fe4102d9a98558a6f511cbabc",
+          "slot00004_kaart_reverse.png": "84193552a2912245af753ef56fe59c8de362111fe4102d9a98558a6f511cbabc",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de",
+          "slot00004_tiff_reverse.png": "2cddc14dc1ddce707c23f3149efc4d7d0dbaf423b0952227ac76ca66992460de"
+        },
+        "normalized_dxf_sha256": "d91a048d33d1b4302c2ad6020710e3f8dd2fe80ca3b3ed59911b491c1c7d1cea",
+        "dynamic_guid_count": 10
+      },
+      "equal": true
+    },
+    {
+      "name": "virtual-paired",
+      "baseline": {
+        "wall_seconds": 1.7578869999852031,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "880def6abf8e17aa5ea0633a565f399c9ebdf9ebdc4ff7f11f0bdd6e357ed6e1",
+          "slot00001_kaart_reverse.png": "880def6abf8e17aa5ea0633a565f399c9ebdf9ebdc4ff7f11f0bdd6e357ed6e1",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00001_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00003_kaart_normaal.png": "c9feb91ff1408f3342a502bf36e69ef18fcfa427092459a7c0730d978b39159c",
+          "slot00003_kaart_reverse.png": "c9feb91ff1408f3342a502bf36e69ef18fcfa427092459a7c0730d978b39159c",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00003_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00004_kaart_normaal.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_kaart_reverse.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00004_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab"
+        },
+        "normalized_dxf_sha256": "0293eced4b14a6cb217e22f527fbed09e55a74fe8900dfef20d4d057b285e0f2",
+        "dynamic_guid_count": 10
+      },
+      "current": {
+        "wall_seconds": 1.3477688999846578,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "880def6abf8e17aa5ea0633a565f399c9ebdf9ebdc4ff7f11f0bdd6e357ed6e1",
+          "slot00001_kaart_reverse.png": "880def6abf8e17aa5ea0633a565f399c9ebdf9ebdc4ff7f11f0bdd6e357ed6e1",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00001_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00003_kaart_normaal.png": "c9feb91ff1408f3342a502bf36e69ef18fcfa427092459a7c0730d978b39159c",
+          "slot00003_kaart_reverse.png": "c9feb91ff1408f3342a502bf36e69ef18fcfa427092459a7c0730d978b39159c",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00003_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00004_kaart_normaal.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_kaart_reverse.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00004_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab"
+        },
+        "normalized_dxf_sha256": "0293eced4b14a6cb217e22f527fbed09e55a74fe8900dfef20d4d057b285e0f2",
+        "dynamic_guid_count": 10
+      },
+      "equal": true
+    },
+    {
+      "name": "virtual-reference",
+      "baseline": {
+        "wall_seconds": 3.288965499959886,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "9a44f66d9cb261b642c7f82e36fe7cd8863b3f31e00103c93925972dbcbd98ca",
+          "slot00001_kaart_reverse.png": "ecfe50feea256dce25f6fe5358faf8b5a5a002c720303d46892f972d8ae8b961",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00001_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00003_kaart_normaal.png": "87607fbdde89fb77c36fefa11cec5f6723f724d90a7565a582bfb62d6a4dd5bf",
+          "slot00003_kaart_reverse.png": "5d3b4ae8aca52429b6e7736022dc5a882bb2b74cf05b96682543e43412136318",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00003_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00004_kaart_normaal.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_kaart_reverse.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00004_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab"
+        },
+        "normalized_dxf_sha256": "9385fa34476eaaf87007eee33b9e61f01d8ce6dbe3c33c54c9edc998b81fa008",
+        "dynamic_guid_count": 10
+      },
+      "current": {
+        "wall_seconds": 1.6674492999445647,
+        "png_count": 18,
+        "png_sha256": {
+          "slot00001_kaart_normaal.png": "9a44f66d9cb261b642c7f82e36fe7cd8863b3f31e00103c93925972dbcbd98ca",
+          "slot00001_kaart_reverse.png": "ecfe50feea256dce25f6fe5358faf8b5a5a002c720303d46892f972d8ae8b961",
+          "slot00001_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00001_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00001_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00003_kaart_normaal.png": "87607fbdde89fb77c36fefa11cec5f6723f724d90a7565a582bfb62d6a4dd5bf",
+          "slot00003_kaart_reverse.png": "5d3b4ae8aca52429b6e7736022dc5a882bb2b74cf05b96682543e43412136318",
+          "slot00003_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00003_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00003_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab",
+          "slot00004_kaart_normaal.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_kaart_reverse.png": "241bcbda9a7a517e782047624ef28ef871b31db96d97b4a18e3f0af157a1ef81",
+          "slot00004_photo01_normaal.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_photo01_reverse.png": "dfc2720d6908b1d31d44134c56cfb64a4b21678f09d19d8b3b94c598376f59c6",
+          "slot00004_tiff_normaal.png": "fa75c9330e4e48b94828982d6e7d412c8354500bc94c1dc7c8b05f88f1c51b99",
+          "slot00004_tiff_reverse.png": "4e02f7abac48e1faf7fb81146e310f809c93b75ddaaf008f98740c2057457aab"
+        },
+        "normalized_dxf_sha256": "9385fa34476eaaf87007eee33b9e61f01d8ce6dbe3c33c54c9edc998b81fa008",
+        "dynamic_guid_count": 10
+      },
+      "equal": true
+    }
+  ]
+}

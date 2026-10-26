@@ -14,11 +14,14 @@ use crate::{
     Bounds, Dataset, Rule,
 };
 use std::{
-    fs::{File, OpenOptions},
-    io::{Read, Write},
+    fs::OpenOptions,
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+#[path = "template_assets.rs"]
+mod assets;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,59 +210,6 @@ pub fn read_request(path: &Path, control: &Control) -> Result<Request, String> {
     }
     control.check()?;
     Ok(request)
-}
-fn copy_asset(
-    source: &Path,
-    destination: &Path,
-    total: &mut u64,
-    control: &Control,
-) -> Result<(), String> {
-    let mut source =
-        File::open(source).map_err(|e| format!("Voorbereide afbeelding ontbreekt: {e}"))?;
-    if source.metadata().map_err(|e| e.to_string())?.len() > 256 * 1024 * 1024 {
-        return Err("Voorbereide afbeelding is te groot".into());
-    }
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|e| e.to_string())?;
-    let mut buffer = [0u8; 64 * 1024];
-    let mut copied = 0u64;
-    loop {
-        control.check()?;
-        let count = match source.read(&mut buffer) {
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            r => r.map_err(|e| e.to_string())?,
-        };
-        if count == 0 {
-            break;
-        }
-        copied += count as u64;
-        *total += count as u64;
-        if copied > 256 * 1024 * 1024 || *total > 2 * 1024 * 1024 * 1024 {
-            return Err("Sjabloonafbeeldingen overschrijden het exportbudget".into());
-        }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|e| e.to_string())?;
-    }
-    control.check()?;
-    if copied == 0 {
-        return Err("Voorbereide afbeelding is leeg".into());
-    }
-    // Verify the actual PNG, not just its dimensions/signature. Decode one
-    // bounded image at a time so corrupt pixel streams cannot be published.
-    drop(output);
-    let mut reader = image::ImageReader::open(destination).map_err(|e| e.to_string())?;
-    reader.set_format(image::ImageFormat::Png);
-    let mut limits = image::Limits::default();
-    limits.max_alloc = Some(128 * 1024 * 1024);
-    reader.limits(limits);
-    reader
-        .decode()
-        .map_err(|e| format!("Ongeldige voorbereide PNG: {e}"))?;
-    control.check()
 }
 struct ProfileContext<'a> {
     datasets: &'a [Dataset],
@@ -564,7 +514,17 @@ pub fn export_with_datasets(
     request: &Request,
     datasets: &[Dataset],
     control: &Control,
+    progress: impl FnMut(&str),
+) -> Result<Exported, String> {
+    export_with_asset_policy(output, request, datasets, control, progress, crate::resource_policy::get())
+}
+fn export_with_asset_policy(
+    output: &Path,
+    request: &Request,
+    datasets: &[Dataset],
+    control: &Control,
     mut progress: impl FnMut(&str),
+    policy: &crate::resource_policy::ResourcePolicy,
 ) -> Result<Exported, String> {
     control.check()?;
     if request.slots.is_empty() || !request.slots.iter().any(Option::is_some) {
@@ -708,7 +668,7 @@ pub fn export_with_datasets(
             logo_assets[index] = Some(destination);
         }
     }
-    let mut map_renderer = crate::map_export::Renderer::default();
+    let mut asset_batch = assets::Batch::default();
     for (index, (source, target)) in request.slots.iter().zip(&prepared.slots).enumerate() {
         progress(&format!("Proefsleufvak {} invullen", index + 1));
         control.check()?;
@@ -736,8 +696,8 @@ pub fn export_with_datasets(
             doc.replace_text(h, &slot.comments)?;
         }
         let mut local_surfaces = None;
-        let mut cached_map: Option<(Option<[f64; 2]>, PathBuf)> = None;
-        let mut cached_photos = Vec::<PathBuf>::new();
+        let mut cached_map: Option<(Option<[f64; 2]>, usize)> = None;
+        let mut cached_photos = Vec::<usize>::new();
         for direction in 0..directions {
             let reverse_override = request.settings.paired.then_some(direction == 1);
             let suffix = if request.settings.paired {
@@ -769,21 +729,9 @@ pub fn export_with_datasets(
                     tx.asset_path(&format!("slot{:05}_{role}{suffix}.png", index + 1))?;
                 if let Some(source) = slot.virtual_source.as_ref().filter(|_| role == "tiff") {
                     progress(&format!("Virtuele proefsleufraster {} opbouwen", index + 1));
-                    let prepared = crate::virtual_raster::prepare_for_template_direction(
-                        source,
-                        reverse_override.unwrap_or(source.reverse),
-                        control.flag(),
-                    )?;
-                    crate::template_raster::save(&prepared, &destination, control.flag())?;
-                    let bytes = std::fs::metadata(&destination)
-                        .map_err(|e| e.to_string())?
-                        .len();
-                    total = total
-                        .checked_add(bytes)
-                        .ok_or("Rasterbudget overschreden")?;
-                    if bytes > 256 * 1024 * 1024 || total > 2 * 1024 * 1024 * 1024 {
-                        return Err("Sjabloonafbeeldingen overschrijden het exportbudget".into());
-                    }
+                    asset_batch.push(assets::Kind::Virtual {
+                        source, reverse: reverse_override.unwrap_or(source.reverse),
+                    }, destination.clone());
                 } else if let Some(source) = slot.tiff_source.as_ref().filter(|_| role == "tiff") {
                     let axis = measured
                         .as_ref()
@@ -797,24 +745,9 @@ pub fn export_with_datasets(
                                 }
                             })
                         });
-                    let mut oriented = source.clone();
-                    oriented.reverse_orientation =
-                        reverse_override.unwrap_or(source.reverse_orientation);
-                    let raster = crate::template_raster::from_tiff(
-                        &oriented,
-                        &request.roads,
-                        &request.terrain_boundaries,
-                        axis,
-                        control.flag(),
-                    )?;
-                    crate::template_raster::save(&raster, &destination, control.flag())?;
-                    let bytes = std::fs::metadata(&destination)
-                        .map_err(|e| e.to_string())?
-                        .len();
-                    total += bytes;
-                    if bytes > 256 * 1024 * 1024 || total > 2 * 1024 * 1024 * 1024 {
-                        return Err("Sjabloonafbeeldingen overschrijden het exportbudget".into());
-                    }
+                    asset_batch.push(assets::Kind::Tiff {
+                        source, axis, reverse: reverse_override.unwrap_or(source.reverse_orientation),
+                    }, destination.clone());
                 } else if let Some(source) = slot.map_source.as_ref().filter(|_| role == "kaart") {
                     let reference = if let (Some(options), Some(profile)) =
                         (&slot.profile, &measured)
@@ -840,42 +773,21 @@ pub fn export_with_datasets(
                         .as_ref()
                         .filter(|(r, _)| *r == effective_reference)
                     {
-                        copy_asset(previous, &destination, &mut total, control)?;
+                        asset_batch.alias(*previous, destination.clone());
                     } else {
                         progress(&format!("Kaartblad {} opbouwen", index + 1));
                         control.check()?;
-                        let page = map_renderer.render_with_raster(
+                        let job = asset_batch.push(assets::Kind::Map {
                             source,
-                            slot.bounds,
-                            slot.tiff_source
-                                .as_ref()
-                                .map(crate::map_export::Raster::Tiff)
-                                .or_else(|| {
-                                    slot.virtual_source
-                                        .as_ref()
-                                        .map(crate::map_export::Raster::Virtual)
-                                }),
+                            bounds: slot.bounds,
+                            fallback: slot.tiff_source.as_ref().map(crate::map_export::Raster::Tiff)
+                                .or_else(|| slot.virtual_source.as_ref().map(crate::map_export::Raster::Virtual)),
                             reference,
-                            control.flag(),
-                        )?;
-                        crate::template_raster::save_image(
-                            &page.image,
-                            &destination,
-                            control.flag(),
-                        )?;
-                        let bytes = std::fs::metadata(&destination)
-                            .map_err(|e| e.to_string())?
-                            .len();
-                        total += bytes;
-                        if bytes > 256 * 1024 * 1024 || total > 2 * 1024 * 1024 * 1024 {
-                            return Err(
-                                "Sjabloonafbeeldingen overschrijden het exportbudget".into()
-                            );
-                        }
-                        cached_map = Some((effective_reference, destination.clone()));
+                        }, destination.clone());
+                        cached_map = Some((effective_reference, job));
                     }
                 } else {
-                    copy_asset(path, &destination, &mut total, control)?;
+                    asset_batch.push(assets::Kind::Copy(path), destination.clone());
                 }
                 images.push(Image {
                     path: destination,
@@ -902,21 +814,10 @@ pub fn export_with_datasets(
                         photo_index + 1
                     );
                     let destination = tx.asset_path(&filename)?;
-                    let bytes = if let Some(previous) = cached_photos.get(photo_index) {
-                        // Stream the already normalized PNG, without decoding the
-                        // same high-resolution site photo again for Reverse.
-                        copy_asset(previous, &destination, &mut total, control)?;
-                        0
+                    if let Some(previous) = cached_photos.get(photo_index) {
+                        asset_batch.alias(*previous, destination.clone());
                     } else {
-                        let bytes = crate::template_photo::prepare(photo, &destination, control)?;
-                        cached_photos.push(destination.clone());
-                        bytes
-                    };
-                    total = total
-                        .checked_add(bytes)
-                        .ok_or("Foto-uitvoerbudget overschreden")?;
-                    if total > 2 * 1024 * 1024 * 1024 {
-                        return Err("Sjabloonafbeeldingen overschrijden het exportbudget".into());
+                        cached_photos.push(asset_batch.push(assets::Kind::Photo(photo), destination.clone()));
                     }
                     images.push(Image {
                         path: destination,
@@ -971,6 +872,7 @@ pub fn export_with_datasets(
         }
         filled_slots += 1;
     }
+    asset_batch.run(request, control, total, policy, &mut progress)?;
     progress("Afbeeldingen koppelen");
     control.check()?;
     let logo_layouts = prepared.pages.iter().map(|page| page.layout.clone()).collect::<Vec<_>>();

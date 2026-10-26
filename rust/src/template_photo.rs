@@ -75,12 +75,15 @@ pub fn boxes(tiff:Bounds,map:Bounds,photos:&[Photo])->Result<Vec<Bounds>,String>
     Ok(result.into_iter().map(|(_,b)|b).collect())
 }
 pub fn prepare(photo:&Photo,dest:&Path,control:&Control)->Result<u64,String>{
-    prepare_image(photo,dest,control,true)
+    prepare_image(photo,dest,control,true,None)
 }
 pub(crate) fn prepare_logo(source:&Path,dest:&Path,control:&Control)->Result<u64,String>{
-    prepare_image(&Photo{path:source.to_owned(),turns:0,area:Area::Tiff},dest,control,false)
+    prepare_image(&Photo{path:source.to_owned(),turns:0,area:Area::Tiff},dest,control,false,None)
 }
-fn prepare_image(photo:&Photo,dest:&Path,control:&Control,limit_size:bool)->Result<u64,String>{
+pub(crate) fn prepare_budgeted(photo:&Photo,dest:&Path,control:&Control,budget:&crate::asset_budget::Budget)->Result<u64,String>{
+    prepare_image(photo,dest,control,true,Some(budget))
+}
+fn prepare_image(photo:&Photo,dest:&Path,control:&Control,limit_size:bool,budget:Option<&crate::asset_budget::Budget>)->Result<u64,String>{
     control.check()?;
     validate(std::slice::from_ref(photo))?;
     let mut reader=ImageReader::open(&photo.path).map_err(|e|e.to_string())?
@@ -111,7 +114,10 @@ fn prepare_image(photo:&Photo,dest:&Path,control:&Control,limit_size:bool)->Resu
     }
     control.check()?;
     let rgba=DynamicImage::ImageRgba8(decoded.into_rgba8()).into_rgba8();
-    crate::template_raster::save_image(&rgba,dest,control.flag())?;
+    match budget {
+        Some(budget)=>{crate::template_raster::save_image_budgeted(&rgba,dest,control.flag(),budget)?;}
+        None=>crate::template_raster::save_image(&rgba,dest,control.flag())?,
+    }
     let size=std::fs::metadata(dest).map_err(|e|e.to_string())?.len();
     if size>64*1024*1024{return Err("Genormaliseerde PNG is te groot".into());}
     control.check()?;
@@ -151,4 +157,27 @@ mod tests {
         assert!(prepare(&invalid,&dir.path().join("bad.png"),&Control::default()).is_err());
         assert!(!dir.path().join("bad.png").exists());
     }
+    #[test]
+    fn budgeted_photo_uses_identical_rotation_resize_and_atomic_png_route() {
+        let dir=tempfile::tempdir().unwrap();
+        let source=dir.path().join("source.png");
+        image::RgbaImage::from_fn(1801,3,|x,y|image::Rgba([x as u8,y as u8,91,255])).save(&source).unwrap();
+        let photo=Photo{path:source,turns:1,area:Area::Tiff};
+        let normal=dir.path().join("normal.png");
+        let budgeted=dir.path().join("budgeted.png");
+        let control=Control::default();
+        let size=prepare(&photo,&normal,&control).unwrap();
+        let budget=crate::asset_budget::Budget::new(size);
+        assert_eq!(prepare_budgeted(&photo,&budgeted,&control,&budget).unwrap(),size);
+        assert_eq!(std::fs::read(&normal).unwrap(),std::fs::read(&budgeted).unwrap());
+        let pixels=image::open(&budgeted).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(),(3,1800));
+        assert_eq!(budget.used(),size);
+        let denied=dir.path().join("denied.png");
+        assert!(prepare_budgeted(&photo,&denied,&control,&crate::asset_budget::Budget::new(1)).is_err());
+        assert!(!denied.exists());
+        assert!(prepare_budgeted(&photo,&normal,&control,&crate::asset_budget::Budget::new(1)).is_err());
+        assert_eq!(std::fs::read(&normal).unwrap(),std::fs::read(&budgeted).unwrap());
+    }
+
 }

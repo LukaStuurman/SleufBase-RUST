@@ -6,7 +6,8 @@ De code staat nu in deze zelfstandige repository. **Dit is een migratiepreview:*
 publicatie betekent niet dat alle oorspronkelijke functies en praktijksituaties
 volledig zijn geaccepteerd. Zie [de overdracht en testresultaten](rust/HANDOFF_2026-10-26.md)
 en [de volledige acceptatievoorwaarden](rust/PARITY.md).
-De [nieuwste controles en browserverbeteringen](rust/VERIFICATION_2026-10-26_CONTROLS.md)
+De [browsercontroles](rust/VERIFICATION_2026-10-26_CONTROLS.md) en
+[parallelle exportvoorbereiding met PNG-herstel](rust/VERIFICATION_2026-10-26_ASSETS.md)
 beschrijven de aanvullende tests en opgeloste fouten.
 
 De export ondersteunt een projectnaam en vult de bladdatum automatisch in.
@@ -33,13 +34,13 @@ cargo build --locked --release --manifest-path rust/Cargo.toml --bin sleufbase-r
 
 De map `assets/template_logos` moet naast de executable staan voor de standaardlogo's.
 De CI maakt hiervoor een volledig pakket met licenties en SHA-256-controlebestand.
-Python is uitsluitend nodig voor de ontwikkelhulpmiddelen die pakketten controleren.
+Python is alleen nodig voor ontwikkelhulpmiddelen, zoals pakket- en uitvoercontroles.
 
 ## Inhoud
 
 - `rust/`: applicatie, tests, oorspronkelijke referentie-uitkomsten en installerbron.
 - `assets/`: DXF-sjabloon, logo's en iconen.
-- `tools/`: pakketcontrole en tests van de browsercapture.
+- `tools/`: pakketcontrole, browserregressies en vergelijking van echte exportuitvoer.
 - `SOURCE_MANIFEST.json`: herkomst en SHA-256 bij de eerste bronoverdracht;
   daaropvolgende verbeteringen zijn afzonderlijk in de Git-geschiedenis vastgelegd.
 
