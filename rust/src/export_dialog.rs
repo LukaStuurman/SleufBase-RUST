@@ -35,7 +35,7 @@ impl Dialog {
         let loaded=datasets.iter().map(|d|d.job_id).collect::<BTreeSet<_>>();
         let jobs=live_jobs.iter().filter(|j|self.remote_selected.contains(&j.job_id)
             &&j.downloadable&&!loaded.contains(&j.job_id))
-            .take(500).map(|j|j.job_id).collect::<Vec<_>>();
+            .map(|j|j.job_id).collect::<BTreeSet<_>>().into_iter().take(500).collect::<Vec<_>>();
         self.pending_remote.extend(jobs.iter().copied());
         jobs
     }
@@ -69,7 +69,13 @@ pub(crate) fn show(
     for (index,job) in datasets.iter().enumerate(){
         if state.pending_remote.remove(&job.job_id){state.selection.datasets[index]=true;}
     }
-    if !live_verified {state.remote_selected.clear();}
+    if !live_verified {
+        // Account changes invalidate outstanding source selections. Imported
+        // datasets remain in the project, but must not be auto-selected by an
+        // unrelated session.
+        state.remote_selected.clear();
+        state.pending_remote.clear();
+    }
     let mut open = true;
     let mut action = None;
     let mut cancel = false;
@@ -92,13 +98,20 @@ pub(crate) fn show(
                 if ui.button("Alle bronnen selecteren").clicked() {
                     state.selection.datasets.fill(true);
                     state.selection.trenches.fill(true);
+                    if live_verified {
+                        state.remote_selected.extend(live_jobs.iter()
+                            .filter(|job|job.downloadable).map(|job|job.job_id));
+                    }
                 }
                 if ui.button("Selectie wissen").clicked() {
                     state.selection.datasets.fill(false);
                     state.selection.trenches.fill(false);
+                    state.remote_selected.clear();
+                    state.pending_remote.clear();
                 }
             });
-            egui::ScrollArea::vertical()
+            egui::ScrollArea::both()
+                .id_salt("kickthemap-dxf-sources")
                 .max_height((ctx.screen_rect().height() - 340.).clamp(100., 360.))
                 .show(ui, |ui| {
                     egui::Grid::new("export-sources")
@@ -158,7 +171,9 @@ pub(crate) fn show(
                                         .to_lowercase().contains(&query))
                                 }).take(500){
                                     let mut chosen=state.remote_selected.contains(&job.job_id);
-                                    if ui.checkbox(&mut chosen,&job.title).changed(){
+                                    let label=egui::Checkbox::new(&mut chosen,&job.title);
+                                    let response=ui.add_enabled(job.downloadable,label);
+                                    if response.changed(){
                                         if chosen{state.remote_selected.insert(job.job_id);}
                                         else{state.remote_selected.remove(&job.job_id);}
                                     }
@@ -251,6 +266,37 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn job(id:u64,downloadable:bool)->Job{
+        Job{job_id:id,title:format!("Job {id}"),address:String::new(),
+            municipality:String::new(),coordinates:String::new(),
+            client_date:String::new(),status:9,downloadable,prefix:String::new()}
+    }
+    #[test]
+    fn live_download_selection_is_unique_and_rejects_loaded_or_unavailable_jobs(){
+        let mut d=Dialog::new(1,0,2.,42);
+        d.remote_selected.extend([1,2,3,4]);
+        let source=[job(1,true),job(1,true),job(2,false),job(3,true),job(4,true)];
+        let loaded=[Dataset{job_id:3,title:"Al geladen".into(),
+            source_path:"loaded.json".into(),features:Vec::new()}];
+        assert_eq!(d.remote_to_download(&source,&loaded),vec![1,4]);
+        assert_eq!(d.pending_remote,BTreeSet::from([1,4]));
+    }
+    #[test]
+    fn imported_downloaded_sources_are_selected_but_not_unrelated_sources(){
+        let mut d=Some(Dialog::new(2,0,3.,42));
+        d.as_mut().unwrap().pending_remote.insert(4);
+        let source=[Dataset{job_id:4,title:"Download".into(),source_path:"remote.json".into(),features:Vec::new()},
+            Dataset{job_id:5,title:"Lokaal".into(),source_path:"local.json".into(),features:Vec::new()}];
+        d.as_mut().unwrap().selection.datasets.fill(false);
+        // EgUI must be in a frame for the window to render.
+        let ctx=egui::Context::default();
+        let _=ctx.run(egui::RawInput::default(),|ctx|{
+            let _=show(ctx,&mut d,&source,&[],&[job(4,true)],true,42);
+        });
+        let saved=d.as_ref().unwrap();
+        assert_eq!(saved.selection.datasets,[true,false]);
+        assert!(saved.pending_remote.is_empty());
+    }
     #[test]
     fn a_changed_project_discards_the_export_selection() {
         let mut dialog = Some(Dialog::new(2, 1, 3.5, 42));
