@@ -203,6 +203,23 @@ mod tests {
         assert_eq!(app.project_settings.as_ref().unwrap().dxf_label_gap, 12.);
         assert_eq!(app.migrated_settings.map_export.dpi, 200);
         assert!(app.dirty);
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
+        let (sent,received)=std::sync::mpsc::channel();
+        app.exporter=Some(sleufbase_rust::export_worker::Exporter::with_processor(move |_,request,_| {
+            sent.send(request.maps.clone().unwrap()).unwrap();
+            Ok(sleufbase_rust::export_worker::Exported {point_updates:Vec::new(),point_candidates:None,
+                skipped:Vec::new(),companion:None,warnings:Vec::new()})
+        }).unwrap());
+        let directory=tempfile::tempdir().unwrap();
+        assert!(app.start_maps_export(directory.path().to_owned()));
+        assert_eq!(received.recv_timeout(Duration::from_secs(5)).unwrap().dpi,200);
+        let deadline=Instant::now()+Duration::from_secs(5);
+        while app.export_intent.is_some() {
+            app.poll_export_jobs(&egui::Context::default());
+            assert!(Instant::now()<deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
 }

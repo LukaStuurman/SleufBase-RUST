@@ -882,4 +882,36 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn maps_tab_exposes_offline_export_and_resolution_at_normal_window_sizes() {
+        for size in [egui::vec2(1200.,760.), egui::vec2(1500.,930.), egui::vec2(1920.,1080.)] {
+            let ctx = egui::Context::default();
+            let mut dialog = Some(Dialog::new(&MigratedSettings::default(), &AutosaveSettings::default()));
+            let frame = |dialog: &mut Option<Dialog>, events| ctx.run(egui::RawInput {
+                screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)), events, ..Default::default()
+            }, |ctx| {assert!(show(ctx,dialog,|_,_| panic!("render must not save")).is_none());});
+            frame(&mut dialog,vec![]);
+            let output=frame(&mut dialog,vec![]);
+            let position=|out:&egui::FullOutput,label:&str| out.shapes.iter().find_map(|s|
+                if let egui::Shape::Text(t)=&s.shape {(t.galley.text()==label).then(|| t.galley.rect.translate(t.pos.to_vec2()).center())}else{None})
+                .unwrap_or_else(||panic!("Missing {label} at {size:?}"));
+            for label in ["Resolutie (DPI)","Schaal 1:","Opslaan","Annuleren"] {
+                let p=position(&output,label);
+                assert!(p.x>0. && p.x<size.x && p.y>0. && p.y<size.y);
+            }
+            let click=|dialog:&mut Option<Dialog>,pos| {for pressed in [true,false] {
+                frame(dialog,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                    pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);
+            }};
+            click(&mut dialog,position(&output,"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)"));
+            let popup=frame(&mut dialog,vec![]);
+            click(&mut dialog,position(&popup,"Wit (zonder internet)"));
+            assert_eq!(dialog.as_ref().unwrap().draft.map_export.background,"white");
+            let saved=dialog.as_mut().unwrap().try_save(&mut |settings,_| {
+                assert_eq!(settings.map_export.background,"white"); Ok(())
+            }).unwrap();
+            assert_eq!(saved.settings.map_export.background,"white");
+        }
+    }
+
 }

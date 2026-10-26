@@ -99,10 +99,10 @@ pub struct ViewerPreferences {
     pub use_background:bool,
 }
 impl Default for ViewerPreferences {
-    fn default()->Self {Self{
-        background_source:crate::project_view::BackgroundProvider::PdokAerial.label().into(),
-        use_background:true,
-    }}
+    fn default()->Self {
+        let view=crate::project_view::ProjectView::default();
+        Self{background_source:view.background_source,use_background:view.use_background}
+    }
 }
 impl ViewerPreferences {
     pub fn validate(&self)->Result<(),String>{
