@@ -1377,10 +1377,26 @@ impl SleufBaseApp {
                 Err(error)=>{if let Some(editor)=self.rule_editor.as_mut(){editor.error=error;}}
             }
         }
-        if let Some(action)=crate::export_dialog::show(ctx,&mut self.export_dialog,&self.datasets,&self.virtual_trenches,self.project_generation) {
+        let verified_live=self.live_session.as_ref().is_some_and(|session|
+            self.live_jobs_owner.as_ref()==Some(session.snapshot_owner()));
+        if let Some(action)=crate::export_dialog::show(ctx,&mut self.export_dialog,
+            &self.datasets,&self.virtual_trenches,&self.live_jobs,verified_live,self.project_generation) {
             if action.open_jobs {
                 self.export_dialog=None;
                 self.open_kickthemap_workspace();
+            } else if action.queue_remote {
+                if !verified_live {
+                    self.message="Vernieuw eerst de KickTheMap-jobs van de huidige sessie.".into();
+                } else if self.live_operation_busy()||self.browser_ui.batch_mode {
+                    self.message="Rond de lopende KickTheMap-download eerst af.".into();
+                } else {
+                    let jobs=self.export_dialog.as_mut().map(|dialog|
+                        dialog.remote_to_download(&self.live_jobs,&self.datasets)).unwrap_or_default();
+                    if !jobs.is_empty(){
+                        self.queue_kickthemap_jobs(&jobs,false,true);
+                        self.message=format!("{} geselecteerde live jobs worden als JobFeatures geladen.",jobs.len());
+                    }
+                }
             } else if let Some(path)=rfd::FileDialog::new().add_filter("DXF",&["dxf"])
                 .set_file_name("SleufBase-Objecten.dxf").save_file() {
                 self.finish_dxf_export(path,action);
@@ -1534,7 +1550,7 @@ mod project_lifecycle_tests {
         let before=serde_json::to_value(&app.datasets).unwrap();
         app.save_dxf();app.export_dialog.as_mut().unwrap().selection.datasets[0]=false;
         let dir=tempfile::tempdir().unwrap();let output=dir.path().join("selected.dxf");
-        app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:true ,open_jobs:false });
+        app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:true ,open_jobs:false,queue_remote:false });
         finish_exporting(&mut app,&egui::Context::default());
         assert!(app.export_dialog.is_none());assert!(output.exists());
         finish_loading(&mut app,&egui::Context::default());
@@ -1543,7 +1559,7 @@ mod project_lifecycle_tests {
         assert!(text.contains("JobId: 2"));assert!(!text.contains("JobId: 1"));
         assert_eq!(serde_json::to_value(&app.datasets).unwrap(),before);
         let bytes=std::fs::read(&output).unwrap();
-        app.save_dxf();app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:false ,open_jobs:false });
+        app.save_dxf();app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:false ,open_jobs:false,queue_remote:false });
         finish_exporting(&mut app,&egui::Context::default());
         assert!(app.export_dialog.as_ref().unwrap().error.contains("bestaat al"));
         assert_eq!(std::fs::read(output).unwrap(),bytes);
