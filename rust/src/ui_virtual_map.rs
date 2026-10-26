@@ -347,9 +347,9 @@ mod tests {
         let mut app=app();
         app.start_virtual_copy(0);
         assert!(app.virtual_map.mode.is_some());
-        app.virtual_trenches[0].boundary_3d=vec![
-            app.virtual_trenches[0].start,app.virtual_trenches[0].end,
-            app.virtual_trenches[0].start];
+        let start=app.virtual_trenches[0].start;
+        let end=app.virtual_trenches[0].end;
+        app.virtual_trenches[0].boundary_3d=vec![start,end,start];
         app.start_virtual_rotation(0);
         assert!(app.virtual_map.mode.is_some(),"Rejected rotation must not end pending copy");
         assert!(app.virtual_map.rotating.is_none());
