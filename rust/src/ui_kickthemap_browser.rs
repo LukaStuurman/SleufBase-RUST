@@ -7,6 +7,7 @@ use sleufbase_rust::{
     jobs_cache::Job,
 };
 use std::{collections::{BTreeSet,VecDeque},sync::{Arc,atomic::{AtomicBool,Ordering}}};
+use sleufbase_rust::osm_tiles::{self,OsmRaster};
 
 const JOB_COLUMNS:[(&str,f32);7]=[
     ("Jobnaam",205.),("Adres",290.),("Coordinaten",150.),
@@ -48,6 +49,12 @@ pub(super) struct BrowserUi {
     sort_column:usize,
     sort_descending:bool,
     pub(super) show_login:bool,
+    map_open:bool,
+    map_bounds:Option<Bounds>,
+    map_texture:Option<(Bounds,egui::TextureHandle)>,
+    map_loading:Option<Receiver<Result<OsmRaster,String>>>,
+    map_status:String,
+    opening_job:Option<Receiver<(Browser,Result<(),String>)>>,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
     batch_generation:u64,
@@ -66,6 +73,8 @@ impl Default for BrowserUi {
             selected:BTreeSet::new(),filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,show_login:false,
+            map_open:false,map_bounds:None,map_texture:None,map_loading:None,
+            map_status:String::new(),opening_job:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
@@ -184,6 +193,44 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
+        let opening=self.browser_ui.opening_job.as_ref().map(|rx|rx.try_recv());
+        match opening {
+            Some(Ok((browser,result)))=>{
+                self.browser_ui.browser=Some(browser);
+                self.browser_ui.opening_job=None;
+                self.browser_ui.status=match result {
+                    Ok(())=>"Job geopend in het eigen KickTheMap Edge-venster".into(),
+                    Err(e)=>format!("Job openen mislukt: {e}"),
+                };
+            }
+            Some(Err(TryRecvError::Disconnected))=>{
+                self.browser_ui.opening_job=None;
+                self.browser_ui.status="Jobvenster openen onderbroken".into();
+            }
+            _=>{}
+        }
+        match self.browser_ui.map_loading.as_ref().map(|rx|rx.try_recv()) {
+            Some(Ok(Ok(raster)))=>{
+                let bytes=raster.rgba;
+                let image=egui::ColorImage::from_rgba_unmultiplied(
+                    [raster.width as usize,raster.height as usize],&bytes);
+                let texture=ctx.load_texture("kickthemap-jobs-osm",image,egui::TextureOptions::LINEAR);
+                self.browser_ui.map_texture=Some((raster.bounds,texture));
+                self.browser_ui.map_loading=None;
+                self.browser_ui.map_status=if raster.stale_cache{
+                    "OpenStreetMap geladen vanuit verouderde tegelcache".into()
+                }else{"OpenStreetMap geladen".into()};
+            }
+            Some(Ok(Err(e)))=>{
+                self.browser_ui.map_loading=None;
+                self.browser_ui.map_status=format!("Kaartachtergrond niet beschikbaar: {e}");
+            }
+            Some(Err(TryRecvError::Disconnected))=>{
+                self.browser_ui.map_loading=None;
+                self.browser_ui.map_status="Kaartdownload onderbroken".into();
+            }
+            _=>{}
+        }
         match self.browser_ui.capture_status.as_ref().map(|rx|rx.try_recv()){
             Some(Ok(status))=>{
                 if self.live_download_rx.is_some()&&self.live_busy&&self.live_download_generation==self.project_generation{self.browser_ui.status=status.clone();self.message=status;}
@@ -313,6 +360,20 @@ impl SleufBaseApp {
             self.browser_ui.queue.len()
         );
     }
+    fn open_selected_kickthemap_job(&mut self,id:u64){
+        let Some(browser)=self.browser_ui.browser.take() else {
+            self.browser_ui.status="Open eerst het eigen KickTheMap Edge-venster en neem de sessie over.".into();
+            return;
+        };
+        if self.browser_ui.opening_job.is_some(){self.browser_ui.browser=Some(browser);return;}
+        let (tx,rx)=mpsc::channel();
+        self.browser_ui.opening_job=Some(rx);
+        self.browser_ui.status=format!("Job {id} openen in Edge…");
+        std::thread::spawn(move||{
+            let result=browser.open_job(id);
+            let _=tx.send((browser,result));
+        });
+    }
     pub(super) fn show_kickthemap_workspace(&mut self,ctx:&egui::Context) {
         if !self.browser_ui.open {return;}
         let mut open=true;
@@ -343,6 +404,8 @@ impl SleufBaseApp {
                 .then(source[a].job_id.cmp(&source[b].job_id))
         });
         let filtered_ids=indices.iter().map(|&i|source[i].job_id).collect::<Vec<_>>();
+        let selected_single=filtered_ids.iter().find(|id|browser.selected.contains(id)).copied()
+            .or_else(||browser.selected.iter().next().copied());
         egui::Window::new("SleufBase Jobs")
             .open(&mut open).default_width(1280.).default_height(760.)
             .min_width(980.).min_height(560.)
@@ -377,6 +440,11 @@ impl SleufBaseApp {
                         indices.len(),source.len(),
                         if live {"live"} else {"offline cache — niet live"}));
                     ui.horizontal(|ui|{
+                        if ui.button(if browser.map_open{"Terug naar overzicht"}else{"Kaart"}).clicked(){
+                            browser.map_open=!browser.map_open;
+                            if browser.map_open {browser.map_bounds=None;}
+                        }
+                        if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
                         ui.checkbox(&mut browser.only_loaded,"Geladen Jobs");
                         ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");
                         ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
@@ -388,6 +456,9 @@ impl SleufBaseApp {
                         }
                         if ui.small_button("Wis selectie").clicked(){browser.selected.clear();}
                     });
+                    if browser.map_open {
+                        show_jobs_map(ui,source,&indices,browser,&mut action);
+                    } else {
                     // The header, seven independent filters and data share one horizontal scroll offset.
                     egui::ScrollArea::horizontal().id_salt("jobs-horizontal").show(ui,|ui|{
                         ui.horizontal(|ui|{
@@ -431,11 +502,14 @@ impl SleufBaseApp {
                                 }
                             });
                     });
+                    }
                     ui.small(format!("{} van {} jobs zichtbaar; {} geselecteerd{}",
                         indices.len(),source.len(),browser.selected.len(),
                         if live{""}else{" (offline cache)"}));
                     ui.separator();
                     ui.heading(format!("Downloads — {} geselecteerd",browser.selected.len()));
+                    if ui.add_enabled(live&&browser.browser.is_some()&&browser.opening_job.is_none()&&selected_single.is_some(),
+                        egui::Button::new("Open job")).clicked(){action=Some("open-job");}
                     ui.horizontal(|ui|{
                         let can=live&&!busy&&!browser.batch_mode&&
                             !browser.selected.is_empty()&&browser.capturing.is_none();
@@ -472,6 +546,9 @@ impl SleufBaseApp {
         self.browser_ui.open=open;
         match action {
             Some("launch")=>self.launch_kickthemap_browser(),
+            Some("open-job")=>{
+                if let Some(id)=selected_single{self.open_selected_kickthemap_job(id);}
+            },
             Some("capture")=>self.capture_kickthemap_browser(),
             Some("close")=>{
                 self.browser_ui.browser=None;
@@ -502,6 +579,127 @@ impl SleufBaseApp {
     }
 }
 
+fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
+    // Match the two leading numbers in the original Jobs map. Both RD and
+    // longitude/latitude are accepted; malformed values are not plotted.
+    let mut words=Vec::new();
+    let mut number=String::new();
+    for c in text.chars().chain(std::iter::once(' ')){
+        if c.is_ascii_digit()||((c=='-'||c=='.'||c==',')&&number.len()<30) {
+            if c==',' {number.push('.');} else{number.push(c);}
+        }else if !number.is_empty(){
+            if let Ok(n)=number.parse::<f64>(){words.push(n);}
+            number.clear();
+            if words.len()>=2{break;}
+        }
+    }
+    if words.len()<2{return None;}
+    let (x,y)=(words[0],words[1]);
+    if x.abs()<=20.&&y.abs()<=90.{
+        sleufbase_rust::location_search::wgs84_to_rd(y,x).ok()
+    }else if x.abs()>1000.&&y.abs()>1000.&&x.is_finite()&&y.is_finite(){
+        Some([x,y])
+    }else{None}
+}
+fn jobs_bounds(points:&[(u64,[f64;2])])->Option<Bounds>{
+    if points.is_empty(){return None;}
+    let min_x=points.iter().map(|(_,p)|p[0]).fold(f64::INFINITY,f64::min);
+    let max_x=points.iter().map(|(_,p)|p[0]).fold(f64::NEG_INFINITY,f64::max);
+    let min_y=points.iter().map(|(_,p)|p[1]).fold(f64::INFINITY,f64::min);
+    let max_y=points.iter().map(|(_,p)|p[1]).fold(f64::NEG_INFINITY,f64::max);
+    let padding=500_f64.max((max_x-min_x)*0.18).max((max_y-min_y)*0.18);
+    Some(Bounds{min_x:min_x-padding,max_x:max_x+padding,
+        min_y:min_y-padding,max_y:max_y+padding})
+}
+fn map_point(rect:egui::Rect,bounds:Bounds,p:[f64;2])->Pos2{
+    Pos2::new(
+        rect.left()+((p[0]-bounds.min_x)/(bounds.max_x-bounds.min_x)) as f32*rect.width(),
+        rect.bottom()-((p[1]-bounds.min_y)/(bounds.max_y-bounds.min_y)) as f32*rect.height(),
+    )
+}
+fn show_jobs_map(ui:&mut egui::Ui,source:&[Job],indices:&[usize],
+    browser:&mut BrowserUi,action:&mut Option<&'static str>){
+    let points=indices.iter().filter_map(|&i|{
+        job_rd_coordinates(&source[i].coordinates).map(|p|(source[i].job_id,p))
+    }).collect::<Vec<_>>();
+    let Some(visible_bounds)=jobs_bounds(&points) else {
+        ui.label("Geen jobs met geldige coördinaten gevonden.");
+        return;
+    };
+    ui.horizontal(|ui|{
+        if ui.button("Passend").clicked(){browser.map_bounds=Some(visible_bounds);browser.map_texture=None;}
+        if ui.button("Zoom naar selectie").clicked(){
+            let selected=points.iter().filter(|(id,_)|browser.selected.contains(id))
+                .copied().collect::<Vec<_>>();
+            if let Some(bounds)=jobs_bounds(&selected){browser.map_bounds=Some(bounds);browser.map_texture=None;}
+        }
+        if ui.button("Vernieuwen").clicked(){browser.map_texture=None;}
+        ui.small(format!("{} jobs met coördinaten",points.len()));
+    });
+    let bounds=*browser.map_bounds.get_or_insert(visible_bounds);
+    let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width().max(420.),350.),egui::Sense::click_and_drag());
+    let painter=ui.painter_at(rect);
+    painter.rect_filled(rect,0.,egui::Color32::from_rgb(238,242,247));
+    if browser.map_texture.as_ref().is_some_and(|(b,_)|
+        (b.min_x-bounds.min_x).abs()<0.01&&(b.max_x-bounds.max_x).abs()<0.01&&
+        (b.min_y-bounds.min_y).abs()<0.01&&(b.max_y-bounds.max_y).abs()<0.01){
+        if let Some((_,texture))=&browser.map_texture{
+            painter.image(texture.id(),rect,egui::Rect::from_min_max(
+                egui::pos2(0.,0.),egui::pos2(1.,1.)),egui::Color32::WHITE);
+        }
+    }else if browser.map_loading.is_none(){
+        let (tx,rx)=mpsc::channel();
+        browser.map_loading=Some(rx);
+        browser.map_status="OpenStreetMap-tegels ophalen…".into();
+        let dir=kickthemap_cache_dir().join("osm_jobs");
+        std::thread::spawn(move||{
+            let result=osm_tiles::request_map(bounds,900,480,dir);
+            let _=tx.send(result);
+        });
+    }
+    if response.dragged_by(egui::PointerButton::Middle){
+        let delta=response.drag_delta();
+        let dx=delta.x as f64/(rect.width() as f64)*(bounds.max_x-bounds.min_x);
+        let dy=delta.y as f64/(rect.height() as f64)*(bounds.max_y-bounds.min_y);
+        browser.map_bounds=Some(Bounds{min_x:bounds.min_x-dx,max_x:bounds.max_x-dx,
+            min_y:bounds.min_y+dy,max_y:bounds.max_y+dy});
+    }
+    let scroll=ui.input(|i|if response.hovered(){i.raw_scroll_delta.y}else{0.});
+    if scroll.abs()>0.1{
+        let factor=if scroll>0.{0.85}else{1.15};
+        let cx=(bounds.min_x+bounds.max_x)*0.5;
+        let cy=(bounds.min_y+bounds.max_y)*0.5;
+        let hx=(bounds.max_x-bounds.min_x)*0.5*factor;
+        let hy=(bounds.max_y-bounds.min_y)*0.5*factor;
+        browser.map_bounds=Some(Bounds{min_x:cx-hx,max_x:cx+hx,min_y:cy-hy,max_y:cy+hy});
+        browser.map_texture=None;
+    }
+    let mut nearest:Option<(u64,f32)>=None;
+    for (id,p) in points{
+        let pos=map_point(rect,bounds,p);
+        if !rect.contains(pos){continue;}
+        let is_selected=browser.selected.contains(&id);
+        painter.circle_filled(pos,if is_selected{7.}else{5.},
+            if is_selected{egui::Color32::from_rgb(249,115,22)}
+            else{egui::Color32::from_rgb(35,91,167)});
+        painter.circle_stroke(pos,if is_selected{7.}else{5.},
+            egui::Stroke::new(1.,egui::Color32::WHITE));
+        if let Some(mouse)=response.interact_pointer_pos(){
+            let distance=pos.distance(mouse);
+            if distance<16. && nearest.is_none_or(|(_,d)|distance<d){
+                nearest=Some((id,distance));
+            }
+        }
+    }
+    if (response.clicked()||response.double_clicked())&&nearest.is_some(){
+        let id=nearest.unwrap().0;
+        if !ui.input(|i|i.modifiers.ctrl){browser.selected.clear();}
+        browser.selected.insert(id);
+        if response.double_clicked(){*action=Some("open-job");}
+    }
+    ui.small(&browser.map_status);
+    ui.small("Klik op een marker om te selecteren; Ctrl voor meervoudige selectie. Dubbelklik opent een job. Muiswiel zoomt en de middelste muisknop verplaatst de kaart.");
+}
 fn read_download_capture(path:&std::path::Path)->Result<String,String>{
     use std::io::Read;
     const LIMIT:u64=256*1024;
