@@ -1363,6 +1363,7 @@ impl SleufBaseApp {
 
 
 
+        self.show_virtual_form_dialogs(ctx);
         self.show_marxact_orientation(ctx);
         self.show_settings_window(ctx);
 
