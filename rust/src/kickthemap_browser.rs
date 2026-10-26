@@ -281,6 +281,17 @@ impl Drop for Browser {
 mod tests {
     use super::*;
     #[test]
+    fn open_job_uses_live_verified_identity_not_guessed_urls() {
+        let payload=r#"{"data":[{"Id":42,"user_id":"fixture@example.test","project_date":"2026-10-25T12:00:00Z"}]}"#;
+        let url=job_view_url(payload,42).unwrap();
+        assert_eq!(url.origin().ascii_serialization(),ORIGIN);
+        assert!(url.path().starts_with("/viewJob/"));
+        assert!(url.path().contains("fixture"));
+        assert!(job_view_url(payload,43).is_err());
+        assert!(job_view_url(r#"{"data":[{"Id":42,"project_date":"now"}]}"#,42).is_err());
+        assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":"bob","project_date":"\\n"}]}"#,42).is_ok());
+    }
+    #[test]
     fn only_private_origin_cookies_are_adopted() {
         let cookie=json!({"cookies":[
             {"name":"laravel_session","value":"ok_abc","domain":".my.kickthemap.com","path":"/","secure":true},
