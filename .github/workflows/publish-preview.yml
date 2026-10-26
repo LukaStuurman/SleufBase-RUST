@@ -1,0 +1,137 @@
+name: Publish verified SleufBase preview
+on:
+  push:
+    branches: [codex/release-v0.1.0-preview.1]
+    paths: [.github/workflows/publish-preview.yml]
+permissions: {}
+concurrency:
+  group: sleufbase-preview-v0.1.0-preview.1
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'LukaStuurman/SleufBase-RUST'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 01f1644a9a63ead782e13312b1f9cafc6dd4c6dc
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify original build, attach assets and publish existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib, importlib.util, json, os, struct, subprocess, urllib.error, urllib.parse, urllib.request, zipfile
+          from pathlib import Path
+          
+          REPO = "LukaStuurman/SleufBase-RUST"
+          SOURCE = "01f1644a9a63ead782e13312b1f9cafc6dd4c6dc"
+          RUN = 40275071234
+          RELEASE = 423904835
+          TAG = "v0.1.0-preview.1"
+          BASE = "https://api.github.com/repos/" + REPO
+          UPLOAD = "https://uploads.github.com/repos/" + REPO + "/releases/" + str(RELEASE) + "/assets"
+          EXPECTED = {
+              "SleufBase-Rust-portable-preview.zip": "1cfafa31627cf0c131da56e6f134cf22c8d53bc330fb50249e20720bdf09d5fe",
+              "SleufBase-Rust-portable-preview.sha256": "1b6dfbef40ef26c9833636eb061c35110f5770876eb5de8ff4d979e2a3f3281f",
+              "SleufBase-Rust-preview-Setup.exe": "4a3113efe009ed3e99742f018bee4c45354481c70cc9123cb7670e96b081249c",
+              "SleufBase-Rust-preview-Setup.sha256": "d9ff1c94ca770e98b6a0f73ca938992097e4fdfa35831d66ffea1c491b15154a",
+          }
+          ARTIFACTS = [
+              (12630821070, "d7f0b91a1418dd475873d656db2f7aa3b6fb0d34232e09e0e1d2902939739b84",
+               {"SleufBase-Rust-portable-preview.zip", "SleufBase-Rust-portable-preview.sha256"}),
+              (12630291693, "afe2242f2f1aa08aaea1bfe2914d372cf4360ae6698891a1c3f41b9015bac4fb",
+               {"SleufBase-Rust-preview-Setup.exe", "SleufBase-Rust-preview-Setup.sha256"}),
+          ]
+          
+          def api(path, payload=None):
+              args = ["gh", "api", "repos/" + REPO + path]
+              if payload is not None:
+                  args += ["--method", "POST", "--input", "-"]
+              return json.loads(subprocess.check_output(args, input=None if payload is None else json.dumps(payload).encode()))
+          
+          def verify_release(release):
+              assert release["id"] == RELEASE and release["tag_name"] == TAG
+              assert release["prerelease"] and release["name"] == "SleufBase Rust 0.1.0 - Windows preview 1"
+              assert release["target_commitish"] == SOURCE
+              actual = {a["name"]: a for a in release["assets"]}
+              assert len(actual) == len(release["assets"]) and set(actual) <= EXPECTED.keys()
+              for name, asset in actual.items():
+                  assert asset["state"] == "uploaded" and asset["digest"] == "sha256:" + EXPECTED[name]
+              return actual
+          
+          run = api("/actions/runs/" + str(RUN))
+          assert run["head_sha"] == SOURCE and run["status"] == "completed" and run["conclusion"] == "success"
+          release = api("/releases/" + str(RELEASE))
+          existing = verify_release(release)
+          payload = Path("release-payload")
+          payload.mkdir(exist_ok=False)
+          for artifact_id, digest, names in ARTIFACTS:
+              metadata = api("/actions/artifacts/" + str(artifact_id))
+              assert not metadata["expired"] and metadata["workflow_run"]["head_sha"] == SOURCE
+              assert metadata["workflow_run"]["id"] == RUN and metadata["digest"] == "sha256:" + digest
+              archive = Path(str(artifact_id) + ".zip")
+              with archive.open("wb") as output:
+                  subprocess.run(["gh", "api", "repos/" + REPO + "/actions/artifacts/" + str(artifact_id) + "/zip"], stdout=output, check=True)
+              assert hashlib.file_digest(archive.open("rb"), "sha256").hexdigest() == digest
+              with zipfile.ZipFile(archive) as zipped:
+                  assert len(zipped.infolist()) == len(names) and set(zipped.namelist()) == names
+                  for item in zipped.infolist():
+                      assert 0 < item.file_size < 150 * 1024 * 1024
+                      data = zipped.read(item)
+                      assert hashlib.sha256(data).hexdigest() == EXPECTED[item.filename]
+                      (payload / item.filename).write_bytes(data)
+          
+          spec = importlib.util.spec_from_file_location("preview_verify", "tools/verify_native_preview.py")
+          verifier = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(verifier)
+          manifest = verifier.verify(payload / "SleufBase-Rust-portable-preview.zip", payload / "SleufBase-Rust-portable-preview.sha256")
+          assert manifest["revision"] == SOURCE and manifest["application_version"] == "0.1.0"
+          installer = payload / "SleufBase-Rust-preview-Setup.exe"
+          assert (payload / "SleufBase-Rust-preview-Setup.sha256").read_text().strip() == EXPECTED[installer.name] + "  " + installer.name
+          prefix = installer.read_bytes()[:1024 * 1024]
+          assert prefix[:2] == b"MZ" and prefix[struct.unpack_from("<I", prefix, 60)[0]:][:4] == b"PE\0\0"
+          assert release["upload_url"].split("{")[0] == UPLOAD
+          
+          for name in EXPECTED:
+              if name in existing:
+                  continue
+              assert release["draft"], "Published releases must not be modified"
+              request = urllib.request.Request(
+                  UPLOAD + "?" + urllib.parse.urlencode({"name": name}),
+                  data=(payload / name).read_bytes(), method="POST",
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Content-Type": "application/octet-stream", "Accept": "application/vnd.github+json",
+                           "User-Agent": "SleufBase-Rust-preview-publisher"},
+              )
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  asset = json.load(response)
+              assert asset["state"] == "uploaded" and asset["digest"] == "sha256:" + EXPECTED[name]
+              print("Verified uploaded asset:", name, flush=True)
+          
+          release = api("/releases/" + str(RELEASE))
+          assert set(verify_release(release)) == set(EXPECTED)
+          try:
+              tag = api("/git/ref/tags/" + TAG)
+          except subprocess.CalledProcessError:
+              # Only create if a separate read confirms the tag is missing.
+              missing = subprocess.run(["gh", "api", "--silent", "repos/" + REPO + "/git/ref/tags/" + TAG], capture_output=True)
+              assert missing.returncode != 0 and b"404" in missing.stderr, "Tag lookup failed unexpectedly"
+              tag = api("/git/refs", {"ref": "refs/tags/" + TAG, "sha": SOURCE})
+          assert tag["object"]["type"] == "commit" and tag["object"]["sha"] == SOURCE
+          if release["draft"]:
+              subprocess.run(["gh", "api", "--method", "PATCH", "repos/" + REPO + "/releases/" + str(RELEASE),
+                              "-F", "draft=false", "-F", "prerelease=true", "-f", "make_latest=false"], check=True, stdout=subprocess.DEVNULL)
+          release = api("/releases/" + str(RELEASE))
+          assert not release["draft"] and release["prerelease"] and set(verify_release(release)) == set(EXPECTED)
+          print("Published:", release["html_url"], flush=True)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("Published [" + TAG + "](" + release["html_url"] + ") from verified build " + str(RUN) + ".\n")
+          PY
