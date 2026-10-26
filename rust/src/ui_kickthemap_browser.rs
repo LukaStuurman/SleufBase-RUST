@@ -8,8 +8,32 @@ use sleufbase_rust::{
 };
 use std::{collections::{BTreeSet,VecDeque},sync::{Arc,atomic::{AtomicBool,Ordering}}};
 
-#[derive(Clone,Copy,PartialEq,Eq)]
-enum Sort {Newest,Name,Id}
+const JOB_COLUMNS:[(&str,f32);7]=[
+    ("Jobnaam",205.),("Adres",290.),("Coordinaten",150.),
+    ("Aanmaak datum",140.),("Status",150.),("Gemeente",145.),("Job ID",90.),
+];
+fn job_status_text(status:i32)->&'static str{
+    match status{
+        1=>"Aangemaakt",2=>"Wacht op verwerking",3|4=>"In wachtrij",
+        5=>"Verwerken",6=>"Controle nodig",7=>"Upload bezig",
+        8=>"Mislukt",9|10=>"Gereed",11=>"Wacht op bestanden",
+        _=>"Onbekend",
+    }
+}
+fn job_column_value(job:&Job,column:usize)->String{
+    match column{
+        0=>job.title.clone(),1=>job.address.clone(),
+        2=>job.coordinates.clone(),3=>job.client_date.clone(),
+        4=>job_status_text(job.status).into(),5=>job.municipality.clone(),
+        6=>job.job_id.to_string(),_=>String::new(),
+    }
+}
+fn job_matches_filters(job:&Job,filters:&[String;7])->bool{
+    filters.iter().enumerate().all(|(column,filter)|{
+        filter.trim().is_empty()||job_column_value(job,column)
+            .to_lowercase().contains(&filter.trim().to_lowercase())
+    })
+}
 enum RepairSource{File(PathBuf),Browser(sleufbase_rust::kickthemap_browser::BrowserChannel)}
 pub(super) struct BrowserUi {
     pub(super) open:bool,
@@ -17,10 +41,12 @@ pub(super) struct BrowserUi {
     launching:Option<Receiver<Result<Browser,String>>>,
     pub(super) capturing:Option<Receiver<(Browser,Result<(KickTheMapLiveClient,Vec<Job>),String>)>>,
     pub(super) selected:BTreeSet<u64>,
-    filter:String,
+    filters:[String;7],
     only_downloadable:bool,
     only_loaded:bool,
-    sort:Sort,
+    only_selected:bool,
+    sort_column:usize,
+    sort_descending:bool,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
     batch_generation:u64,
@@ -36,9 +62,10 @@ pub(super) struct BrowserUi {
 impl Default for BrowserUi {
     fn default()->Self {
         Self {open:false,browser:None,launching:None,capturing:None,
-            selected:BTreeSet::new(),filter:String::new(),
-            only_downloadable:false,only_loaded:false,
-            sort:Sort::Newest,queue:VecDeque::new(),batch_mode:false,
+            selected:BTreeSet::new(),filters:Default::default(),
+            only_downloadable:false,only_loaded:false,only_selected:false,
+            sort_column:3,sort_descending:true,
+            queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
             completed:0,failures:Vec::new(),cancel:Arc::new(AtomicBool::new(false)),
@@ -296,29 +323,28 @@ impl SleufBaseApp {
         let busy=self.live_operation_busy();
         let source=if live {jobs.as_slice()} else {cache};
         let browser=&mut self.browser_ui;
-        let query=browser.filter.trim().to_lowercase();
         let mut indices=(0..source.len()).filter(|&i|{
             let j=&source[i];
-            (!browser.only_downloadable || j.downloadable)
-                && (!browser.only_loaded || loaded.contains(&j.job_id))
-                && (query.is_empty()
-                    || j.title.to_lowercase().contains(&query)
-                    || j.address.to_lowercase().contains(&query)
-                    || j.municipality.to_lowercase().contains(&query)
-                    || j.client_date.to_lowercase().contains(&query)
-                    || j.job_id.to_string().contains(&query))
+            (!browser.only_downloadable||j.downloadable)
+                &&(!browser.only_loaded||loaded.contains(&j.job_id))
+                &&(!browser.only_selected||browser.selected.contains(&j.job_id))
+                &&job_matches_filters(j,&browser.filters)
         }).collect::<Vec<_>>();
-        match browser.sort {
-            Sort::Newest=>indices.sort_by(|&a,&b|
-                source[b].client_date.cmp(&source[a].client_date)
-                    .then(source[a].job_id.cmp(&source[b].job_id))),
-            Sort::Name=>indices.sort_by(|&a,&b|
-                source[a].title.to_lowercase().cmp(&source[b].title.to_lowercase())),
-            Sort::Id=>indices.sort_by_key(|&i|source[i].job_id),
-        }
+        let column=browser.sort_column;
+        indices.sort_by(|&a,&b|{
+            let order=match column {
+                4=>source[a].status.cmp(&source[b].status),
+                6=>source[a].job_id.cmp(&source[b].job_id),
+                _=>job_column_value(&source[a],column).to_lowercase()
+                    .cmp(&job_column_value(&source[b],column).to_lowercase()),
+            };
+            (if browser.sort_descending {order.reverse()}else{order})
+                .then(source[a].job_id.cmp(&source[b].job_id))
+        });
         let filtered_ids=indices.iter().map(|&i|source[i].job_id).collect::<Vec<_>>();
-        egui::Window::new("KickTheMap browser & jobs — Rust")
-            .open(&mut open).default_width(850.).default_height(670.)
+        egui::Window::new("SleufBase Jobs")
+            .open(&mut open).default_width(1280.).default_height(760.)
+            .min_width(980.).min_height(560.)
             .resizable(true).show(ctx,|ui|{
                 egui::ScrollArea::vertical().max_height(610.).show(ui,|ui|{
                     ui.heading("Browseraanmelding");
@@ -345,16 +371,9 @@ impl SleufBaseApp {
                         indices.len(),source.len(),
                         if live {"live"} else {"offline cache — niet live"}));
                     ui.horizontal(|ui|{
-                        ui.label("Zoeken");
-                        ui.add(egui::TextEdit::singleline(&mut browser.filter)
-                            .desired_width(320.).hint_text("Naam, adres, gemeente, datum, job-ID"));
+                        ui.checkbox(&mut browser.only_loaded,"Geladen Jobs");
+                        ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");
                         ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
-                        ui.checkbox(&mut browser.only_loaded,"Alleen geladen");
-                    });
-                    ui.horizontal(|ui|{
-                        ui.radio_value(&mut browser.sort,Sort::Newest,"Datum");
-                        ui.radio_value(&mut browser.sort,Sort::Name,"Naam");
-                        ui.radio_value(&mut browser.sort,Sort::Id,"Job-ID");
                         if ui.small_button("Selecteer zichtbare").clicked(){
                             browser.selected.extend(filtered_ids.iter().copied());
                         }
@@ -363,24 +382,52 @@ impl SleufBaseApp {
                         }
                         if ui.small_button("Wis selectie").clicked(){browser.selected.clear();}
                     });
-                    egui::ScrollArea::vertical().max_height(285.)
-                        .show_rows(ui,27.,indices.len(),|ui,rows|{
-                            for position in rows {
-                                let job=&source[indices[position]];
-                                ui.horizontal(|ui|{
-                                    let mut selected=browser.selected.contains(&job.job_id);
-                                    if ui.checkbox(&mut selected,"").changed(){
-                                        if selected {browser.selected.insert(job.job_id);}
-                                        else{browser.selected.remove(&job.job_id);}
+                    // The header, seven independent filters and data share one horizontal scroll offset.
+                    egui::ScrollArea::horizontal().id_salt("jobs-horizontal").show(ui,|ui|{
+                        ui.horizontal(|ui|{
+                            ui.add_sized([26.,25.],egui::Label::new(""));
+                            for (column,(name,width)) in JOB_COLUMNS.iter().enumerate(){
+                                let arrow=if browser.sort_column==column{
+                                    if browser.sort_descending{" ▼"}else{" ▲"}
+                                }else{""};
+                                if ui.add_sized([*width,27.],egui::Button::new(format!("{name}{arrow}"))).clicked(){
+                                    if browser.sort_column==column {
+                                        browser.sort_descending=!browser.sort_descending;
+                                    }else{
+                                        browser.sort_column=column;
+                                        browser.sort_descending=column==3;
                                     }
-                                    ui.label(format!("{} | {} | {} | {} | {} {}",
-                                        job.job_id,job.title,job.municipality,
-                                        job.client_date,if job.downloadable {"✓"}else{"–"},
-                                        if loaded.contains(&job.job_id) {"(geladen)"}else{""}))
-                                        .on_hover_text(&job.address);
-                                });
+                                }
                             }
                         });
+                        ui.horizontal(|ui|{
+                            ui.add_sized([26.,25.],egui::Label::new(""));
+                            for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
+                                ui.add_sized([*width,25.],egui::TextEdit::singleline(&mut browser.filters[column]).hint_text("Filter..."));
+                            }
+                        });
+                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(310.)
+                            .show_rows(ui,28.,indices.len(),|ui,rows|{
+                                for position in rows{
+                                    let job=&source[indices[position]];
+                                    ui.horizontal(|ui|{
+                                        let mut selected=browser.selected.contains(&job.job_id);
+                                        if ui.add_sized([26.,24.],egui::Checkbox::without_text(&mut selected)).changed(){
+                                            if selected{browser.selected.insert(job.job_id);}
+                                            else{browser.selected.remove(&job.job_id);}
+                                        }
+                                        for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
+                                            let value=job_column_value(job,column);
+                                            ui.add_sized([*width,24.],egui::Label::new(value.clone()).truncate())
+                                                .on_hover_text(value);
+                                        }
+                                    });
+                                }
+                            });
+                    });
+                    ui.small(format!("{} van {} jobs zichtbaar; {} geselecteerd{}",
+                        indices.len(),source.len(),browser.selected.len(),
+                        if live{""}else{" (offline cache)"}));
                     ui.separator();
                     ui.heading(format!("Downloads — {} geselecteerd",browser.selected.len()));
                     ui.horizontal(|ui|{
@@ -462,6 +509,23 @@ fn read_download_capture(path:&std::path::Path)->Result<String,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn jobs_grid_filters_all_original_columns_independently(){
+        let job=Job{job_id:12345,title:"Sleuf Noord".into(),address:"Markt 5".into(),
+            municipality:"Breda".into(),coordinates:"100000, 400000".into(),
+            client_date:"2026-10-26".into(),status:9,downloadable:true,prefix:String::new()};
+        assert_eq!(JOB_COLUMNS.map(|(name,_)|name),
+            ["Jobnaam","Adres","Coordinaten","Aanmaak datum","Status","Gemeente","Job ID"]);
+        assert_eq!(job_status_text(9),"Gereed");
+        let mut filters:[String;7]=Default::default();
+        filters[0]="SLEUF".into();filters[2]="400000".into();
+        filters[4]="gereed".into();filters[6]="2345".into();
+        assert!(job_matches_filters(&job,&filters));
+        filters[1]="ander adres".into();
+        assert!(!job_matches_filters(&job,&filters));
+        filters[1]="Markt".into();filters[5]="  BREDA ".into();
+        assert!(job_matches_filters(&job,&filters));
+    }
     #[test]
     fn project_switch_cancels_manual_download_and_ignores_its_late_capture_notice(){
         let mut app=SleufBaseApp::default();
