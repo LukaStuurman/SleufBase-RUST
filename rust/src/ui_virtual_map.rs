@@ -918,9 +918,9 @@ impl SleufBaseApp {
         let current=(t.end.y-t.start.y).atan2(t.end.x-t.start.x).to_degrees();
         let a=(current+90.).to_radians();
         let point=center+egui::vec2(radius as f32*(a.cos() as f32),-(radius as f32)*(a.sin() as f32));
-        view.painter.circle_stroke(center,radius as f32,Stroke::new(2.,ORANGE));
+        view.painter.circle_stroke(center,radius as f32,Stroke::new(2.0_f32,ORANGE));
         view.painter.circle_filled(point,10.,ORANGE);
-        view.painter.line_segment([p0,p1],Stroke::new(2.,ORANGE));
+        view.painter.line_segment([p0,p1],Stroke::new(2.0_f32,ORANGE));
         view.painter.text(center+egui::vec2(0.,14.),egui::Align2::CENTER_TOP,
             format!("{current:.1}°"),egui::FontId::proportional(13.),INK);
     }
