@@ -384,6 +384,15 @@ impl Target {
         })
     }
 }
+struct ChainageDialog {
+    target:Target,generation:u64,step:u8,
+    distance:f64,name:String,source:String,depth:f64,
+}
+struct DekbandDialog {
+    target:Target,generation:u64,adding:bool,
+    from:f64,to:f64,name:String,rgb:[u8;3],start_depth:f64,
+    end_depth:f64,same_depth:bool,
+}
 enum Mode {
     Create {
         label: String,
@@ -422,6 +431,8 @@ pub(super) struct State {
     menu_name:String,
     menu_angle:String,
     menu_note:String,
+    chainage:Option<ChainageDialog>,
+    dekband:Option<DekbandDialog>,
     rotating:Option<usize>,
     rotate_generation:u64,
     rotate_drag:Option<(f64,f64)>,
@@ -653,6 +664,161 @@ impl SleufBaseApp {
             Err(e)=>self.message=format!("Virtuele kopie mislukt: {e}"),
         }
     }
+    fn open_chainage_dialog(&mut self,index:usize){
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        self.virtual_map.chainage=Some(ChainageDialog{
+            target:Target::new(index,t),generation:self.project_generation,
+            step:0,distance:t.length()*0.5,name:format!("Punt {}",t.objects.len()+1),
+            source:String::new(),depth:0.6,
+        });
+    }
+    fn open_dekband_dialog(&mut self,index:usize){
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        self.virtual_map.dekband=Some(DekbandDialog{
+            target:Target::new(index,t),generation:self.project_generation,
+            adding:false,from:0.,to:t.length(),name:"Dekband".into(),
+            rgb:[17,24,39],start_depth:0.6,end_depth:0.6,same_depth:true,
+        });
+    }
+    pub(super) fn show_virtual_form_dialogs(&mut self,ctx:&egui::Context){
+        if let Some(mut d)=self.virtual_map.chainage.take(){
+            if d.generation==self.project_generation&&d.target.valid(&self.virtual_trenches){
+                let mut open=true;let mut save=false;
+                let length=self.virtual_trenches[d.target.index].length();
+                egui::Window::new(if d.step==0{"Punt op kettingmaat"}else{"Virtueel meetpunt"})
+                    .open(&mut open).default_width(600.).default_height(320.)
+                    .min_width(560.).min_height(280.)
+                    .show(ctx,|ui|{
+                        if d.step==0{
+                            ui.label("Afstand langs de meetas vanaf het beginpunt.");
+                            ui.horizontal(|ui|{
+                                ui.label("Afstand (m)");
+                                ui.add(egui::DragValue::new(&mut d.distance).range(0. ..=length).speed(0.1));
+                            });
+                            ui.small(format!("Maximaal {length:.2} m"));
+                            if ui.button("Verder").clicked(){d.step=1;}
+                        }else{
+                            ui.horizontal(|ui|{ui.label("Objectnaam");ui.text_edit_singleline(&mut d.name);});
+                            ui.horizontal(|ui|{ui.label("Discipline / bron");ui.text_edit_singleline(&mut d.source);});
+                            ui.horizontal(|ui|{ui.label("Diepte onder beginmaaiveld (m)");ui.add(egui::DragValue::new(&mut d.depth).range(0. ..=1000.).speed(0.05));});
+                            ui.horizontal(|ui|{
+                                if ui.button("Terug").clicked(){d.step=0;}
+                                if ui.button("Meetpunt opslaan").clicked(){save=true;}
+                            });
+                        }
+                        if ui.button("Annuleren").clicked(){open=false;}
+                    });
+                if save{
+                    let index=d.target.index;
+                    let t=&self.virtual_trenches[index];
+                    let fraction=(d.distance/t.length()).clamp(0.,1.);
+                    let x=t.start.x+(t.end.x-t.start.x)*fraction;
+                    let y=t.start.y+(t.end.y-t.start.y)*fraction;
+                    let z=t.start.z.map(|height|height-d.depth);
+                    let point=sleufbase_rust::virtual_trench::TrenchPoint{
+                        metadata:serde_json::json!({"surface_mode":"start",
+                            "sleufbase_depth_meters":d.depth,"surface_z":t.start.z}),
+                        role:"object".into(),object_name:d.name.trim().into(),
+                        source_name:d.source.trim().into(),position:Vertex{x,y,z},
+                        attributes:Default::default(),
+                    };
+                    match sleufbase_rust::virtual_trench_editor::replace_object(
+                        &mut self.virtual_trenches[index],None,point){
+                        Ok(())=>{
+                            self.dirty=true;self.trench_markers.clear();
+                            self.message="Virtueel meetpunt toegevoegd op kettingmaat.".into();
+                            open=false;
+                        }
+                        Err(e)=>self.message=e,
+                    }
+                }
+                if open{self.virtual_map.chainage=Some(d);}
+            }
+        }
+        if let Some(mut d)=self.virtual_map.dekband.take(){
+            if d.generation==self.project_generation{
+                let index=d.target.index;
+                let valid=self.virtual_trenches.get(index).is_some_and(|t|
+                    t.label==d.target.label&&t.start==d.target.start&&t.end==d.target.end);
+                if valid{
+                    let mut open=true;let mut save=false;let mut remove=None;
+                    let t=&self.virtual_trenches[index];let length=t.length();
+                    egui::Window::new(if d.adding{"Dekband toevoegen"}else{"Dekbanden beheren"})
+                        .open(&mut open).default_width(if d.adding{860.}else{760.})
+                        .default_height(if d.adding{680.}else{420.})
+                        .show(ctx,|ui|{
+                            if d.adding{
+                                ui.label("Kies de positie van de dekband langs de meetas.");
+                                ui.horizontal(|ui|{
+                                    ui.label("Vanaf (m)");
+                                    ui.add(egui::DragValue::new(&mut d.from).range(0. ..=length).speed(0.1));
+                                    ui.label("Tot (m)");
+                                    ui.add(egui::DragValue::new(&mut d.to).range(0. ..=length).speed(0.1));
+                                });
+                                ui.horizontal(|ui|{
+                                    ui.label("Omschrijving");
+                                    ui.text_edit_singleline(&mut d.name);
+                                    ui.color_edit_button_srgb(&mut d.rgb);
+                                });
+                                ui.horizontal(|ui|{
+                                    ui.label("Begindiepte (m)");
+                                    ui.add(egui::DragValue::new(&mut d.start_depth).range(0. ..=1000.));
+                                    ui.checkbox(&mut d.same_depth,"Zelfde einddiepte");
+                                });
+                                if d.same_depth{d.end_depth=d.start_depth;}
+                                else{ui.horizontal(|ui|{
+                                    ui.label("Einddiepte (m)");
+                                    ui.add(egui::DragValue::new(&mut d.end_depth).range(0. ..=1000.));
+                                });}
+                                ui.horizontal(|ui|{
+                                    if ui.button("Dekband opslaan").clicked(){save=true;}
+                                    if ui.button("Terug").clicked(){d.adding=false;}
+                                });
+                            }else{
+                                egui::ScrollArea::vertical().max_height(300.).show(ui,|ui|{
+                                    for (i,row) in t.dekband_rows.iter().enumerate(){
+                                        ui.horizontal(|ui|{
+                                            ui.label(format!("{}: {:.2} – {:.2} m",
+                                                row.source_name,row.start_chainage,row.end_chainage));
+                                            if ui.small_button("Verwijder").clicked(){remove=Some(i);}
+                                        });
+                                    }
+                                });
+                                if ui.button("Nieuwe dekband...").clicked(){d.adding=true;}
+                            }
+                            if ui.button("Sluiten").clicked(){open=false;}
+                        });
+                    if let Some(row)=remove{
+                        let mut candidate=self.virtual_trenches[index].clone();
+                        candidate.dekband_rows.remove(row);
+                        match candidate.validate(){
+                            Ok(())=>{self.virtual_trenches[index]=candidate;self.dirty=true;
+                                self.message="Dekband verwijderd".into();},
+                            Err(e)=>self.message=e,
+                        }
+                    }
+                    if save{
+                        if d.from<0.||d.to>length||d.to<=d.from+1e-6{
+                            self.message="Dekband moet binnen de sleuf vallen en een positieve lengte hebben.".into();
+                        }else{
+                            let t=&self.virtual_trenches[index];
+                            let point=|distance:f64|[
+                                t.start.x+(t.end.x-t.start.x)*distance/length,
+                                t.start.y+(t.end.y-t.start.y)*distance/length];
+                            let a=point(d.from);let b=point(d.to);
+                            match map::add_dekband_with_depth(&mut self.virtual_trenches[index],
+                                a,b,d.name.clone(),Some(d.rgb),d.start_depth,d.end_depth){
+                                Ok(changed)=>{self.dirty|=changed;self.trench_markers.clear();
+                                    d.adding=false;self.message="Dekband toegevoegd".into();},
+                                Err(e)=>self.message=e,
+                            }
+                        }
+                    }
+                    if open{self.virtual_map.dekband=Some(d);}
+                }
+            }
+        }
+    }
     fn start_virtual_rotation(&mut self,index:usize){
         if !self.begin_virtual_map(){return;}
         let Some(t)=self.virtual_trenches.get(index)else{return};
@@ -785,6 +951,12 @@ impl SleufBaseApp {
         }
         if ui.button("Punt op kaart toevoegen...").clicked(){
             self.start_virtual_points(index,true);ui.close_menu();
+        }
+        if ui.button("Punt op kettingmaat...").clicked(){
+            self.open_chainage_dialog(index);ui.close_menu();
+        }
+        if ui.button("Dekbanden beheren...").clicked(){
+            self.open_dekband_dialog(index);ui.close_menu();
         }
         ui.menu_button("Opmerking bewerken...",|ui|{
             ui.add(egui::TextEdit::multiline(&mut self.virtual_map.menu_note)
