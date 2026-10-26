@@ -1534,7 +1534,7 @@ mod project_lifecycle_tests {
         let before=serde_json::to_value(&app.datasets).unwrap();
         app.save_dxf();app.export_dialog.as_mut().unwrap().selection.datasets[0]=false;
         let dir=tempfile::tempdir().unwrap();let output=dir.path().join("selected.dxf");
-        app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:true});
+        app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:true ,open_jobs:false });
         finish_exporting(&mut app,&egui::Context::default());
         assert!(app.export_dialog.is_none());assert!(output.exists());
         finish_loading(&mut app,&egui::Context::default());
@@ -1543,7 +1543,7 @@ mod project_lifecycle_tests {
         assert!(text.contains("JobId: 2"));assert!(!text.contains("JobId: 1"));
         assert_eq!(serde_json::to_value(&app.datasets).unwrap(),before);
         let bytes=std::fs::read(&output).unwrap();
-        app.save_dxf();app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:false});
+        app.save_dxf();app.finish_dxf_export(output.clone(),crate::export_dialog::Action{overlay:false ,open_jobs:false });
         finish_exporting(&mut app,&egui::Context::default());
         assert!(app.export_dialog.as_ref().unwrap().error.contains("bestaat al"));
         assert_eq!(std::fs::read(output).unwrap(),bytes);
