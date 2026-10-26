@@ -179,7 +179,13 @@ fn job_view_url(payload:&str,job_id:u64)->Result<reqwest::Url,String>{
             v.as_u64().or_else(||v.as_str().and_then(|s|s.parse::<u64>().ok()))
         })==Some(job_id)
     }).ok_or("Job niet gevonden in de huidige KickTheMap-sessie")?;
-    let text=|key:&str|job.get(key).and_then(Value::as_str).unwrap_or("").trim();
+    let text=|key:&str|->String{
+        match job.get(key){
+            Some(Value::String(s))=>s.trim().to_owned(),
+            Some(Value::Number(n))=>n.to_string(),
+            _=>String::new(),
+        }
+    };
     let owner= if !text("user_id").is_empty(){text("user_id")}
         else if !text("project_mail").is_empty(){text("project_mail")}
         else {text("email")};
@@ -288,6 +294,8 @@ mod tests {
         assert!(url.path().starts_with("/viewJob/"));
         assert!(url.path().contains("fixture"));
         assert!(job_view_url(payload,43).is_err());
+        assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":12345,"project_date":"2026-10-26"}]}"#,42)
+            .unwrap().path().contains("12345_2026-10-26"));
         assert!(job_view_url(r#"{"data":[{"Id":42,"project_date":"now"}]}"#,42).is_err());
         assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":"bob","project_date":"\\n"}]}"#,42).is_ok());
     }
