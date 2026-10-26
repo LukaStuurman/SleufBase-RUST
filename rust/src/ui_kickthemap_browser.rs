@@ -47,6 +47,7 @@ pub(super) struct BrowserUi {
     only_selected:bool,
     sort_column:usize,
     sort_descending:bool,
+    pub(super) show_login:bool,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
     batch_generation:u64,
@@ -64,7 +65,7 @@ impl Default for BrowserUi {
         Self {open:false,browser:None,launching:None,capturing:None,
             selected:BTreeSet::new(),filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
-            sort_column:3,sort_descending:true,
+            sort_column:3,sort_descending:true,show_login:false,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
@@ -347,6 +348,10 @@ impl SleufBaseApp {
             .min_width(980.).min_height(560.)
             .resizable(true).show(ctx,|ui|{
                 egui::ScrollArea::vertical().max_height(610.).show(ui,|ui|{
+                    if ui.small_button(if browser.show_login{"Aanmelding verbergen"}else{"Inloggen / browseraanmelding"}).clicked(){
+                        browser.show_login=!browser.show_login;
+                    }
+                    if browser.show_login || !live {
                     ui.heading("Browseraanmelding");
                     ui.label("SleufBase opent een eigen tijdelijk Edge-profiel. Log rechtstreeks in op KickTheMap en los reCAPTCHA zelf op; er wordt geen wachtwoord of bestaande browsersessie uitgelezen.");
                     ui.horizontal(|ui|{
@@ -365,6 +370,7 @@ impl SleufBaseApp {
                             egui::Button::new("Vernieuw live jobs")).clicked(){action=Some("refresh");}
                     });
                     if browser.launching.is_some()||browser.capturing.is_some() {ui.spinner();}
+                    }
                     if !browser.status.is_empty(){ui.small(&browser.status);}
                     ui.separator();
                     ui.heading(format!("Jobs: {} zichtbaar / {} {}",
