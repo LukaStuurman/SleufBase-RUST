@@ -683,7 +683,7 @@ impl SleufBaseApp {
     pub(super) fn show_virtual_form_dialogs(&mut self,ctx:&egui::Context){
         if let Some(mut d)=self.virtual_map.chainage.take(){
             if d.generation==self.project_generation&&d.target.valid(&self.virtual_trenches){
-                let mut open=true;let mut save=false;
+                let mut open=true;let mut save=false;let mut request_close=false;
                 let length=self.virtual_trenches[d.target.index].length();
                 egui::Window::new(if d.step==0{"Punt op kettingmaat"}else{"Virtueel meetpunt"})
                     .open(&mut open).default_width(600.).default_height(320.)
@@ -706,8 +706,9 @@ impl SleufBaseApp {
                                 if ui.button("Meetpunt opslaan").clicked(){save=true;}
                             });
                         }
-                        if ui.button("Annuleren").clicked(){open=false;}
+                        if ui.button("Annuleren").clicked(){request_close=true;}
                     });
+                if request_close{open=false;}
                 if save{
                     let index=d.target.index;
                     let t=&self.virtual_trenches[index];
@@ -741,7 +742,7 @@ impl SleufBaseApp {
                 let valid=self.virtual_trenches.get(index).is_some_and(|t|
                     t.label==d.target.label&&t.start==d.target.start&&t.end==d.target.end);
                 if valid{
-                    let mut open=true;let mut save=false;let mut remove=None;
+                    let mut open=true;let mut save=false;let mut remove=None;let mut request_close=false;
                     let t=&self.virtual_trenches[index];let length=t.length();
                     egui::Window::new(if d.adding{"Dekband toevoegen"}else{"Dekbanden beheren"})
                         .open(&mut open).default_width(if d.adding{860.}else{760.})
@@ -786,8 +787,9 @@ impl SleufBaseApp {
                                 });
                                 if ui.button("Nieuwe dekband...").clicked(){d.adding=true;}
                             }
-                            if ui.button("Sluiten").clicked(){open=false;}
+                            if ui.button("Sluiten").clicked(){request_close=true;}
                         });
+                    if request_close{open=false;}
                     if let Some(row)=remove{
                         let mut candidate=self.virtual_trenches[index].clone();
                         candidate.dekband_rows.remove(row);
