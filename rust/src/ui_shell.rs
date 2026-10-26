@@ -9,6 +9,10 @@ pub(super) struct State {
     pub installed: bool,
     pub extended: bool,
     pub coords: String,
+    marxact_open: bool,
+    marxact_generation:u64,
+    marxact_index:usize,
+    marxact_angle:f64,
     tiff_height: Option<f32>,
     klic_height: Option<f32>,
     last_sidebar_height: Option<f32>,
@@ -25,6 +29,8 @@ impl Default for State {
             installed: false,
             extended: false,
             coords: "RD: -".into(),
+            marxact_open:false,marxact_generation:0,
+            marxact_index:0,marxact_angle:0.,
             tiff_height: None,
             klic_height: None,
             last_sidebar_height: None,
@@ -158,7 +164,7 @@ impl SleufBaseApp {
                                 ui.close_menu();
                             }
                         });
-                    action = action.or(menu(ui, "marXact", &[("marXact import", "marxact")]));
+                    action = action.or(menu(ui, "marXact", &[("marXact import", "marxact"),("Oriëntatie aanpassen...", "marxact_orientation")]));
                 });
             });
         if ctx.input_mut(|i| {
@@ -233,6 +239,7 @@ impl SleufBaseApp {
             "objects" => self.save_dxf(),
             "logout" => self.logout_live_jobs(),
             "ai" => self.open_ai_maaiveld(),
+            "marxact_orientation" => self.open_marxact_orientation(),
             "marxact" => {
                 if let Some(files) = rfd::FileDialog::new()
                     .add_filter("marXact DXF", &["dxf"])
@@ -245,6 +252,113 @@ impl SleufBaseApp {
         }
     }
 
+    fn marxact_indices(&self)->Vec<usize>{
+        self.virtual_trenches.iter().enumerate()
+            .filter_map(|(i,t)|(t.alignment.is_some()||!t.boundary_3d.is_empty()).then_some(i))
+            .collect()
+    }
+    pub(super) fn open_marxact_orientation(&mut self){
+        let indices=self.marxact_indices();
+        let Some(&index)=indices.first() else{
+            self.message="Er zijn geen geladen MarXact-proefsleuven.".into();return;
+        };
+        self.shell.marxact_open=true;
+        self.shell.marxact_generation=self.project_generation;
+        self.shell.marxact_index=index;
+        self.shell.marxact_angle=self.virtual_trenches[index].alignment
+            .as_ref().map_or(0.,|a|a.rotation_degrees);
+    }
+    pub(super) fn show_marxact_orientation(&mut self,ctx:&egui::Context){
+        if !self.shell.marxact_open{return;}
+        if self.shell.marxact_generation!=self.project_generation{
+            self.shell.marxact_open=false;return;
+        }
+        let indices=self.marxact_indices();
+        if indices.is_empty(){self.shell.marxact_open=false;return;}
+        if !indices.contains(&self.shell.marxact_index){
+            self.shell.marxact_index=indices[0];
+            self.shell.marxact_angle=self.virtual_trenches[indices[0]].alignment
+                .as_ref().map_or(0.,|a|a.rotation_degrees);
+        }
+        let mut open=true;
+        let mut operation=None;
+        egui::Window::new("MarXact kabel-/leidingoriëntatie")
+            .open(&mut open).default_width(650.).default_height(310.)
+            .min_width(590.).min_height(290.)
+            .resizable(false).show(ctx,|ui|{
+                ui.heading("MarXact kabel-/leidingoriëntatie");
+                ui.label("De automatische richting volgt de gemeten 3D-POLYLINE-randen. De rotatiecorrectie draait de gekozen sleuf ten opzichte van de automatische uitlijning.");
+                ui.horizontal(|ui|{
+                    ui.label("Proefsleuf");
+                    let selected=self.shell.marxact_index;
+                    egui::ComboBox::from_id_salt("marxact-orientation-source")
+                        .width(390.).selected_text(&self.virtual_trenches[selected].label)
+                        .show_ui(ui,|ui|{
+                            for &index in &indices{
+                                if ui.selectable_label(index==self.shell.marxact_index,
+                                    &self.virtual_trenches[index].label).clicked(){
+                                    self.shell.marxact_index=index;
+                                    self.shell.marxact_angle=self.virtual_trenches[index].alignment
+                                        .as_ref().map_or(0.,|a|a.rotation_degrees);
+                                }
+                            }
+                        });
+                });
+                ui.horizontal(|ui|{
+                    ui.label("Rotatiecorrectie");
+                    if ui.add(egui::Slider::new(&mut self.shell.marxact_angle,-90. ..=90.)
+                        .suffix("°")).changed(){
+                        operation=Some("apply");
+                    }
+                    if ui.add(egui::DragValue::new(&mut self.shell.marxact_angle)
+                        .range(-90. ..=90.).speed(0.1).suffix("°")).changed(){
+                        operation=Some("apply");
+                    }
+                });
+                ui.small(format!("{:+.1}° ten opzichte van automatisch",self.shell.marxact_angle));
+                ui.horizontal(|ui|{
+                    for (label,delta) in [("−1°",-1.),("−0,1°",-0.1),("+0,1°",0.1),("+1°",1.)]{
+                        if ui.button(label).clicked(){
+                            self.shell.marxact_angle=(self.shell.marxact_angle+delta).clamp(-90.,90.);
+                            operation=Some("apply");
+                        }
+                    }
+                    if ui.button("Correctie 0°").clicked(){
+                        self.shell.marxact_angle=0.;operation=Some("apply");
+                    }
+                });
+                ui.horizontal(|ui|{
+                    if ui.button("Automatisch opnieuw bepalen").clicked(){operation=Some("recalculate");}
+                    if ui.button("Sluiten").clicked(){operation=Some("close");}
+                });
+            });
+        self.shell.marxact_open=open;
+        match operation{
+            Some("apply")|Some("recalculate")=>{
+                let index=self.shell.marxact_index;
+                let mut candidate=self.virtual_trenches[index].clone();
+                let result=if operation==Some("recalculate"){
+                    sleufbase_rust::marxact_alignment::recalculate(&mut candidate)
+                }else{
+                    sleufbase_rust::marxact_alignment::apply_rotation(
+                        &mut candidate,self.shell.marxact_angle)
+                };
+                match result{
+                    Ok(())=>{
+                        self.virtual_trenches[index]=candidate;
+                        if operation==Some("recalculate"){self.shell.marxact_angle=0.;}
+                        self.trench_markers.clear();
+                        self.refresh_virtual_references();
+                        self.dirty=true;
+                        self.message="MarXact-oriëntatie bijgewerkt.".into();
+                    }
+                    Err(e)=>self.message=format!("MarXact-oriëntatie: {e}"),
+                }
+            }
+            Some("close")=>self.shell.marxact_open=false,
+            _=>{}
+        }
+    }
     pub(super) fn show_original_sidebar(&mut self, ctx: &egui::Context) {
         let width = (ctx.screen_rect().width().max(1200.) * 0.255).clamp(360., 400.);
         egui::SidePanel::left("original-sidebar").default_width(width).min_width(340.)
