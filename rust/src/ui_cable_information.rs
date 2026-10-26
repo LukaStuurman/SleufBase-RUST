@@ -147,7 +147,10 @@ fn pick_all(
             found.push(key);
         }
     }
-    found.sort();
+    found.sort_by(|a,b|a.0.total_cmp(&b.0)
+        .then_with(||a.1.cmp(&b.1)).then_with(||a.2.cmp(&b.2))
+        .then_with(||a.3.cmp(&b.3)).then_with(||a.4.cmp(&b.4))
+        .then_with(||a.5.cmp(&b.5)));
     found.into_iter().map(|(_,_,_,_,overlay,feature)|(overlay,feature)).collect()
 }
 fn pick(overlays:&[DxfOverlay],view:&raster_point_ui::View,pointer:Pos2)->Option<(usize,usize)>{
