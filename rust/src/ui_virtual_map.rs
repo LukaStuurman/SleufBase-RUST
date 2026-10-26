@@ -327,6 +327,34 @@ mod tests {
         }
     }
     #[test]
+    fn cancelling_rotation_releases_pointer_capture_and_edit_dialogs_capture_canvas(){
+        let mut app=app();
+        app.virtual_map.capture=true;
+        app.virtual_map.rotating=Some(0);
+        assert!(app.virtual_map.captures());
+        app.cancel_virtual_map();
+        assert!(!app.virtual_map.captures());
+        app.open_chainage_dialog(0);
+        assert!(app.virtual_map.captures());
+        app.virtual_map.chainage=None;
+        app.open_dekband_dialog(0);
+        assert!(app.virtual_map.captures());
+        app.virtual_map.dekband=None;
+        assert!(!app.virtual_map.captures());
+    }
+    #[test]
+    fn measured_rotation_rejection_keeps_existing_virtual_map_mode(){
+        let mut app=app();
+        app.start_virtual_copy(0);
+        assert!(app.virtual_map.mode.is_some());
+        app.virtual_trenches[0].boundary_3d=vec![
+            app.virtual_trenches[0].start,app.virtual_trenches[0].end,
+            app.virtual_trenches[0].start];
+        app.start_virtual_rotation(0);
+        assert!(app.virtual_map.mode.is_some(),"Rejected rotation must not end pending copy");
+        assert!(app.virtual_map.rotating.is_none());
+    }
+    #[test]
     fn physical_tiff_virtual_copy_preserves_raster_and_creates_editable_geometry(){
         let payload:serde_json::Value=serde_json::from_str(
             include_str!("../tests/fixtures/raster-rotation/reference.json")).unwrap();
@@ -441,6 +469,7 @@ impl State {
     pub(super) fn reference_active(&self)->bool {matches!(self.mode,Some(Mode::Reference(_)))}
     pub fn captures(&self) -> bool {
         self.mode.is_some() || self.capture || self.rotating.is_some()
+            || self.chainage.is_some() || self.dekband.is_some()
     }
 }
 impl SleufBaseApp {
@@ -490,6 +519,7 @@ impl SleufBaseApp {
         self.virtual_map.pointer = None;
         self.virtual_map.rotating=None;
         self.virtual_map.rotate_drag=None;
+        self.virtual_map.capture=false;
     }
     pub(super) fn refresh_virtual_references(&mut self) {
         self.virtual_map.references = self
@@ -822,12 +852,14 @@ impl SleufBaseApp {
         }
     }
     fn start_virtual_rotation(&mut self,index:usize){
-        if !self.begin_virtual_map(){return;}
+        // Reject unsupported layers *before* cancelling the user's current
+        // drawing operation. Failed commands must not destroy interaction state.
         let Some(t)=self.virtual_trenches.get(index)else{return};
         if sleufbase_rust::virtual_trench_editor::is_measured(t){
             self.message="Gemeten proefsleuven kunnen niet interactief worden gedraaid; maak eerst een handmatige kopie.".into();
             return;
         }
+        if !self.begin_virtual_map(){return;}
         self.virtual_map.rotating=Some(index);
         self.virtual_map.selected=Some(index);
         self.virtual_map.rotate_generation=self.project_generation;
@@ -1067,6 +1099,10 @@ impl SleufBaseApp {
     pub(super) fn handle_virtual_map(&mut self, view: &raster_point_ui::View) {
         let ctx = view.painter.ctx();
         self.poll_virtual_ahn(ctx);
+        if self.virtual_map.chainage.is_some() || self.virtual_map.dekband.is_some()
+            || self.shell.marxact_open {
+            return; // Dialogs own the pointer until accepted or cancelled.
+        }
         if self.virtual_map.rotating.is_some(){
             self.handle_virtual_rotation(view);
             return;
