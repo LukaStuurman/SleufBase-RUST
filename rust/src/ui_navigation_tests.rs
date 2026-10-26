@@ -220,9 +220,11 @@ fn navigation_pan_is_incremental_and_drawing_tools_keep_primary_drags() {
 #[test]
 fn navigation_resize_and_background_visibility_preserve_world_center_and_scale() {
     let ctx = egui::Context::default();
-    let mut app = SleufBaseApp::default();
-    app.pan = egui::vec2(110., -80.);
-    app.zoom = 2.4;
+    let mut app = SleufBaseApp {
+        pan: egui::vec2(110., -80.),
+        zoom: 2.4,
+        ..Default::default()
+    };
     let first = frame(&ctx, &mut app, [1500., 930.], vec![]);
     let camera = project_view_ui::capture_camera(&first);
     for size in [[1200., 760.], [800., 600.], [1920., 1080.], [1500., 930.]] {
@@ -336,8 +338,10 @@ fn navigation_progressive_background_finishes_instead_of_cancelling_after_first_
         Ok(pixels([20, 90, 120, 255]))
     })
     .unwrap();
-    let mut app = SleufBaseApp::default();
-    app.map_requests = map_request_ui::State::with_worker(worker);
+    let mut app = SleufBaseApp {
+        map_requests: map_request_ui::State::with_worker(worker),
+        ..Default::default()
+    };
     let ctx = egui::Context::default();
     let deadline = Instant::now() + Duration::from_secs(5);
     while app.message != "Kaartachtergrond geladen" {

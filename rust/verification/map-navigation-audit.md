@@ -44,7 +44,7 @@ Painting, picking, raster-detail requests and background requests all use the sa
 
 ## Validation and limits
 
-The two original regressions (background camera drift and cursor anchoring) fail before the fix and pass afterwards. All 13 new navigation tests pass locally on Windows GNU. The existing Rust Windows CI runs all native targets, Clippy, optimized MSVC build and portable/installer packaging; inspect the PR checks for its final status.
+The two original regressions (background camera drift and cursor anchoring) fail before the fix and pass afterwards. All 13 new navigation tests pass locally on Windows GNU. The complete local all-target run records 847 passed and 2 failed across 151 test binaries. Both failures (lff_font::original_lff_parser_inheritance_snapshots_and_all_control_geometry_match and stroke_font::original_binary_ascii_unicode_and_all_shape_instructions_match_control_geometry) reproduce identically on unmodified main 374258b using the same GNU toolchain. They are baseline font-geometry portability failures, not changes to navigation. Clippy completes successfully; existing repository warnings remain. The existing Rust Windows CI runs all native targets, Clippy, optimized MSVC build and portable/installer packaging; inspect the PR checks for its final status.
 
 DPI is exercised through egui native-pixel inputs, not by changing the user's Windows display settings. Physical touchpad hardware, authenticated KickTheMap workflows and real survey-project acceptance were not performed. This is a reviewed preview fix, not a claim of complete product acceptance.
 
