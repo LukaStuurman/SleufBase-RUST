@@ -1378,7 +1378,11 @@ impl SleufBaseApp {
             }
         }
         if let Some(action)=crate::export_dialog::show(ctx,&mut self.export_dialog,&self.datasets,&self.virtual_trenches,self.project_generation) {
-            if let Some(path)=rfd::FileDialog::new().add_filter("DXF",&["dxf"]).set_file_name("SleufBase-Objecten-Rust.dxf").save_file() {
+            if action.open_jobs {
+                self.export_dialog=None;
+                self.open_kickthemap_workspace();
+            } else if let Some(path)=rfd::FileDialog::new().add_filter("DXF",&["dxf"])
+                .set_file_name("SleufBase-Objecten.dxf").save_file() {
                 self.finish_dxf_export(path,action);
             }
         }
