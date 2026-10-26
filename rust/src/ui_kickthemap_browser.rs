@@ -686,7 +686,7 @@ fn show_jobs_map(ui:&mut egui::Ui,source:&[Job],indices:&[usize],
             if is_selected{egui::Color32::from_rgb(249,115,22)}
             else{egui::Color32::from_rgb(35,91,167)});
         painter.circle_stroke(pos,if is_selected{7.}else{5.},
-            egui::Stroke::new(1.,egui::Color32::WHITE));
+            egui::Stroke::new(1.0_f32,egui::Color32::WHITE));
         if let Some(mouse)=response.interact_pointer_pos(){
             let distance=pos.distance(mouse);
             if distance<16. && nearest.is_none_or(|(_,d)|distance<d){
