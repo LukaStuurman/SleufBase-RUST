@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn a_changed_project_discards_the_export_selection() {
         let mut dialog = Some(Dialog::new(2, 1, 3.5, 42));
-        assert!(show(&egui::Context::default(), &mut dialog, &[], &[], 43).is_none());
+        assert!(show(&egui::Context::default(), &mut dialog, &[], &[], &[], false, 43).is_none());
         assert!(dialog.is_none());
     }
 }
