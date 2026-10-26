@@ -558,6 +558,63 @@ impl SleufBaseApp {
         self.virtual_map.mode=Some(Mode::Dekband{target:Target::new(index,t),start:None});
         self.message="Prik begin en einde van de dekband op de meetas.".into();
     }
+    pub(super) fn make_virtual_from_raster(&mut self,index:usize){
+        if self.file_intent.is_some()||self.export_intent.is_some()
+            ||self.template_job.is_some()||self.trench_editor.is_some(){
+            self.message="Rond de lopende bewerking eerst af.".into();
+            return;
+        }
+        let Some(raster)=self.geotiffs.get(index) else{return};
+        if raster.epsg.is_some_and(|epsg|epsg!=28992){
+            self.message="Virtuele kopie vereist een GeoTIFF met RD-coördinaten (EPSG:28992).".into();
+            return;
+        }
+        let t=raster.transform;
+        let w=raster.width as f64;
+        let h=raster.height as f64;
+        let col=(t.a*w).hypot(t.d*w);
+        let row=(t.b*h).hypot(t.e*h);
+        if !col.is_finite()||!row.is_finite()||col.max(row)<0.5||col.min(row)<0.1{
+            self.message="De GeoTIFF is te klein of heeft ongeldige kaartafmetingen.".into();
+            return;
+        }
+        // Trace the image's georeferenced centreline to an editable virtual
+        // trench while retaining the original TIFF as an unchanged source.
+        let (start,end,width)=if col>=row{
+            (t.pixel_to_world(0.,h/2.),t.pixel_to_world(w,h/2.),row)
+        }else{
+            (t.pixel_to_world(w/2.,0.),t.pixel_to_world(w/2.,h),col)
+        };
+        let name=sleufbase_rust::virtual_map::next_name(self.virtual_trenches.iter()
+            .map(|x|std::borrow::Cow::Borrowed(x.label.as_str()))
+            .chain(self.geotiffs.iter().filter_map(|x|
+                x.path.file_stem().map(|v|v.to_string_lossy()))));
+        let result=VirtualTrench::new(name,
+            Vertex{x:start.0,y:start.1,z:None},
+            Vertex{x:end.0,y:end.1,z:None},width);
+        match result{
+            Ok(mut copy)=>{
+                copy.source_path=Some(raster.path.clone());
+                copy.job_id=raster.kickthemap_job_id.unwrap_or(0);
+                copy.metadata=serde_json::json!({
+                    "virtual_copy_source":raster.path.to_string_lossy().to_string(),
+                    "virtual_copy_geometry":"raster_centreline",
+                    "tiff_comment_text":raster.metadata.get("tiff_comment_text").and_then(|x|x.as_str()).unwrap_or("")
+                });
+                self.cancel_virtual_map();
+                self.stop_raster_rotation();
+                self.virtual_trenches.push(copy);
+                let new_index=self.virtual_trenches.len()-1;
+                self.virtual_map.selected=Some(new_index);
+                self.raster_points.selected=None;
+                self.trench_markers.clear();
+                self.dirty=true;
+                self.message="Virtuele kopie van GeoTIFF-geometrie aangemaakt. De originele afbeelding blijft apart geladen.".into();
+                self.open_virtual_editor(new_index);
+            }
+            Err(e)=>self.message=format!("Virtuele kopie mislukt: {e}"),
+        }
+    }
     fn start_virtual_rotation(&mut self,index:usize){
         if !self.begin_virtual_map(){return;}
         let Some(t)=self.virtual_trenches.get(index)else{return};
