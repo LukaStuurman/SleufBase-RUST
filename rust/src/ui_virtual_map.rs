@@ -382,6 +382,7 @@ pub(super) struct State {
     band_end_depth:f64,
 }
 impl State {
+    pub(super) fn reference_active(&self)->bool {matches!(self.mode,Some(Mode::Reference(_)))}
     pub fn captures(&self) -> bool {
         self.mode.is_some() || self.capture
     }
@@ -476,7 +477,7 @@ impl SleufBaseApp {
         }
         true
     }
-    fn start_virtual_creation(&mut self) {
+    pub(super) fn start_virtual_creation(&mut self) {
         if !self.begin_virtual_map() {
             return;
         }
@@ -515,7 +516,7 @@ impl SleufBaseApp {
         self.message =
             "Beweeg naar de nieuwe locatie en klik om de hele proefsleuf te verplaatsen.".into();
     }
-    fn start_virtual_reference(&mut self, index: usize) {
+    pub(super) fn start_virtual_reference(&mut self, index: usize) {
         if !self.begin_virtual_map() {
             return;
         }

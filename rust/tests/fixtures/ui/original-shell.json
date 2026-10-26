@@ -1,0 +1,3741 @@
+{
+  "schema_version": 1,
+  "purpose": "Read-only original shell oracle for native UI parity; no original application initialization",
+  "evidence": [
+    {
+      "path": "_bytecode/app.cpython-311.pyc",
+      "sha256": "723928f95127363585753065d5440c4e3be242089d590d58029a2214f0caebec"
+    },
+    {
+      "path": "_bytecode/legacy_bytecode_manifest.json",
+      "sha256": "46abfff1e13031781f38edf47c293f44db820514f13293126cd55dd399f72fb2"
+    },
+    {
+      "path": "legacy_bytecode.py",
+      "sha256": "5c13c4ff0fb56fd7276b120c0fab99d2a79a16913e67dc9636c3c6c026be54ba"
+    },
+    {
+      "path": "source_migration.py",
+      "sha256": "dade9ae4726093ad8a3cc6f7446787f480c018fa9e3f4b7273f8768737184e31"
+    },
+    {
+      "path": "app.py",
+      "sha256": "15928f2dd679c2253794f0edb263490b1cf358d70da242b147c3bafcd3777db3"
+    },
+    {
+      "path": "rounded_widgets.py",
+      "sha256": "97f74d1e9a23abaf75a271d5093b774aafc8eb0324d0a80940cf6bf47ed0d28a"
+    },
+    {
+      "path": "sleufbase_launcher.py",
+      "sha256": "48be6a4a814983ac2ee611b9cae3d2c3a93907b331360a9ed65ac56bbaa45c46"
+    },
+    {
+      "path": "__init__.py",
+      "sha256": "34fe3c01a3562660fcb692dca60b29724b0af3b6a9851f785b065ae63efe56ff"
+    },
+    {
+      "path": "discipline_excel_export.py",
+      "sha256": "c107bf9c2207351f294683fd87a3beba256b0425d750d54ae2618fb00ad7bf62"
+    },
+    {
+      "path": "marxact_import_patch.py",
+      "sha256": "54910e19a6e7e2cb7367af6b809831a1a6190cadc2f0b15d590c3432bb4d4880"
+    },
+    {
+      "path": "marxact_alignment_ui_patch.py",
+      "sha256": "54809a7e2581597dd1539c164624e70766f0a7c4f6aa8bc7c1b2b6973adf0bae"
+    },
+    {
+      "path": "pdok_default_background_patch.py",
+      "sha256": "4dca476b84cceeb2b30626448272054caa6ae4e20a7d7c33e8afaf697b28a3b2"
+    },
+    {
+      "path": "tools/generate_workflow_contract.py",
+      "sha256": "1cd2b8d0162b5368134d201fff7e5dafd2ebffadbcc93d0c6dd41d5808f3d2b7"
+    }
+  ],
+  "method": "Hash-validated Python 3.11 code objects invoked individually against fake widgets; source patch functions extracted with AST. No module/app/settings/accounts initialization.",
+  "exceptions": [
+    "Cyclomedia",
+    "StreetSmart"
+  ],
+  "cached_methods": {
+    "__init__": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 260
+    },
+    "_build_layout": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 417
+    },
+    "_refresh_maaiveld_button_state": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 1158
+    },
+    "_refresh_reference_point_button_state": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 1285
+    },
+    "_refresh_start_point_button_state": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 1304
+    },
+    "_build_menu": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 2886
+    },
+    "_set_initial_sidebar_pane_sizes": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 3455
+    },
+    "_set_initial_main_pane_size": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 3466
+    },
+    "_update_window_title": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 5592
+    },
+    "_default_info_text": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 11261
+    },
+    "_configure_styles": {
+      "bytecode_source": "app\\app.py",
+      "first_line": 12178
+    }
+  },
+  "window": {
+    "initial_inner_size": [
+      1500,
+      930
+    ],
+    "minimum_inner_size": [
+      1200,
+      760
+    ],
+    "initial_title": "SleufBase",
+    "branding_evidence": "app.py:267-287 wraps __init__ and sets SleufBase after base initialization",
+    "base_title_update": {
+      "title_without_project": "TechBase KLIC GeoTIFF Kaarten",
+      "with_project": "TechBase KLIC GeoTIFF Kaarten - {project_stem}",
+      "evidence": "cached app/app.py:5592"
+    },
+    "icon": "assets/sleufbase_icon.ico",
+    "theme": "clam",
+    "root_font": {
+      "family": "Segoe UI",
+      "points": 10
+    },
+    "palette": {
+      "APP_BG": "#f5f7fb",
+      "SURFACE": "#ffffff",
+      "SURFACE_ALT": "#fafbfd",
+      "SURFACE_SOFT": "#f3f6fa",
+      "INPUT_BG": "#fbfcfe",
+      "CHARCOAL": "#050608",
+      "TEXT": "#111827",
+      "MUTED": "#667085",
+      "ACCENT": "#f97316",
+      "ACCENT_DARK": "#c2410c",
+      "ACCENT_LIGHT": "#fdba74",
+      "BORDER": "#dde4ee",
+      "BORDER_SOFT": "#e9eef5",
+      "CANVAS_BG": "#f2f6fb",
+      "MAAIVELD_DEFAULT_COLOR": "#808080"
+    }
+  },
+  "widget_nodes": [
+    {
+      "id": "ttk.Panedwindow1",
+      "type": "ttk.Panedwindow",
+      "args": [
+        {
+          "widget": "app"
+        }
+      ],
+      "options": {
+        "orient": "horizontal"
+      },
+      "cached_source_line": 421
+    },
+    {
+      "id": "ttk.Frame2",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "ttk.Panedwindow1"
+        }
+      ],
+      "options": {
+        "padding": [
+          18,
+          18,
+          14,
+          18
+        ],
+        "width": 360,
+        "style": "App.TFrame"
+      },
+      "cached_source_line": 424
+    },
+    {
+      "id": "ttk.Frame3",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "ttk.Panedwindow1"
+        }
+      ],
+      "options": {
+        "padding": [
+          8,
+          18,
+          18,
+          18
+        ],
+        "style": "App.TFrame"
+      },
+      "cached_source_line": 429
+    },
+    {
+      "id": "Rounded.Panel4",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Frame2"
+        }
+      ],
+      "options": {
+        "title": "Weergave",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827",
+        "padding": [
+          12,
+          8
+        ]
+      },
+      "cached_source_line": 437
+    },
+    {
+      "id": "ttk.Label5",
+      "type": "ttk.Label",
+      "args": [
+        {
+          "widget": "Rounded.Panel4.body"
+        }
+      ],
+      "options": {
+        "text": "Kaart",
+        "style": "Card.TLabel"
+      },
+      "cached_source_line": 450
+    },
+    {
+      "id": "ttk.Label6",
+      "type": "ttk.Label",
+      "args": [
+        {
+          "widget": "Rounded.Panel4.body"
+        }
+      ],
+      "options": {
+        "text": "TIFF",
+        "style": "Card.TLabel"
+      },
+      "cached_source_line": 460
+    },
+    {
+      "id": "ttk.Scale7",
+      "type": "ttk.Scale",
+      "args": [
+        {
+          "widget": "Rounded.Panel4.body"
+        }
+      ],
+      "options": {
+        "from_": 0,
+        "to": 100,
+        "variable": {
+          "attribute": "app.opacity_var"
+        },
+        "command": {
+          "attribute": "app._on_opacity_changed"
+        }
+      },
+      "cached_source_line": 461
+    },
+    {
+      "id": "ttk.Panedwindow8",
+      "type": "ttk.Panedwindow",
+      "args": [
+        {
+          "widget": "ttk.Frame2"
+        }
+      ],
+      "options": {
+        "orient": "vertical"
+      },
+      "cached_source_line": 464
+    },
+    {
+      "id": "Rounded.Panel9",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Panedwindow8"
+        }
+      ],
+      "options": {
+        "title": "GeoTIFF Proefsleuven",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827"
+      },
+      "cached_source_line": 467
+    },
+    {
+      "id": "tk.Listbox10",
+      "type": "tk.Listbox",
+      "args": [
+        {
+          "widget": "Rounded.Panel9.body"
+        }
+      ],
+      "options": {
+        "height": 8,
+        "exportselection": false
+      },
+      "cached_source_line": 479
+    },
+    {
+      "id": "ttk.Scrollbar11",
+      "type": "ttk.Scrollbar",
+      "args": [
+        {
+          "widget": "Rounded.Panel9.body"
+        }
+      ],
+      "options": {
+        "orient": "vertical",
+        "command": {
+          "attribute": "tk.Listbox10.yview"
+        }
+      },
+      "cached_source_line": 493
+    },
+    {
+      "id": "ttk.Frame12",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel9.body"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 501
+    },
+    {
+      "id": "ttk.Button13",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame12"
+        }
+      ],
+      "options": {
+        "text": "Virtuele proefsleuf",
+        "command": {
+          "attribute": "app._start_virtual_trench_creation"
+        },
+        "style": "Tiny.TButton"
+      },
+      "cached_source_line": 503
+    },
+    {
+      "id": "ttk.Button14",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame12"
+        }
+      ],
+      "options": {
+        "text": "Verwijder",
+        "command": {
+          "attribute": "app._remove_selected_tiff"
+        },
+        "style": "Tiny.TButton"
+      },
+      "cached_source_line": 514
+    },
+    {
+      "id": "Rounded.Panel15",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Panedwindow8"
+        }
+      ],
+      "options": {
+        "title": "KLIC Overlays",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827"
+      },
+      "cached_source_line": 521
+    },
+    {
+      "id": "ttk.Frame16",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel15.body"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 533
+    },
+    {
+      "id": "tk.Canvas17",
+      "type": "tk.Canvas",
+      "args": [
+        {
+          "widget": "ttk.Frame16"
+        }
+      ],
+      "options": {
+        "background": "#fbfcfe",
+        "highlightthickness": 0,
+        "relief": "flat",
+        "bd": 0,
+        "takefocus": 1
+      },
+      "cached_source_line": 537
+    },
+    {
+      "id": "ttk.Scrollbar18",
+      "type": "ttk.Scrollbar",
+      "args": [
+        {
+          "widget": "ttk.Frame16"
+        }
+      ],
+      "options": {
+        "orient": "vertical",
+        "command": {
+          "attribute": "tk.Canvas17.yview"
+        }
+      },
+      "cached_source_line": 546
+    },
+    {
+      "id": "ttk.Frame19",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "tk.Canvas17"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 549
+    },
+    {
+      "id": "ttk.Frame20",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel15.body"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 556
+    },
+    {
+      "id": "ttk.Button21",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame20"
+        }
+      ],
+      "options": {
+        "text": "Verwijder geselecteerde KLIC",
+        "command": {
+          "attribute": "app._remove_selected_dxf"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 559
+    },
+    {
+      "id": "Rounded.Panel22",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Panedwindow8"
+        }
+      ],
+      "options": {
+        "title": "Kabelinformatie",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827"
+      },
+      "cached_source_line": 566
+    },
+    {
+      "id": "tk.Text23",
+      "type": "tk.Text",
+      "args": [
+        {
+          "widget": "Rounded.Panel22.body"
+        }
+      ],
+      "options": {
+        "wrap": "word",
+        "width": 52,
+        "height": 24
+      },
+      "cached_source_line": 578
+    },
+    {
+      "id": "ttk.Scrollbar24",
+      "type": "ttk.Scrollbar",
+      "args": [
+        {
+          "widget": "Rounded.Panel22.body"
+        }
+      ],
+      "options": {
+        "orient": "vertical",
+        "command": {
+          "attribute": "tk.Text23.yview"
+        }
+      },
+      "cached_source_line": 593
+    },
+    {
+      "id": "ttk.Frame25",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "ttk.Frame3"
+        }
+      ],
+      "options": {
+        "style": "App.TFrame"
+      },
+      "cached_source_line": 601
+    },
+    {
+      "id": "ttk.Frame26",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "ttk.Frame3"
+        }
+      ],
+      "options": {
+        "style": "App.TFrame"
+      },
+      "cached_source_line": 607
+    },
+    {
+      "id": "Rounded.Panel27",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Frame25"
+        }
+      ],
+      "options": {
+        "title": "Kaart",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827",
+        "radius": 22,
+        "padding": [
+          12,
+          12
+        ]
+      },
+      "cached_source_line": 612
+    },
+    {
+      "id": "ttk.Frame28",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel27.body"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 627
+    },
+    {
+      "id": "ttk.Label29",
+      "type": "ttk.Label",
+      "args": [
+        {
+          "widget": "ttk.Frame28"
+        }
+      ],
+      "options": {
+        "text": "GeoTIFF en KLIC",
+        "style": "CardMuted.TLabel"
+      },
+      "cached_source_line": 630
+    },
+    {
+      "id": "ttk.Button30",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame28"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "variable": "maaiveld_toggle_var",
+          "initial_text": "Maaiveld invullen"
+        },
+        "command": {
+          "attribute": "app._toggle_maaiveld_mode"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 635
+    },
+    {
+      "id": "ttk.Button31",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame28"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "variable": "reference_point_toggle_var",
+          "initial_text": "Referentiepunt"
+        },
+        "command": {
+          "attribute": "app._toggle_reference_point_mode"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 642
+    },
+    {
+      "id": "ttk.Button32",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame28"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "variable": "start_point_toggle_var",
+          "initial_text": "Beginpunt"
+        },
+        "command": {
+          "attribute": "app._toggle_start_point_mode"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 649
+    },
+    {
+      "id": "ttk.Button33",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame28"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "attribute": "app.streetsmart_toggle_var"
+        },
+        "command": {
+          "attribute": "app._toggle_streetsmart_panel"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 656
+    },
+    {
+      "id": "Rounded.Panel34",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "Rounded.Panel27.body"
+        }
+      ],
+      "options": {
+        "title": null,
+        "outer_bg": "#ffffff",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827",
+        "radius": 18,
+        "padding": [
+          0,
+          0
+        ]
+      },
+      "cached_source_line": 663
+    },
+    {
+      "id": "tk.Canvas35",
+      "type": "tk.Canvas",
+      "args": [
+        {
+          "widget": "Rounded.Panel34.body"
+        }
+      ],
+      "options": {
+        "background": "#ffffff",
+        "highlightthickness": 0,
+        "bd": 0,
+        "relief": "flat"
+      },
+      "cached_source_line": 677
+    },
+    {
+      "id": "Rounded.Panel36",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "Rounded.Panel27.body"
+        }
+      ],
+      "options": {
+        "title": null,
+        "outer_bg": "#ffffff",
+        "panel_bg": "#fafbfd",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827",
+        "radius": 16,
+        "padding": [
+          12,
+          6
+        ]
+      },
+      "cached_source_line": 690
+    },
+    {
+      "id": "tk.Label37",
+      "type": "tk.Label",
+      "args": [
+        {
+          "widget": "Rounded.Panel36.body"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "variable": "status_var",
+          "initial_text": "Laad GeoTIFF-bestanden en KLIC DXF-bestanden om te starten."
+        },
+        "background": "#fafbfd",
+        "foreground": "#111827",
+        "padx": 4,
+        "pady": 2,
+        "anchor": "w"
+      },
+      "cached_source_line": 704
+    },
+    {
+      "id": "tk.Label38",
+      "type": "tk.Label",
+      "args": [
+        {
+          "widget": "Rounded.Panel36.body"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "variable": "coord_var",
+          "initial_text": "RD: -"
+        },
+        "background": "#fafbfd",
+        "foreground": "#c2410c",
+        "padx": 4,
+        "pady": 2,
+        "anchor": "e"
+      },
+      "cached_source_line": 713
+    },
+    {
+      "id": "Rounded.Panel39",
+      "type": "Rounded.Panel",
+      "args": [
+        {
+          "widget": "ttk.Frame26"
+        }
+      ],
+      "options": {
+        "title": "StreetSmart",
+        "outer_bg": "#f5f7fb",
+        "panel_bg": "#ffffff",
+        "border_color": "#e9eef5",
+        "title_fg": "#111827",
+        "radius": 22,
+        "padding": [
+          12,
+          12
+        ]
+      },
+      "cached_source_line": 723
+    },
+    {
+      "id": "ttk.Frame40",
+      "type": "ttk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel39.body"
+        }
+      ],
+      "options": {
+        "style": "Card.TFrame"
+      },
+      "cached_source_line": 737
+    },
+    {
+      "id": "ttk.Button41",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame40"
+        }
+      ],
+      "options": {
+        "text": "Naar selectie",
+        "command": {
+          "attribute": "app.open_streetsmart_browser"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 740
+    },
+    {
+      "id": "ttk.Button42",
+      "type": "ttk.Button",
+      "args": [
+        {
+          "widget": "ttk.Frame40"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "attribute": "app.streetsmart_fullscreen_var"
+        },
+        "command": {
+          "attribute": "app._toggle_streetsmart_fullscreen"
+        },
+        "style": "Compact.TButton"
+      },
+      "cached_source_line": 745
+    },
+    {
+      "id": "ttk.Label43",
+      "type": "ttk.Label",
+      "args": [
+        {
+          "widget": "ttk.Frame40"
+        }
+      ],
+      "options": {
+        "textvariable": {
+          "attribute": "app.streetsmart_status_var"
+        },
+        "style": "Card.TLabel",
+        "foreground": "#667085",
+        "anchor": "e",
+        "justify": "right"
+      },
+      "cached_source_line": 751
+    },
+    {
+      "id": "tk.Frame44",
+      "type": "tk.Frame",
+      "args": [
+        {
+          "widget": "Rounded.Panel39.body"
+        }
+      ],
+      "options": {
+        "background": "#fbfcfe",
+        "bd": 0,
+        "highlightthickness": 0
+      },
+      "cached_source_line": 760
+    }
+  ],
+  "widget_calls": [
+    {
+      "target": "app.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 418
+    },
+    {
+      "target": "app.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 419
+    },
+    {
+      "target": "ttk.Panedwindow1.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 422
+    },
+    {
+      "target": "ttk.Frame2.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 425
+    },
+    {
+      "target": "ttk.Frame2.rowconfigure",
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 426
+    },
+    {
+      "target": "ttk.Panedwindow1.add",
+      "args": [
+        {
+          "widget": "ttk.Frame2"
+        }
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 427
+    },
+    {
+      "target": "ttk.Frame3.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 7
+      },
+      "cached_source_line": 430
+    },
+    {
+      "target": "ttk.Frame3.columnconfigure",
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "weight": 4
+      },
+      "cached_source_line": 431
+    },
+    {
+      "target": "ttk.Frame3.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 432
+    },
+    {
+      "target": "ttk.Panedwindow1.add",
+      "args": [
+        {
+          "widget": "ttk.Frame3"
+        }
+      ],
+      "kwargs": {
+        "weight": 4
+      },
+      "cached_source_line": 433
+    },
+    {
+      "target": "app.after",
+      "args": [
+        40,
+        {
+          "callable": "<lambda>",
+          "source_line": 435
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 435
+    },
+    {
+      "target": "Rounded.Panel4.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "ew"
+      },
+      "cached_source_line": 446
+    },
+    {
+      "target": "Rounded.Panel4.set_content_height",
+      "args": [
+        92
+      ],
+      "kwargs": {},
+      "cached_source_line": 447
+    },
+    {
+      "target": "Rounded.Panel4.body.columnconfigure",
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 449
+    },
+    {
+      "target": "ttk.Label5.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "w",
+        "padx": [
+          0,
+          8
+        ]
+      },
+      "cached_source_line": 450
+    },
+    {
+      "target": "app._create_rounded_combobox",
+      "args": [
+        {
+          "widget": "Rounded.Panel4.body"
+        }
+      ],
+      "kwargs": {
+        "textvariable": {
+          "attribute": "app.background_source_var"
+        },
+        "values": [
+          "Cyclomedia Luchtfoto NL (nieuwste jaar / laagste cm)",
+          "Luchtfoto NL actueel (8 cm, deels 5 cm)",
+          "PDOK kadastrale kaart",
+          "OpenStreetMap"
+        ],
+        "width": 20,
+        "outer_bg": "#ffffff"
+      },
+      "cached_source_line": 451
+    },
+    {
+      "target": "rounded_combobox_shell.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "ew"
+      },
+      "cached_source_line": 458
+    },
+    {
+      "target": "background_combobox.bind",
+      "args": [
+        "<<ComboboxSelected>>",
+        {
+          "attribute": "app._on_background_source_changed"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 459
+    },
+    {
+      "target": "ttk.Label6.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "sticky": "w",
+        "padx": [
+          0,
+          8
+        ],
+        "pady": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 460
+    },
+    {
+      "target": "ttk.Scale7.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 1,
+        "sticky": "ew",
+        "pady": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 462
+    },
+    {
+      "target": "ttk.Panedwindow8.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "sticky": "nsew",
+        "pady": [
+          12,
+          0
+        ]
+      },
+      "cached_source_line": 465
+    },
+    {
+      "target": "Rounded.Panel9.configure",
+      "args": [],
+      "kwargs": {
+        "height": 245
+      },
+      "cached_source_line": 475
+    },
+    {
+      "target": "Rounded.Panel9.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 477
+    },
+    {
+      "target": "Rounded.Panel9.body.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 478
+    },
+    {
+      "target": "tk.Listbox10.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 480
+    },
+    {
+      "target": "tk.Listbox10.configure",
+      "args": [],
+      "kwargs": {
+        "background": "#fbfcfe",
+        "foreground": "#111827",
+        "selectbackground": "#f97316",
+        "selectforeground": "#ffffff",
+        "highlightthickness": 0,
+        "relief": "flat",
+        "bd": 0,
+        "activestyle": "none",
+        "selectborderwidth": 0,
+        "font": [
+          "Segoe UI",
+          10
+        ]
+      },
+      "cached_source_line": 481
+    },
+    {
+      "target": "ttk.Scrollbar11.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "ns",
+        "padx": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 494
+    },
+    {
+      "target": "tk.Listbox10.configure",
+      "args": [],
+      "kwargs": {
+        "yscrollcommand": {
+          "attribute": "ttk.Scrollbar11.set"
+        }
+      },
+      "cached_source_line": 495
+    },
+    {
+      "target": "tk.Listbox10.bind",
+      "args": [
+        "<<ListboxSelect>>",
+        {
+          "attribute": "app._on_tiff_selected"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 496
+    },
+    {
+      "target": "tk.Listbox10.bind",
+      "args": [
+        "<ButtonRelease-1>",
+        {
+          "attribute": "app._on_tiff_list_left_click"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 497
+    },
+    {
+      "target": "tk.Listbox10.bind",
+      "args": [
+        "<Button-3>",
+        {
+          "attribute": "app._on_tiff_list_right_click"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 498
+    },
+    {
+      "target": "tk.Listbox10.bind",
+      "args": [
+        "<Delete>",
+        {
+          "attribute": "app._remove_selected_tiff"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 499
+    },
+    {
+      "target": "tk.Listbox10.bind",
+      "args": [
+        "<BackSpace>",
+        {
+          "attribute": "app._remove_selected_tiff"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 500
+    },
+    {
+      "target": "ttk.Frame12.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "columnspan": 2,
+        "sticky": "ew",
+        "pady": [
+          6,
+          0
+        ]
+      },
+      "cached_source_line": 502
+    },
+    {
+      "target": "ttk.Button13.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "w",
+        "padx": [
+          0,
+          8
+        ]
+      },
+      "cached_source_line": 508
+    },
+    {
+      "target": "ttk.Button14.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "w"
+      },
+      "cached_source_line": 514
+    },
+    {
+      "target": "ttk.Panedwindow8.add",
+      "args": [
+        {
+          "widget": "Rounded.Panel9"
+        }
+      ],
+      "kwargs": {
+        "weight": 2
+      },
+      "cached_source_line": 519
+    },
+    {
+      "target": "Rounded.Panel15.configure",
+      "args": [],
+      "kwargs": {
+        "height": 130
+      },
+      "cached_source_line": 529
+    },
+    {
+      "target": "Rounded.Panel15.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 531
+    },
+    {
+      "target": "Rounded.Panel15.body.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 532
+    },
+    {
+      "target": "ttk.Frame16.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 534
+    },
+    {
+      "target": "ttk.Frame16.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 535
+    },
+    {
+      "target": "ttk.Frame16.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 536
+    },
+    {
+      "target": "tk.Canvas17.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 545
+    },
+    {
+      "target": "ttk.Scrollbar18.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "ns",
+        "padx": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 547
+    },
+    {
+      "target": "tk.Canvas17.configure",
+      "args": [],
+      "kwargs": {
+        "yscrollcommand": {
+          "attribute": "ttk.Scrollbar18.set"
+        }
+      },
+      "cached_source_line": 548
+    },
+    {
+      "target": "ttk.Frame19.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 550
+    },
+    {
+      "target": "tk.Canvas17.create_window",
+      "args": [
+        [
+          0,
+          0
+        ]
+      ],
+      "kwargs": {
+        "window": {
+          "widget": "ttk.Frame19"
+        },
+        "anchor": "nw"
+      },
+      "cached_source_line": 551
+    },
+    {
+      "target": "ttk.Frame19.bind",
+      "args": [
+        "<Configure>",
+        {
+          "callable": "<lambda>",
+          "source_line": 552
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 552
+    },
+    {
+      "target": "tk.Canvas17.bind",
+      "args": [
+        "<Configure>",
+        {
+          "attribute": "app._on_dxf_canvas_configure"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 553
+    },
+    {
+      "target": "tk.Canvas17.bind",
+      "args": [
+        "<Delete>",
+        {
+          "attribute": "app._remove_selected_dxf"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 554
+    },
+    {
+      "target": "tk.Canvas17.bind",
+      "args": [
+        "<BackSpace>",
+        {
+          "attribute": "app._remove_selected_dxf"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 555
+    },
+    {
+      "target": "ttk.Frame20.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "sticky": "ew",
+        "pady": [
+          6,
+          0
+        ]
+      },
+      "cached_source_line": 557
+    },
+    {
+      "target": "ttk.Frame20.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 558
+    },
+    {
+      "target": "ttk.Button21.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "ew"
+      },
+      "cached_source_line": 559
+    },
+    {
+      "target": "ttk.Panedwindow8.add",
+      "args": [
+        {
+          "widget": "Rounded.Panel15"
+        }
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 564
+    },
+    {
+      "target": "Rounded.Panel22.configure",
+      "args": [],
+      "kwargs": {
+        "height": 360
+      },
+      "cached_source_line": 574
+    },
+    {
+      "target": "Rounded.Panel22.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 576
+    },
+    {
+      "target": "Rounded.Panel22.body.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 577
+    },
+    {
+      "target": "tk.Text23.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 579
+    },
+    {
+      "target": "tk.Text23.configure",
+      "args": [],
+      "kwargs": {
+        "background": "#fbfcfe",
+        "foreground": "#111827",
+        "insertbackground": "#111827",
+        "selectbackground": "#f97316",
+        "selectforeground": "#ffffff",
+        "highlightthickness": 0,
+        "relief": "flat",
+        "bd": 0,
+        "padx": 10,
+        "pady": 10,
+        "font": [
+          "Segoe UI",
+          10
+        ]
+      },
+      "cached_source_line": 580
+    },
+    {
+      "target": "ttk.Scrollbar24.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "ns",
+        "padx": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 594
+    },
+    {
+      "target": "tk.Text23.configure",
+      "args": [],
+      "kwargs": {
+        "yscrollcommand": {
+          "attribute": "ttk.Scrollbar24.set"
+        }
+      },
+      "cached_source_line": 595
+    },
+    {
+      "target": "app._default_info_text",
+      "args": [],
+      "kwargs": {},
+      "cached_source_line": 596
+    },
+    {
+      "target": "tk.Text23.insert",
+      "args": [
+        "1.0",
+        {
+          "widget": "app._default_info_text()"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 596
+    },
+    {
+      "target": "tk.Text23.configure",
+      "args": [],
+      "kwargs": {
+        "state": "disabled"
+      },
+      "cached_source_line": 597
+    },
+    {
+      "target": "ttk.Panedwindow8.add",
+      "args": [
+        {
+          "widget": "Rounded.Panel22"
+        }
+      ],
+      "kwargs": {
+        "weight": 5
+      },
+      "cached_source_line": 598
+    },
+    {
+      "target": "app.after",
+      "args": [
+        60,
+        {
+          "callable": "<lambda>",
+          "source_line": 599
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 599
+    },
+    {
+      "target": "ttk.Frame25.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 602
+    },
+    {
+      "target": "ttk.Frame25.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 603
+    },
+    {
+      "target": "ttk.Frame25.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 604
+    },
+    {
+      "target": "ttk.Frame26.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "nsew",
+        "padx": [
+          12,
+          0
+        ]
+      },
+      "cached_source_line": 608
+    },
+    {
+      "target": "ttk.Frame26.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 609
+    },
+    {
+      "target": "ttk.Frame26.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 610
+    },
+    {
+      "target": "Rounded.Panel27.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 622
+    },
+    {
+      "target": "Rounded.Panel27.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 624
+    },
+    {
+      "target": "Rounded.Panel27.body.rowconfigure",
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 625
+    },
+    {
+      "target": "ttk.Frame28.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "ew",
+        "pady": [
+          0,
+          10
+        ]
+      },
+      "cached_source_line": 628
+    },
+    {
+      "target": "ttk.Frame28.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 629
+    },
+    {
+      "target": "ttk.Label29.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "w"
+      },
+      "cached_source_line": 634
+    },
+    {
+      "target": "ttk.Button30.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "e",
+        "padx": [
+          0,
+          8
+        ]
+      },
+      "cached_source_line": 641
+    },
+    {
+      "target": "ttk.Button31.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 2,
+        "sticky": "e",
+        "padx": [
+          0,
+          8
+        ]
+      },
+      "cached_source_line": 648
+    },
+    {
+      "target": "ttk.Button32.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 3,
+        "sticky": "e",
+        "padx": [
+          0,
+          8
+        ]
+      },
+      "cached_source_line": 655
+    },
+    {
+      "target": "ttk.Button33.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 4,
+        "sticky": "e"
+      },
+      "cached_source_line": 661
+    },
+    {
+      "target": "Rounded.Panel34.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 673
+    },
+    {
+      "target": "Rounded.Panel34.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 674
+    },
+    {
+      "target": "Rounded.Panel34.body.rowconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 675
+    },
+    {
+      "target": "tk.Canvas35.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 678
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<Configure>",
+        {
+          "callable": "<lambda>",
+          "source_line": 679
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 679
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<MouseWheel>",
+        {
+          "attribute": "app._on_mousewheel"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 680
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<ButtonPress-1>",
+        {
+          "attribute": "app._on_canvas_press"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 681
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<B1-Motion>",
+        {
+          "attribute": "app._on_canvas_drag"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 682
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<ButtonRelease-1>",
+        {
+          "attribute": "app._on_canvas_release"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 683
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<ButtonPress-2>",
+        {
+          "attribute": "app._on_canvas_middle_press"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 684
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<B2-Motion>",
+        {
+          "attribute": "app._on_canvas_middle_drag"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 685
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<ButtonRelease-2>",
+        {
+          "attribute": "app._on_canvas_middle_release"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 686
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<Button-3>",
+        {
+          "attribute": "app._on_canvas_right_click"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 687
+    },
+    {
+      "target": "tk.Canvas35.bind",
+      "args": [
+        "<Motion>",
+        {
+          "attribute": "app._on_canvas_move"
+        }
+      ],
+      "kwargs": {},
+      "cached_source_line": 688
+    },
+    {
+      "target": "Rounded.Panel36.grid",
+      "args": [],
+      "kwargs": {
+        "row": 2,
+        "column": 0,
+        "sticky": "ew",
+        "pady": [
+          10,
+          0
+        ]
+      },
+      "cached_source_line": 700
+    },
+    {
+      "target": "Rounded.Panel36.set_content_height",
+      "args": [
+        34
+      ],
+      "kwargs": {},
+      "cached_source_line": 701
+    },
+    {
+      "target": "Rounded.Panel36.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 703
+    },
+    {
+      "target": "tk.Label37.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "w"
+      },
+      "cached_source_line": 712
+    },
+    {
+      "target": "tk.Label38.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "e"
+      },
+      "cached_source_line": 721
+    },
+    {
+      "target": "Rounded.Panel39.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 733
+    },
+    {
+      "target": "Rounded.Panel39.body.columnconfigure",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 734
+    },
+    {
+      "target": "Rounded.Panel39.body.rowconfigure",
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 735
+    },
+    {
+      "target": "ttk.Frame40.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "ew",
+        "pady": [
+          0,
+          10
+        ]
+      },
+      "cached_source_line": 738
+    },
+    {
+      "target": "ttk.Frame40.columnconfigure",
+      "args": [
+        2
+      ],
+      "kwargs": {
+        "weight": 1
+      },
+      "cached_source_line": 739
+    },
+    {
+      "target": "ttk.Button41.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 0,
+        "sticky": "w"
+      },
+      "cached_source_line": 740
+    },
+    {
+      "target": "ttk.Button42.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 1,
+        "sticky": "w",
+        "padx": [
+          8,
+          0
+        ]
+      },
+      "cached_source_line": 750
+    },
+    {
+      "target": "ttk.Label43.grid",
+      "args": [],
+      "kwargs": {
+        "row": 0,
+        "column": 2,
+        "sticky": "e",
+        "padx": [
+          10,
+          0
+        ]
+      },
+      "cached_source_line": 758
+    },
+    {
+      "target": "tk.Frame44.grid",
+      "args": [],
+      "kwargs": {
+        "row": 1,
+        "column": 0,
+        "sticky": "nsew"
+      },
+      "cached_source_line": 766
+    }
+  ],
+  "root_option_calls": [
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Font",
+        "{Segoe UI} 10"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12179
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.background",
+        "#ffffff"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12180
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.foreground",
+        "#111827"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12181
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.activeBackground",
+        "#f3f6fa"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12182
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.activeForeground",
+        "#111827"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12183
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.borderWidth",
+        1
+      ],
+      "kwargs": {},
+      "cached_source_line": 12184
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Menu.relief",
+        "flat"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12185
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Listbox.selectBorderWidth",
+        0
+      ],
+      "kwargs": {},
+      "cached_source_line": 12186
+    },
+    {
+      "target": "app.option_add",
+      "args": [
+        "*Listbox.activestyle",
+        "none"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12187
+    }
+  ],
+  "ttk_style_calls": [
+    {
+      "method": "theme_use",
+      "args": [
+        "clam"
+      ],
+      "kwargs": {},
+      "cached_source_line": 12190
+    },
+    {
+      "method": "configure",
+      "args": [
+        "."
+      ],
+      "kwargs": {
+        "font": [
+          "Segoe UI",
+          10
+        ],
+        "background": "#f5f7fb",
+        "foreground": "#111827"
+      },
+      "cached_source_line": 12193
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TPanedwindow"
+      ],
+      "kwargs": {
+        "background": "#f5f7fb",
+        "sashthickness": 12
+      },
+      "cached_source_line": 12194
+    },
+    {
+      "method": "configure",
+      "args": [
+        "App.TFrame"
+      ],
+      "kwargs": {
+        "background": "#f5f7fb"
+      },
+      "cached_source_line": 12195
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Card.TFrame"
+      ],
+      "kwargs": {
+        "background": "#ffffff"
+      },
+      "cached_source_line": 12196
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Card.TLabelframe"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "borderwidth": 1,
+        "relief": "flat",
+        "bordercolor": "#e9eef5",
+        "lightcolor": "#e9eef5",
+        "darkcolor": "#e9eef5"
+      },
+      "cached_source_line": 12197
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Card.TLabelframe.Label"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#111827",
+        "font": [
+          "Segoe UI",
+          10,
+          "bold"
+        ]
+      },
+      "cached_source_line": 12206
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TLabel"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#111827"
+      },
+      "cached_source_line": 12212
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Card.TLabel"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#111827"
+      },
+      "cached_source_line": 12213
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Muted.TLabel"
+      ],
+      "kwargs": {
+        "background": "#f5f7fb",
+        "foreground": "#667085"
+      },
+      "cached_source_line": 12214
+    },
+    {
+      "method": "configure",
+      "args": [
+        "CardMuted.TLabel"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#667085"
+      },
+      "cached_source_line": 12215
+    },
+    {
+      "method": "configure",
+      "args": [
+        "DialogTitle.TLabel"
+      ],
+      "kwargs": {
+        "background": "#f5f7fb",
+        "foreground": "#111827",
+        "font": [
+          "Segoe UI",
+          14,
+          "bold"
+        ]
+      },
+      "cached_source_line": 12216
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TCheckbutton"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#111827"
+      },
+      "cached_source_line": 12217
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Card.TCheckbutton"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#111827"
+      },
+      "cached_source_line": 12218
+    },
+    {
+      "method": "map",
+      "args": [
+        "TCheckbutton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "active",
+            "#ffffff"
+          ]
+        ]
+      },
+      "cached_source_line": 12219
+    },
+    {
+      "method": "map",
+      "args": [
+        "Card.TCheckbutton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "active",
+            "#ffffff"
+          ]
+        ]
+      },
+      "cached_source_line": 12220
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TButton"
+      ],
+      "kwargs": {
+        "background": "#fafbfd",
+        "foreground": "#111827",
+        "bordercolor": "#e9eef5",
+        "focusthickness": 1,
+        "focuscolor": "#f97316",
+        "padding": [
+          16,
+          10
+        ]
+      },
+      "cached_source_line": 12221
+    },
+    {
+      "method": "map",
+      "args": [
+        "TButton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "pressed",
+            "#f3f6fa"
+          ],
+          [
+            "active",
+            "#f7f9fc"
+          ]
+        ],
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ],
+          [
+            "active",
+            "#fdba74"
+          ]
+        ]
+      },
+      "cached_source_line": 12230
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Compact.TButton"
+      ],
+      "kwargs": {
+        "background": "#fafbfd",
+        "foreground": "#111827",
+        "bordercolor": "#e9eef5",
+        "focusthickness": 1,
+        "focuscolor": "#f97316",
+        "padding": [
+          10,
+          6
+        ],
+        "font": [
+          "Segoe UI",
+          9
+        ]
+      },
+      "cached_source_line": 12235
+    },
+    {
+      "method": "map",
+      "args": [
+        "Compact.TButton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "pressed",
+            "#f3f6fa"
+          ],
+          [
+            "active",
+            "#f7f9fc"
+          ]
+        ],
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ],
+          [
+            "active",
+            "#fdba74"
+          ]
+        ]
+      },
+      "cached_source_line": 12245
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Tiny.TButton"
+      ],
+      "kwargs": {
+        "background": "#fafbfd",
+        "foreground": "#111827",
+        "bordercolor": "#e9eef5",
+        "focusthickness": 1,
+        "focuscolor": "#f97316",
+        "padding": [
+          8,
+          4
+        ],
+        "font": [
+          "Segoe UI",
+          8
+        ]
+      },
+      "cached_source_line": 12250
+    },
+    {
+      "method": "map",
+      "args": [
+        "Tiny.TButton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "pressed",
+            "#f3f6fa"
+          ],
+          [
+            "active",
+            "#f7f9fc"
+          ]
+        ],
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ],
+          [
+            "active",
+            "#fdba74"
+          ]
+        ]
+      },
+      "cached_source_line": 12260
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Accent.TButton"
+      ],
+      "kwargs": {
+        "background": "#f97316",
+        "foreground": "#ffffff",
+        "bordercolor": "#f97316",
+        "focuscolor": "#f97316",
+        "padding": [
+          16,
+          10
+        ]
+      },
+      "cached_source_line": 12265
+    },
+    {
+      "method": "map",
+      "args": [
+        "Accent.TButton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "pressed",
+            "#c2410c"
+          ],
+          [
+            "active",
+            "#fb923c"
+          ]
+        ],
+        "bordercolor": [
+          [
+            "focus",
+            "#c2410c"
+          ],
+          [
+            "active",
+            "#c2410c"
+          ]
+        ]
+      },
+      "cached_source_line": 12273
+    },
+    {
+      "method": "configure",
+      "args": [
+        "DangerIcon.TButton"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "foreground": "#c62828",
+        "bordercolor": "#fecaca",
+        "focusthickness": 1,
+        "focuscolor": "#fca5a5",
+        "padding": [
+          6,
+          3
+        ],
+        "font": [
+          "Segoe UI",
+          9,
+          "bold"
+        ]
+      },
+      "cached_source_line": 12278
+    },
+    {
+      "method": "map",
+      "args": [
+        "DangerIcon.TButton"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "pressed",
+            "#fef2f2"
+          ],
+          [
+            "active",
+            "#fff5f5"
+          ]
+        ],
+        "bordercolor": [
+          [
+            "focus",
+            "#f87171"
+          ],
+          [
+            "active",
+            "#f87171"
+          ]
+        ],
+        "foreground": [
+          [
+            "pressed",
+            "#b71c1c"
+          ],
+          [
+            "active",
+            "#b71c1c"
+          ]
+        ]
+      },
+      "cached_source_line": 12288
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TEntry"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "foreground": "#111827",
+        "insertcolor": "#111827",
+        "bordercolor": "#e9eef5",
+        "lightcolor": "#f97316",
+        "darkcolor": "#fbfcfe",
+        "padding": 10
+      },
+      "cached_source_line": 12294
+    },
+    {
+      "method": "map",
+      "args": [
+        "TEntry"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ]
+        ]
+      },
+      "cached_source_line": 12304
+    },
+    {
+      "method": "configure",
+      "args": [
+        "RoundedField.TEntry"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "foreground": "#111827",
+        "insertcolor": "#111827",
+        "bordercolor": "#fbfcfe",
+        "lightcolor": "#fbfcfe",
+        "darkcolor": "#fbfcfe",
+        "padding": [
+          6,
+          5
+        ],
+        "relief": "flat"
+      },
+      "cached_source_line": 12305
+    },
+    {
+      "method": "map",
+      "args": [
+        "RoundedField.TEntry"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#fbfcfe"
+          ]
+        ]
+      },
+      "cached_source_line": 12316
+    },
+    {
+      "method": "configure",
+      "args": [
+        "RoundedField.TSpinbox"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "foreground": "#111827",
+        "insertcolor": "#111827",
+        "bordercolor": "#fbfcfe",
+        "lightcolor": "#fbfcfe",
+        "darkcolor": "#fbfcfe",
+        "arrowsize": 14,
+        "padding": [
+          6,
+          5
+        ],
+        "relief": "flat"
+      },
+      "cached_source_line": 12317
+    },
+    {
+      "method": "map",
+      "args": [
+        "RoundedField.TSpinbox"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#fbfcfe"
+          ]
+        ]
+      },
+      "cached_source_line": 12329
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TSpinbox"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "foreground": "#111827",
+        "insertcolor": "#111827",
+        "bordercolor": "#e9eef5",
+        "lightcolor": "#f97316",
+        "darkcolor": "#fbfcfe",
+        "arrowsize": 14,
+        "padding": 9
+      },
+      "cached_source_line": 12330
+    },
+    {
+      "method": "map",
+      "args": [
+        "TSpinbox"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ]
+        ]
+      },
+      "cached_source_line": 12341
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TCombobox"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "background": "#fafbfd",
+        "foreground": "#111827",
+        "bordercolor": "#e9eef5",
+        "arrowcolor": "#c2410c",
+        "darkcolor": "#fbfcfe",
+        "lightcolor": "#f97316",
+        "padding": 8
+      },
+      "cached_source_line": 12342
+    },
+    {
+      "method": "map",
+      "args": [
+        "TCombobox"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#f97316"
+          ]
+        ],
+        "fieldbackground": [
+          [
+            "readonly",
+            "#fbfcfe"
+          ]
+        ],
+        "foreground": [
+          [
+            "readonly",
+            "#111827"
+          ]
+        ],
+        "selectbackground": [
+          [
+            "readonly",
+            "#fbfcfe"
+          ]
+        ],
+        "selectforeground": [
+          [
+            "readonly",
+            "#111827"
+          ]
+        ]
+      },
+      "cached_source_line": 12353
+    },
+    {
+      "method": "configure",
+      "args": [
+        "RoundedField.TCombobox"
+      ],
+      "kwargs": {
+        "fieldbackground": "#fbfcfe",
+        "background": "#fbfcfe",
+        "foreground": "#111827",
+        "bordercolor": "#fbfcfe",
+        "arrowcolor": "#c2410c",
+        "darkcolor": "#fbfcfe",
+        "lightcolor": "#fbfcfe",
+        "padding": [
+          6,
+          5
+        ],
+        "relief": "flat"
+      },
+      "cached_source_line": 12361
+    },
+    {
+      "method": "map",
+      "args": [
+        "RoundedField.TCombobox"
+      ],
+      "kwargs": {
+        "bordercolor": [
+          [
+            "focus",
+            "#fbfcfe"
+          ]
+        ],
+        "fieldbackground": [
+          [
+            "readonly",
+            "#fbfcfe"
+          ]
+        ],
+        "foreground": [
+          [
+            "readonly",
+            "#111827"
+          ]
+        ],
+        "selectbackground": [
+          [
+            "readonly",
+            "#fbfcfe"
+          ]
+        ],
+        "selectforeground": [
+          [
+            "readonly",
+            "#111827"
+          ]
+        ]
+      },
+      "cached_source_line": 12373
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Horizontal.TScale"
+      ],
+      "kwargs": {
+        "background": "#ffffff",
+        "troughcolor": "#e8edf4",
+        "bordercolor": "#e9eef5"
+      },
+      "cached_source_line": 12381
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Treeview"
+      ],
+      "kwargs": {
+        "background": "#fbfcfe",
+        "fieldbackground": "#fbfcfe",
+        "foreground": "#111827",
+        "rowheight": 34,
+        "bordercolor": "#e9eef5",
+        "lightcolor": "#e9eef5",
+        "darkcolor": "#e9eef5"
+      },
+      "cached_source_line": 12382
+    },
+    {
+      "method": "map",
+      "args": [
+        "Treeview"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "selected",
+            "#f97316"
+          ]
+        ],
+        "foreground": [
+          [
+            "selected",
+            "#ffffff"
+          ]
+        ]
+      },
+      "cached_source_line": 12392
+    },
+    {
+      "method": "configure",
+      "args": [
+        "Treeview.Heading"
+      ],
+      "kwargs": {
+        "background": "#f3f6fa",
+        "foreground": "#111827",
+        "relief": "flat",
+        "font": [
+          "Segoe UI",
+          10,
+          "bold"
+        ]
+      },
+      "cached_source_line": 12393
+    },
+    {
+      "method": "map",
+      "args": [
+        "Treeview.Heading"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "active",
+            "#fafbfd"
+          ]
+        ]
+      },
+      "cached_source_line": 12400
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TScrollbar"
+      ],
+      "kwargs": {
+        "background": "#f3f6fa",
+        "troughcolor": "#f5f7fb",
+        "bordercolor": "#e9eef5",
+        "arrowcolor": "#c2410c",
+        "darkcolor": "#f3f6fa",
+        "lightcolor": "#f3f6fa",
+        "relief": "flat"
+      },
+      "cached_source_line": 12401
+    },
+    {
+      "method": "map",
+      "args": [
+        "TScrollbar"
+      ],
+      "kwargs": {
+        "background": [
+          [
+            "active",
+            "#f97316"
+          ]
+        ]
+      },
+      "cached_source_line": 12411
+    },
+    {
+      "method": "configure",
+      "args": [
+        "TSeparator"
+      ],
+      "kwargs": {
+        "background": "#dde4ee"
+      },
+      "cached_source_line": 12412
+    }
+  ],
+  "pane_initialization": {
+    "main": {
+      "total_width_floor": 1200,
+      "sidebar_fraction": 0.255,
+      "sidebar_min": 360,
+      "sidebar_max": 400,
+      "delay_ms": 40,
+      "sash_thickness": 12
+    },
+    "sidebar": {
+      "total_height_floor": 620,
+      "tiff_fraction": 0.3,
+      "tiff_min": 220,
+      "tiff_max": 280,
+      "klic_fraction": 0.16,
+      "klic_min": 120,
+      "klic_max": 150,
+      "sash_positions": [
+        "tiff_height",
+        "tiff_height + klic_height"
+      ],
+      "delay_ms": 60
+    }
+  },
+  "rounded_widgets_actual": {
+    "evidence": "rounded_widgets.py:26-188; install_rounded_buttons replaces tk.Button and ttk.Button at app.py:30",
+    "font": "TkDefaultFont (root Segoe UI 10), even when style specifies Compact 9/Tiny 8",
+    "radius": 13,
+    "minimum_size": [
+      28,
+      28
+    ],
+    "padding": {
+      "default": [
+        12,
+        7
+      ],
+      "Compact": [
+        10,
+        6
+      ],
+      "Accent": [
+        14,
+        8
+      ],
+      "Tiny": "falls through to default [12,7] unless explicit padding"
+    },
+    "normal_background": "style background",
+    "normal_foreground": "style foreground",
+    "disabled": {
+      "background": "#e5e7eb",
+      "foreground": "#9ca3af"
+    },
+    "hover": {
+      "normal": "#f3f4f6",
+      "Accent": "#fdba74"
+    },
+    "pressed": {
+      "normal": "#e5e7eb",
+      "Accent": "#c2410c"
+    },
+    "note": "RoundedButton custom drawing overrides ttk state maps, border is same color as button fill"
+  },
+  "mode_button_states": {
+    "Maaiveld invullen": {
+      "active": "Maaiveld sluiten",
+      "enabled_setting": "template_enable_maaiveld_edit_points",
+      "action": "_toggle_maaiveld_mode"
+    },
+    "Referentiepunt": {
+      "active": "Referentie sluiten",
+      "enabled_setting": "template_show_profile_direction",
+      "action": "_toggle_reference_point_mode"
+    },
+    "Beginpunt": {
+      "active": "Beginpunt sluiten",
+      "enabled_setting": "template_show_profile_direction",
+      "action": "_toggle_start_point_mode"
+    }
+  },
+  "default_information_text": "Klik in de kaart op een kabel om KLIC-informatie en laagnamen te tonen.\n\nGebruik de rechtermuisknop op een proefsleuf in de lijst om draaien en opmerkingen te beheren.\n\nTip: zoom verder in voor een preciezere selectie als kabels dicht op elkaar liggen.",
+  "default_status": "Laad GeoTIFF-bestanden en KLIC DXF-bestanden om te starten.",
+  "default_coordinate_text": "RD: -",
+  "background_choices_in_scope": [
+    "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",
+    "PDOK kadastrale kaart",
+    "OpenStreetMap"
+  ],
+  "default_background": "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",
+  "layout_wrapper_order_outer_to_inner": [
+    {
+      "file": "app.py",
+      "function": "build_layout_with_pdok_default",
+      "line": 3219,
+      "effect": "Set PDOK background variable before building controls, refresh dashboard afterwards"
+    },
+    {
+      "file": "app.py",
+      "function": "_build_layout_with_modern_menu_bar",
+      "line": 1121,
+      "effect": "Call inner then build custom menu bar"
+    },
+    {
+      "file": "app.py",
+      "function": "_build_layout_with_inline_location_search",
+      "line": 668,
+      "effect": "Build hidden location overlay after base layout"
+    },
+    {
+      "file": "_bytecode/app.cpython-311.pyc",
+      "function": "_build_layout",
+      "line": 417
+    }
+  ],
+  "menu_wrapper_order_inner_to_outer": [
+    {
+      "file": "app.py",
+      "function": "_build_menu_with_kickthemap_jobs_browser"
+    },
+    {
+      "file": "app.py",
+      "function": "_build_menu_with_modern_dropdowns"
+    },
+    {
+      "file": "app.py",
+      "function": "_build_menu_with_ai_maaiveld"
+    },
+    {
+      "file": "discipline_excel_export.py",
+      "function": "_build_menu_with_discipline_excel"
+    },
+    {
+      "file": "marxact_import_patch.py",
+      "function": "build_menu"
+    },
+    {
+      "file": "marxact_alignment_ui_patch.py",
+      "function": "_build_menu_with_marxact_alignment"
+    }
+  ],
+  "underlying_tk_menu_after_all_hooks": [
+    {
+      "type": "command",
+      "label": "Locatie",
+      "command": "open_location_dialog"
+    },
+    {
+      "type": "cascade",
+      "label": "Acties",
+      "menu": [
+        {
+          "type": "command",
+          "label": "Project laden...",
+          "command": "load_project"
+        },
+        {
+          "type": "command",
+          "label": "Project opslaan",
+          "command": "save_project"
+        },
+        {
+          "type": "command",
+          "label": "Project opslaan als...",
+          "command": "save_project_as"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Laad GeoTIFF(s)",
+          "command": "load_tiffs"
+        },
+        {
+          "type": "command",
+          "label": "Laad KLIC DXF",
+          "command": "load_dxf"
+        },
+        {
+          "type": "command",
+          "label": "Zoom naar alles",
+          "command": "zoom_to_all"
+        },
+        {
+          "type": "command",
+          "label": "Toon TIFF-adressen",
+          "command": "show_tiff_addresses_dialog"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Export kaarten",
+          "command": "export_maps"
+        },
+        {
+          "type": "command",
+          "label": "Kadastrale export DXF",
+          "command": "export_cadastral_dxf"
+        },
+        {
+          "type": "command",
+          "label": "Proefsleuven sjabloon DXF",
+          "command": "export_cadastral_template_dxf"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Wis alle referentiepunten",
+          "command": "clear_all_reference_points"
+        },
+        {
+          "type": "command",
+          "label": "Laad alle beginpunten",
+          "command": "load_all_kickthemap_start_points"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Wis opmerkingen",
+          "command": "clear_comments"
+        },
+        {
+          "type": "command",
+          "label": "Wis alles",
+          "command": "clear_all"
+        },
+        {
+          "type": "command",
+          "label": "Discipline-overzicht naar Excel…",
+          "command": "export_discipline_counts_excel"
+        }
+      ]
+    },
+    {
+      "type": "cascade",
+      "label": "KickTheMap",
+      "menu": [
+        {
+          "type": "command",
+          "label": "Jobs",
+          "command": "open_kickthemap_jobs_browser_window"
+        },
+        {
+          "type": "command",
+          "label": "Inloggen...",
+          "command": "open_kickthemap_login_dialog"
+        },
+        {
+          "type": "command",
+          "label": "Exporteer objectpunten naar DXF...",
+          "command": "open_kickthemap_dxf_export_dialog"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Uitloggen",
+          "command": "kickthemap_logout"
+        }
+      ]
+    },
+    {
+      "type": "cascade",
+      "label": "StreetSmart",
+      "menu": [
+        {
+          "type": "command",
+          "label": "Inloggen...",
+          "command": "open_streetsmart_login_dialog"
+        },
+        {
+          "type": "command",
+          "label": "Browser",
+          "command": "open_streetsmart_browser"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Uitloggen",
+          "command": "streetsmart_logout"
+        }
+      ]
+    },
+    {
+      "type": "cascade",
+      "label": "AI",
+      "menu": [
+        {
+          "type": "command",
+          "label": "Maaiveld via Gemma",
+          "command": "run_ai_maaiveld_for_selected_layer"
+        }
+      ]
+    },
+    {
+      "type": "cascade",
+      "label": "Instellingen",
+      "menu": [
+        {
+          "type": "command",
+          "label": "Open instellingen",
+          "command": "open_settings_dialog"
+        }
+      ]
+    },
+    {
+      "type": "cascade",
+      "label": "marXact",
+      "menu": [
+        {
+          "type": "command",
+          "label": "marXact import",
+          "command": "import_marxact_dxf"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Oriëntatie aanpassen...",
+          "command": "show_marxact_alignment_dialog"
+        }
+      ]
+    }
+  ],
+  "visible_modern_menu_snapshot": [
+    {
+      "label": "Locatie",
+      "items": [],
+      "action": "open_location_dialog"
+    },
+    {
+      "label": "Acties",
+      "items": [
+        {
+          "type": "command",
+          "label": "Project laden...",
+          "action": "load_project",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Project opslaan",
+          "action": "save_project",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Project opslaan als...",
+          "action": "save_project_as",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Laad GeoTIFF(s)",
+          "action": "load_tiffs",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Laad KLIC DXF",
+          "action": "load_dxf",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Zoom naar alles",
+          "action": "zoom_to_all",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Toon TIFF-adressen",
+          "action": "show_tiff_addresses_dialog",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Export kaarten",
+          "action": "export_maps",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Kadastrale export DXF",
+          "action": "export_cadastral_dxf",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Proefsleuven sjabloon DXF",
+          "action": "export_cadastral_template_dxf",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Wis alle referentiepunten",
+          "action": "clear_all_reference_points",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Laad alle beginpunten",
+          "action": "load_all_kickthemap_start_points",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Wis opmerkingen",
+          "action": "clear_comments",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Wis alles",
+          "action": "clear_all",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Discipline-overzicht naar Excel…",
+          "action": "export_discipline_counts_excel",
+          "state": "normal"
+        }
+      ]
+    },
+    {
+      "label": "KickTheMap",
+      "items": [
+        {
+          "type": "command",
+          "label": "Jobs",
+          "action": "open_kickthemap_jobs_browser_window",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Inloggen...",
+          "action": "open_kickthemap_login_dialog",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Exporteer objectpunten naar DXF...",
+          "action": "open_kickthemap_dxf_export_dialog",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Uitloggen",
+          "action": "kickthemap_logout",
+          "state": "normal"
+        }
+      ]
+    },
+    {
+      "label": "StreetSmart",
+      "items": [
+        {
+          "type": "command",
+          "label": "Inloggen...",
+          "action": "open_streetsmart_login_dialog",
+          "state": "normal"
+        },
+        {
+          "type": "command",
+          "label": "Browser",
+          "action": "open_streetsmart_browser",
+          "state": "normal"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "command",
+          "label": "Uitloggen",
+          "action": "streetsmart_logout",
+          "state": "normal"
+        }
+      ]
+    },
+    {
+      "label": "AI",
+      "items": [
+        {
+          "type": "command",
+          "label": "Maaiveld via Gemma",
+          "action": "run_ai_maaiveld_for_selected_layer",
+          "state": "normal"
+        }
+      ]
+    },
+    {
+      "label": "Instellingen",
+      "items": [
+        {
+          "type": "command",
+          "label": "Open instellingen",
+          "action": "open_settings_dialog",
+          "state": "normal"
+        }
+      ]
+    },
+    {
+      "label": "marXact",
+      "items": [
+        {
+          "type": "command",
+          "label": "marXact import",
+          "action": "import_marxact_dxf",
+          "state": "normal"
+        }
+      ]
+    }
+  ],
+  "menu_snapshot_note": "Alignment appends Orientation command after final _modern_menu_specs recapture in marXact _add_menu; its command exists in underlying Tk menu but is absent in visible captured modern menu. Snapshot includes StreetSmart evidence but native goal excludes it.",
+  "modern_menu_dimensions": {
+    "evidence": "app.py:952-1130",
+    "bar_height": 30,
+    "bar_first_left_margin": 18,
+    "bar_subsequent_left_margin": 2,
+    "button_padding": [
+      10,
+      4
+    ],
+    "button_top_margin": 2,
+    "dropdown_offset_below_button": 4,
+    "dropdown_min_width": 190,
+    "dropdown_extra_text_width": 42,
+    "dropdown_row_height": 30,
+    "dropdown_separator_height": 9,
+    "dropdown_vertical_padding_total": 12,
+    "dropdown_corner_radius": 12,
+    "dropdown_background": "#ffffff",
+    "dropdown_border": "#e9eef5",
+    "hover": "#fff4ed",
+    "font": [
+      "Segoe UI",
+      9
+    ],
+    "dismiss_events": [
+      "Escape",
+      "FocusOut"
+    ],
+    "settings_behavior": "Directly executes first enabled submenu action, not a dropdown"
+  },
+  "inline_location": {
+    "evidence": "app.py:517-678",
+    "initially_visible": false,
+    "trigger": "Locatie -> open_location_dialog -> _show_inline_location_search",
+    "position": "bottom-centered within map canvas",
+    "width": "min(460,max(320,canvas_width-40))",
+    "height": 42,
+    "bottom_margin": 18,
+    "minimum_top": 12,
+    "radius": 14,
+    "entry_inset": [
+      12,
+      7
+    ],
+    "entry_height": 28,
+    "entry_width": "bar_width-96",
+    "pulse_text": "●",
+    "close_text": "x",
+    "pulse_width": 30,
+    "close_width": 30,
+    "suggestion_rows_max": 4,
+    "suggestion_row_height": 24,
+    "suggestion_vertical_padding": 10,
+    "suggestion_gap": 6,
+    "suggestion_radius": 12,
+    "suggestion_selection": "#f97316",
+    "entry_selection": "#bfdbfe"
+  },
+  "native_mismatches_before_root_shell_work": [
+    {
+      "file": "rust/src/ui.rs",
+      "line": 1311,
+      "detail": "Header shows TECHBASE/SleufBase Rust/Migratie-preview and multiple wrapped action rows rather than original compact menu bar"
+    },
+    {
+      "file": "rust/src/ui.rs",
+      "line": 1406,
+      "detail": "Single scrolling 300px sidebar with online login/data/developer controls instead of Weergave plus three independently resizable cards"
+    },
+    {
+      "file": "rust/src/ui.rs",
+      "line": 1654,
+      "detail": "Map heading/help text differs from original Kaart panel toolbar and status footer"
+    }
+  ],
+  "rounded_panel": {
+    "evidence": "cached app/app.py:84-219",
+    "default_radius": 18,
+    "default_padding": [
+      14,
+      14
+    ],
+    "default_auto_height": false,
+    "title_font": [
+      "Segoe UI",
+      10,
+      "bold"
+    ],
+    "title_placement": "above rounded content canvas, on outer_bg rather than panel_bg",
+    "title_grid": {
+      "row": 0,
+      "column": 0,
+      "sticky": "w",
+      "padx": 4,
+      "pady": [
+        0,
+        6
+      ]
+    },
+    "content_canvas_initial_height": 276,
+    "content_canvas_outline_width": 1,
+    "body_position": "padding_x,padding_y inside rounded canvas",
+    "geometry_override_note": "set_content_height changes inner canvas height; panel.configure(height) is a requested overall frame size, not an enforced fixed split size"
+  },
+  "active_patch_entrypoints": {
+    "app_module_bottom": {
+      "file": "app.py",
+      "lines": [
+        3231,
+        3244
+      ],
+      "layout_install_order": [
+        "inline_location_search",
+        "modern_dropdown_menu",
+        "pdok_viewer_default"
+      ]
+    },
+    "package_initializer": {
+      "file": "__init__.py",
+      "effect": "installs marXact alignment runtime hook and template/settings patches; does not start app"
+    },
+    "launcher": {
+      "file": "sleufbase_launcher.py",
+      "function": "_install_runtime_patches",
+      "line": 45,
+      "menu_install_order": [
+        "discipline_excel_export",
+        "manual_start_point (no menu override)",
+        "marxact_import (hook also installs marXact alignment)"
+      ]
+    }
+  },
+  "source_repository": "https://github.com/LukaStuurman/SleufBase"
+}

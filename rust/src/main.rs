@@ -122,12 +122,10 @@ fn main() -> eframe::Result<()> {
     }
 
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1380.0, 800.0])
-            .with_min_inner_size([900.0, 600.0]),
+        viewport: ui::viewport(),
         ..Default::default()
     };
     let paths=raw_args.into_iter().map(PathBuf::from).collect();
-    eframe::run_native("Techbase SleufBase Rust", options,
+    eframe::run_native("SleufBase", options,
         Box::new(move |_cc| Ok(Box::new(ui::SleufBaseApp::with_input_paths(paths)))))
 }

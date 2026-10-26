@@ -48,7 +48,7 @@ impl SleufBaseApp {
             });
         }
     }
-    fn open_tiff_comment(&mut self, path: &std::path::Path) {
+    pub(super) fn open_tiff_comment(&mut self, path: &std::path::Path) {
         if self.geotiffs.iter().filter(|r| r.path == path).count() != 1 {
             self.message = "Kies één unieke TIFF-bron".into();
             return;
@@ -68,7 +68,7 @@ impl SleufBaseApp {
             Err(error) => self.message = error,
         }
     }
-    fn clear_tiff_comment(&mut self, path: &std::path::Path) {
+    pub(super) fn clear_tiff_comment(&mut self, path: &std::path::Path) {
         if self.geotiffs.iter().filter(|r| r.path == path).count() != 1 {
             self.message = "Kies één unieke TIFF-bron".into();
             return;

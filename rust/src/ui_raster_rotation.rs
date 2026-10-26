@@ -514,23 +514,9 @@ mod tests {
         assert!(app.raster_rotation.last.is_none());
     }
     #[test]
-    fn actual_header_buttons_remain_inside_their_clip_at_supported_small_widths() {
-        let expected = [
-            "Nieuw project",
-            "Open Rust-project",
-            "Opslaan als...",
-            "Import Python-project",
-            "Opmerking plaatsen",
-            "Kaartacties",
-            "Export kaarten",
-            "Kadaster WFS",
-            "MarXact importeren",
-            "Excel disciplines",
-            "DXF objecten",
-            "DXF-sjabloon",
-            "Kaart terugzetten",
-        ];
-        for width in [900., 1200., 1500.] {
+    fn original_map_controls_remain_inside_their_clip_at_supported_window_sizes() {
+        let expected = ["Locatie","Acties","KickTheMap","AI","Instellingen","marXact","Maaiveld invullen","Referentiepunt","Beginpunt"];
+        for width in [1200., 1500.] {
             let ctx = egui::Context::default();
             let mut app = SleufBaseApp {
                 migrated_settings: MigratedSettings::default(),

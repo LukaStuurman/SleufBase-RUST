@@ -8,23 +8,23 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Category {
-    General,
     Maps,
     Dxf,
     Trenches,
     KickTheMap,
+    Backups,
 }
 impl Category {
     const ALL: [Self; 5] = [
-        Self::General,
         Self::Maps,
         Self::Dxf,
         Self::Trenches,
         Self::KickTheMap,
+        Self::Backups,
     ];
     fn label(self) -> &'static str {
         match self {
-            Self::General => "Algemeen",
+            Self::Backups => "Back-ups",
             Self::Maps => "Kaarten",
             Self::Dxf => "DXF-export",
             Self::Trenches => "Proefsleuven",
@@ -32,7 +32,14 @@ impl Category {
         }
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ViewerDraft {
+    pub background_source: String,
+    pub use_background: bool,
+}
 pub(crate) struct Saved {
+    /// Applied to the active project view only after both settings files saved.
+    pub viewer: Option<ViewerDraft>,
     pub settings: MigratedSettings,
     pub autosave: AutosaveSettings,
 }
@@ -48,6 +55,11 @@ pub(crate) struct Dialog {
     pub category: Category,
     pub words: bool,
     pub error: String,
+    /// Caller supplies active view state; None leaves the viewer untouched.
+    pub viewer: Option<ViewerDraft>,
+    pub autosave_count: Option<usize>,
+    /// Caller takes this request and opens its existing autosave selector.
+    pub restore_autosave_requested: bool,
     rules: Vec<RuleRow>,
     materials: Vec<String>,
     extras: Vec<String>,
@@ -91,9 +103,12 @@ impl Dialog {
         Self {
             draft: settings.clone(),
             autosave: autosave.clone(),
-            category: Category::General,
+            category: Category::Maps,
             words: false,
             error: String::new(),
+            viewer: None,
+            autosave_count: None,
+            restore_autosave_requested: false,
             rules: settings
                 .object_rules
                 .iter()
@@ -147,7 +162,15 @@ impl Dialog {
         settings.kickthemap_profile_extra_choices = choices(&self.extras)?;
         settings.marxact_name_mappings = mappings(&self.mappings)?;
         settings.validate()?;
+        if let Some(viewer) = &self.viewer {
+            use sleufbase_rust::project_view::BackgroundProvider;
+            if !matches!(BackgroundProvider::from_label(&viewer.background_source),
+                BackgroundProvider::PdokAerial | BackgroundProvider::Cadastral | BackgroundProvider::OpenStreetMap) {
+                return Err("Kies een geldige achtergrond op het kaartscherm".into());
+            }
+        }
         Ok(Saved {
+            viewer: self.viewer.clone(),
             settings,
             autosave: self.autosave.clone().normalize(),
         })
@@ -172,7 +195,7 @@ impl Dialog {
     }
 }
 fn list_editor(ui: &mut egui::Ui, title: &str, values: &mut Vec<String>) {
-    ui.strong(title);
+    super::theme::strong(ui,title);
     let mut remove = None;
     for (index, value) in values.iter_mut().enumerate() {
         ui.push_id((title, index), |ui| {
@@ -199,7 +222,7 @@ fn rule_fields(ui: &mut egui::Ui, rows: &mut Vec<RuleRow>) {
         ui.push_id(index, |ui| {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
-                    ui.strong(format!("Regel {}", index + 1));
+                    super::theme::strong(ui,format!("Regel {}", index + 1));
                     if ui
                         .add_enabled(index > 0, egui::Button::new("Omhoog"))
                         .clicked()
@@ -216,14 +239,14 @@ fn rule_fields(ui: &mut egui::Ui, rows: &mut Vec<RuleRow>) {
                         action = Some((index, 0));
                     }
                 });
-                ui.label("Coderingen");
+                ui.label("Woorden of codes");
                 ui.text_edit_singleline(&mut row.words);
-                ui.label("CAD-laag");
+                ui.label("DXF-laagnaam");
                 ui.text_edit_singleline(&mut row.layer);
-                ui.label("Discipline");
+                ui.label("Dwarsprofielnaam");
                 ui.text_edit_singleline(&mut row.label);
                 ui.horizontal(|ui| {
-                    ui.label("ACI-kleur");
+                    ui.label("Kleur");
                     ui.add(egui::DragValue::new(&mut row.color).range(1..=255));
                 });
             });
@@ -247,14 +270,54 @@ fn rule_fields(ui: &mut egui::Ui, rows: &mut Vec<RuleRow>) {
         });
     }
 }
+fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    if let Some(viewer) = &mut state.viewer {
+        use sleufbase_rust::project_view::BackgroundProvider as Background;
+        super::theme::strong(ui,"Achtergrond op het kaartscherm");
+        let display=|source:Background|match source {
+            Background::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",Background::Cadastral=>"PDOK kadastrale kaart",
+            Background::OpenStreetMap=>"OpenStreetMap",_=>"Onbekende achtergrond",
+        };
+        egui::ComboBox::from_id_salt("settings-viewer-background")
+            .selected_text(display(Background::from_label(&viewer.background_source))).show_ui(ui, |ui| {
+                for source in [Background::PdokAerial, Background::Cadastral, Background::OpenStreetMap] {
+                    ui.selectable_value(&mut viewer.background_source, source.label().into(), display(source));
+                }
+            });
+        ui.small("SleufBase start standaard met PDOK Luchtfoto. Hiervoor is geen account nodig.");
+        ui.checkbox(&mut viewer.use_background, "Achtergrondkaart tonen op het kaartscherm");
+        ui.separator();
+    }
+    super::theme::strong(ui,"Achtergrond voor kaartuitvoer en sjabloonkaarten");
+    let background = &mut state.draft.map_export.background;
+    let label = |value: &str| match value {
+        "pdok" => "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)", "osm" => "OpenStreetMap", "cadastral" => "PDOK kadastrale kaart",
+        "white" => "Wit (zonder internet)", _ => "Onbekende achtergrond",
+    };
+    egui::ComboBox::from_id_salt("settings-export-background").selected_text(label(background))
+        .show_ui(ui, |ui| {
+            for value in ["pdok", "cadastral", "osm"] {
+                ui.selectable_value(background, value.into(), label(value));
+            }
+        });
+    ui.add_space(12.);
+    ui.checkbox(&mut state.draft.map_export.include_cad,
+        "KLIC-overlays meenemen in kaartexport en sjabloonkaarten");
+}
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     let p = &mut state.draft.export_preferences;
-    egui::ComboBox::from_label("Proefsleuven in kadastraal overzicht")
-        .selected_text(&p.dxf_trench_export_mode)
+    super::theme::strong(ui,"Weergave proefsleuf in kadastrale DXF-export");
+    let mode_label = |mode: &str| match mode {
+        "polygon" => "Witte vlakken per TIFF",
+        "centerline" => "Detecteer proefsleuf als polyline (breedte 0.6 m)",
+        "none" => "Geen", _ => "Onbekende weergave",
+    };
+    egui::ComboBox::from_label("Weergave proefsleuf")
+        .selected_text(mode_label(&p.dxf_trench_export_mode))
         .show_ui(ui, |ui| {
             for (key, label) in [
-                ("centerline", "Hartlijn"),
-                ("polygon", "Vlak"),
+                ("polygon", "Witte vlakken per TIFF"),
+                ("centerline", "Detecteer proefsleuf als polyline (breedte 0.6 m)"),
                 ("none", "Geen"),
             ] {
                 ui.selectable_value(&mut p.dxf_trench_export_mode, key.into(), label);
@@ -262,74 +325,53 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         });
     ui.checkbox(
         &mut p.include_tiffs_in_dxf_export,
-        "TIFF-afbeeldingen in kadastrale DXF opnemen",
+        "GeoTIFF-afbeeldingen meenemen in DXF-export",
     );
+    ui.small("De export zet hiervoor kopieën van de TIFFs in een map naast het DXF-bestand.");
+    ui.horizontal(|ui| {
+        ui.label("Afstand van proefsleufnaam tot hartlijn (meter)");
+        ui.add(egui::DragValue::new(&mut state.draft.dxf_label_gap).range(0.0..=100.).speed(0.1));
+    });
     for (label, value) in [
-        ("Hartlijnkleur", &mut p.dxf_centerline_color),
-        ("Kleur PS-tekst", &mut p.dxf_label_color),
+        ("Kleur proefsleuf-hartlijn (0.6 m)", &mut p.dxf_centerline_color),
+        ("Kleur PS-tekst in kadastrale DXF-export", &mut p.dxf_label_color),
     ] {
         ui.horizontal(|ui| {
             ui.label(label);
             ui.text_edit_singleline(value);
         });
     }
-    ui.horizontal(|ui| {
-        ui.label("DXF-labelafstand (m)");
-        ui.add(
-            egui::DragValue::new(&mut state.draft.dxf_label_gap)
-                .range(0.0..=100.)
-                .speed(0.1),
-        );
-    });
 }
 fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
-    ui.checkbox(
-        &mut state.draft.template_auto_fill_bgt_fysiek_voorkomen,
-        "Maaiveld automatisch invullen vanuit BGT",
-    );
-    ui.checkbox(
-        &mut state.draft.template_auto_export_discipline_excel,
-        "Automatisch discipline-Excel naast sjabloon-DXF",
-    );
+    super::theme::strong(ui,"Proefsleuven & sjabloon");
+    ui.small("Ingebouwd in de app en automatisch meegeleverd.");
     let p = &mut state.draft.export_preferences;
-    ui.horizontal(|ui| {
-        ui.label("Standaard DXF-sjabloon");
-        ui.text_edit_singleline(&mut p.cadastral_template_path);
-        if ui.button("Kiezen…").clicked() {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("AutoCAD DXF", &["dxf"])
-                .pick_file()
-            {
-                p.cadastral_template_path = path.to_string_lossy().into_owned();
-            }
-        }
-    });
     ui.checkbox(
         &mut p.template_include_cross_sections,
-        "Dwarsprofielen opnemen",
+        "Dwarsprofielen automatisch maken vanuit KickTheMap",
     );
     ui.checkbox(
         &mut p.template_generate_reverse_cross_section_sheet,
-        "Omgekeerd profielblad toevoegen",
+        "Ook een omgekeerde versie van het sjabloon exporteren",
     );
     ui.checkbox(
         &mut p.template_show_profile_direction,
-        "Profielrichting en referentie tonen",
+        "Toon 0-punt RD in afstandsband en referentiepunt op sjabloonkaart",
     );
     ui.checkbox(
         &mut p.template_enable_maaiveld_edit_points,
-        "Bewerkte maaiveldpunten gebruiken",
+        "Kaartpunten gebruiken voor maaiveldtekst en kleur",
     );
     ui.checkbox(
         &mut p.template_avoid_multileader_collisions,
-        "Botsingen tussen profiellabels vermijden",
+        "Leidingverwijzingen binnen het profiel houden en overlap beperken",
     );
     ui.checkbox(
         &mut p.template_clip_cross_section_markers_to_profile,
-        "Objectmarkers binnen profiel houden",
+        "Verwijzingscirkels afknippen op de profielgrenzen",
     );
     ui.horizontal(|ui| {
-        ui.label("Markerdiameter (m)");
+        ui.label("Diameter verwijzingssymbool dwarsprofiel (meter)");
         ui.add(
             egui::DragValue::new(&mut p.template_cross_section_marker_diameter)
                 .range(0.005..=0.2)
@@ -360,7 +402,7 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     if p.template_client_logo_preset == "custom" {
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut p.template_client_logo_path);
-            if ui.button("Logo kiezen…").clicked() {
+            if ui.button("Kies bestand").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Afbeelding", &["png", "jpg", "jpeg"])
                     .pick_file()
@@ -370,6 +412,22 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             }
         });
     }
+    ui.separator();
+    ui.checkbox(&mut state.draft.template_auto_fill_bgt_fysiek_voorkomen,
+        "Maaiveld automatisch invullen vanuit BGT");
+    ui.small("Vult midden, links en rechts vanuit BGT. Handmatige tekst blijft staan.");
+    ui.checkbox(&mut state.draft.template_auto_export_discipline_excel,
+        "Automatisch discipline-Excel naast sjabloon-DXF");
+    ui.collapsing("Eigen DXF-sjabloon", |ui| {
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut p.cadastral_template_path);
+            if ui.button("Kies bestand").clicked() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("AutoCAD DXF", &["dxf"]).pick_file() {
+                    p.cadastral_template_path = path.to_string_lossy().into_owned();
+                }
+            }
+        });
+    });
 }
 /// Save callback must durably store BOTH candidates before returning Ok.
 /// Caller applies returned Saved only. Cancel and window X return no candidate.
@@ -383,22 +441,25 @@ pub(crate) fn show(
     let mut cancel = false;
     let mut requested = false;
     let viewport = ctx.screen_rect();
-    egui::Window::new("SleufBase-instellingen")
+    let title = if state.words { "KickTheMap – woordenlijst" } else { "Instellingen" };
+    egui::Window::new(title)
+        .id(egui::Id::new("sleufbase-settings-dialog"))
+        .default_pos(viewport.min + egui::vec2(12., 12.))
         .open(&mut open)
         .resizable(true)
-        .default_width(760_f32.min((viewport.width() - 32.).max(200.)))
-        .default_height(600_f32.min((viewport.height() - 64.).max(160.)))
+        .default_width((viewport.width() - 40.).max(200.))
+        .default_height((viewport.height() - 76.).max(160.))
         .max_width((viewport.width() - 32.).max(200.))
         .max_height((viewport.height() - 64.).max(160.))
         .show(ctx, |ui| {
             // Footer is outside the scroll area, preserving access at every category.
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Opslaan").clicked() {
-                        requested = true;
-                    }
                     if ui.button("Annuleren").clicked() {
                         cancel = true;
+                    }
+                    if ui.button("Opslaan").clicked() {
+                        requested = true;
                     }
                     if state.words && ui.button("Terug naar instellingen").clicked() {
                         state.back();
@@ -419,6 +480,13 @@ pub(crate) fn show(
                                 );
                             }
                         });
+                        ui.small(match state.category {
+                            Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
+                            Category::Dxf => "Stel de proefsleufweergave, kleuren en gekoppelde rasters in.",
+                            Category::Trenches => "Stel dwarsprofielen, maaiveld en het opdrachtgeverlogo in.",
+                            Category::KickTheMap => "Beheer materiaalkeuzes, kabelnamen en de woordenlijst voor DXF-lagen.",
+                            Category::Backups => "Stel automatisch opslaan in en herstel een eerdere versie.",
+                        });
                         ui.separator();
                     }
                     egui::ScrollArea::vertical()
@@ -430,13 +498,14 @@ pub(crate) fn show(
                                 return;
                             }
                             match state.category {
-                                Category::General => {
+                                Category::Backups => {
+                                    super::theme::strong(ui,"Autosave");
                                     ui.checkbox(
                                         &mut state.autosave.enabled,
-                                        "Automatische projectback-ups",
+                                        "Automatisch opslaan",
                                     );
                                     ui.horizontal(|ui| {
-                                        ui.label("Interval (minuten)");
+                                        ui.label("Elke (minuten)");
                                         ui.add(
                                             egui::DragValue::new(
                                                 &mut state.autosave.interval_minutes,
@@ -445,27 +514,31 @@ pub(crate) fn show(
                                         );
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Maximaal aantal back-ups");
+                                        ui.label("Maximaal aantal autosaves");
                                         ui.add(
                                             egui::DragValue::new(&mut state.autosave.max_backups)
                                                 .range(1..=200),
                                         );
                                     });
+                                    if let Some(count) = state.autosave_count {
+                                        ui.label(format!("Beschikbaar: {count}"));
+                                    }
+                                    if ui.button("Autosave laden…").clicked() {
+                                        state.restore_autosave_requested = true;
+                                    }
                                 }
-                                Category::Maps => {
-                                    ui.checkbox(
-                                        &mut state.draft.map_export.include_cad,
-                                        "KLIC-overlays meenemen",
-                                    );
-                                }
+                                Category::Maps => map_fields(ui, state),
                                 Category::Dxf => dxf_fields(ui, state),
                                 Category::Trenches => trench_fields(ui, state),
                                 Category::KickTheMap => {
-                                    if ui.button("Woordenlijst en disciplinekleuren").clicked() {
+                                    super::theme::strong(ui,"KickTheMap woordenlijst");
+                                    ui.label("Beheer woorden/codes, DXF-lagen, kleuren en dwarsprofielen in een ruime aparte weergave.");
+                                    if ui.button("Woordenlijst beheren…").clicked() {
                                         state.open_words();
                                     }
                                     ui.separator();
-                                    list_editor(ui, "Materialen", &mut state.materials);
+                                    super::theme::strong(ui,"KickTheMap – kabels");
+                                    list_editor(ui, "Materiaalkeuzes", &mut state.materials);
                                     ui.separator();
                                     list_editor(
                                         ui,
@@ -473,7 +546,7 @@ pub(crate) fn show(
                                         &mut state.extras,
                                     );
                                     ui.separator();
-                                    ui.strong("MarXact namen → Kabel/Leiding");
+                                    super::theme::strong(ui,"MarXact namen → Kabel/Leiding");
                                     let mut remove = None;
                                     for (index, (source, target)) in
                                         state.mappings.iter_mut().enumerate()
@@ -517,6 +590,56 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn viewer_draft_is_returned_only_after_success_and_validated_before_persistence() {
+        let mut dialog = Dialog::new(&MigratedSettings::default(), &AutosaveSettings::default());
+        let viewer = ViewerDraft {background_source: "OpenStreetMap".into(), use_background: false};
+        dialog.viewer = Some(viewer.clone());
+        dialog.draft.map_export.background = "cadastral".into();
+        assert!(dialog.try_save(&mut |_, _| Err("disk failure".into())).is_none());
+        assert_eq!(dialog.viewer.as_ref(), Some(&viewer));
+        let saved = dialog.try_save(&mut |settings, _| {
+            assert_eq!(settings.map_export.background, "cadastral");
+            Ok(())
+        }).unwrap();
+        assert_eq!(saved.viewer, Some(viewer));
+        dialog.viewer.as_mut().unwrap().background_source = "removed-or-unknown".into();
+        assert!(dialog.try_save(&mut |_, _| panic!("invalid viewer draft persisted")).is_none());
+    }
+    #[test]
+    fn map_and_words_routes_render_original_controls_without_saving() {
+        let ctx = egui::Context::default();
+        let mut dialog = Some(Dialog::new(&MigratedSettings::default(), &AutosaveSettings::default()));
+        dialog.as_mut().unwrap().viewer = Some(ViewerDraft {
+            background_source: "OpenStreetMap".into(), use_background: true,
+        });
+        for words in [false, true] {
+            dialog.as_mut().unwrap().words = words;
+            let mut text = String::new();
+            for _ in 0..3 {
+                let output = ctx.run(egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200., 800.))),
+                    ..Default::default()
+                }, |ctx| { assert!(show(ctx, &mut dialog, |_, _| panic!("render must not save")).is_none()); });
+                text = output.shapes.iter().filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape { Some(text.galley.job.text.as_str()) } else { None }
+                }).collect::<Vec<_>>().join("\n");
+            }
+            if words {
+                assert!(text.contains("KickTheMap – woordenlijst"));
+                assert!(text.contains("Terug naar instellingen"));
+                assert!(text.contains("Woorden of codes"));
+                assert!(!text.contains("Achtergrond op het kaartscherm"));
+            } else {
+                let labels = ["Kaarten", "DXF-export", "Proefsleuven", "KickTheMap", "Back-ups"];
+                let positions = labels.map(|label| text.find(label).expect("original category rendered"));
+                assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+                assert!(text.contains("Achtergrond op het kaartscherm"));
+                assert!(text.contains("Achtergrond voor kaartuitvoer en sjabloonkaarten"));
+                assert!(text.contains("OpenStreetMap"));
+            }
+        }
+    }
     #[test]
     fn failed_save_retains_draft_and_success_returns_candidate_only() {
         let active = MigratedSettings::default();

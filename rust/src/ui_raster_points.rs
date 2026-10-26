@@ -90,6 +90,12 @@ impl SleufBaseApp {
             }
         });
     }
+    pub(super) fn load_all_shell_start_points(&mut self) {
+        if self.raster_points.pending_generation.is_some() {return;}
+        self.raster_points.pending_generation=Some(self.project_generation);
+        self.raster_points.attempted.clear();
+        self.poll_point_downloads();
+    }
     pub(super) fn clear_raster_references(&mut self) {
         let virtual_removed=self.virtual_trenches.iter_mut().filter(|t|t.metadata.get(points::REFERENCE).is_some()).count();
         for t in &mut self.virtual_trenches{sleufbase_rust::virtual_map::clear_reference(t);}
@@ -127,7 +133,7 @@ impl SleufBaseApp {
             format!("{} referentiepunt(en) gewist.", removed.len()+virtual_removed)
         };
     }
-    fn start_point_task(&mut self, target: Option<PathBuf>) -> bool {
+    pub(super) fn start_point_task(&mut self, target: Option<PathBuf>) -> bool {
         self.raster_points.mode = None;
         self.raster_points.rows.clear();
         let kind = if target.is_some() {
