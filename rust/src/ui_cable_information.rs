@@ -157,6 +157,7 @@ impl SleufBaseApp {
     pub(super) fn show_found_layers_popup(&mut self,ctx:&egui::Context){
         if !self.found_layers_open{return;}
         let mut open=true;
+        let mut request_close=false;
         let mut selected=None;
         egui::Window::new(format!("Gevonden lagen ({})",self.found_layers.len()))
             .default_width(380.).default_height(260.)
@@ -175,12 +176,12 @@ impl SleufBaseApp {
                         }
                     }
                 });
-                if ui.button("Sluiten").clicked(){open=false;}
+                if ui.button("Sluiten").clicked(){request_close=true;}
             });
         if let Some((overlay,feature))=selected{
             self.select_dxf(overlay,feature);
         }
-        self.found_layers_open=open;
+        self.found_layers_open=open&&!request_close;
     }
     pub(super) fn handle_cable_information(&mut self, view: &raster_point_ui::View) {
         if self.project_sources_owned()
