@@ -55,6 +55,7 @@ pub(super) struct BrowserUi {
     map_loading:Option<Receiver<Result<OsmRaster,String>>>,
     map_status:String,
     opening_job:Option<Receiver<(Browser,Result<(),String>)>>,
+    open_target:Option<u64>,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
     batch_generation:u64,
@@ -74,7 +75,7 @@ impl Default for BrowserUi {
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,show_login:false,
             map_open:false,map_bounds:None,map_texture:None,map_loading:None,
-            map_status:String::new(),opening_job:None,
+            map_status:String::new(),opening_job:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
@@ -547,7 +548,9 @@ impl SleufBaseApp {
         match action {
             Some("launch")=>self.launch_kickthemap_browser(),
             Some("open-job")=>{
-                if let Some(id)=selected_single{self.open_selected_kickthemap_job(id);}
+                if let Some(id)=self.browser_ui.open_target.take().or(selected_single){
+                    self.open_selected_kickthemap_job(id);
+                }
             },
             Some("capture")=>self.capture_kickthemap_browser(),
             Some("close")=>{
@@ -695,7 +698,7 @@ fn show_jobs_map(ui:&mut egui::Ui,source:&[Job],indices:&[usize],
         let id=nearest.unwrap().0;
         if !ui.input(|i|i.modifiers.ctrl){browser.selected.clear();}
         browser.selected.insert(id);
-        if response.double_clicked(){*action=Some("open-job");}
+        if response.double_clicked(){browser.open_target=Some(id);*action=Some("open-job");}
     }
     ui.small(&browser.map_status);
     ui.small("Klik op een marker om te selecteren; Ctrl voor meervoudige selectie. Dubbelklik opent een job. Muiswiel zoomt en de middelste muisknop verplaatst de kaart.");
