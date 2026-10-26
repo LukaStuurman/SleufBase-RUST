@@ -1363,6 +1363,7 @@ impl SleufBaseApp {
 
 
 
+        self.show_marxact_orientation(ctx);
         self.show_settings_window(ctx);
 
         if let Some(rules)=crate::rule_editor::show(ctx,&mut self.rule_editor) {
