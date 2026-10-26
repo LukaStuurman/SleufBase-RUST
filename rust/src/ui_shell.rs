@@ -348,7 +348,7 @@ impl SleufBaseApp {
                             if response.clicked() || response.secondary_clicked() {
                                 selected = Some((false, i));
                             }
-                            contexts.push(response.clone());
+                            contexts.push((false,i,response.clone()));
                             if let Some(error) = self.raster_errors.get(i).and_then(|e| e.as_ref())
                             {
                                 response.on_hover_text(error);
@@ -360,7 +360,7 @@ impl SleufBaseApp {
                             if response.clicked() || response.secondary_clicked() {
                                 selected = Some((true, i));
                             }
-                            contexts.push(response);
+                            contexts.push((true,i,response));
                         }
                     });
             });
@@ -390,17 +390,31 @@ impl SleufBaseApp {
         });
         // The menu belongs to each row. Making the entire card clickable after
         // its children would intercept ordinary selection and footer clicks.
-        for response in contexts {
+        for (is_virtual,index,response) in contexts {
             response.context_menu(|ui| {
-                self.show_raster_rotation_controls(ui);
-                self.show_tiff_comment_controls(ui);
-                if let Some(i) = self.virtual_map.selected {
-                    if ui.button("Proefsleuf bewerken").clicked() {
-                        self.open_virtual_editor(i);
-                        ui.close_menu();
+                if is_virtual {
+                    if self.virtual_trenches.get(index).is_some(){
+                        self.show_virtual_tiff_context(ui,index);
+                    }
+                } else if let Some(path)=self.geotiffs.get(index).map(|r|r.path.clone()) {
+                    // Right-click selects the row actually clicked, not a
+                    // previously selected layer (or another duplicate path).
+                    let old_virtual=self.virtual_map.selected;
+                    let old_raster=self.raster_points.selected.clone();
+                    self.virtual_map.selected=None;
+                    self.raster_points.selected=Some(path.clone());
+                    if old_virtual.is_some()||old_raster.as_ref()!=Some(&path){
+                        self.update_view_selection(old_virtual,old_raster.as_deref());
+                    }
+                    self.show_physical_rotation_menu(ui);
+                    ui.separator();
+                    if ui.button("Opmerking bewerken...").clicked(){
+                        self.open_tiff_comment(&path);ui.close_menu();
+                    }
+                    if ui.button("Opmerking wissen").clicked(){
+                        self.clear_tiff_comment(&path);ui.close_menu();
                     }
                 }
-                self.show_virtual_map_controls(ui);
             });
         }
     }
