@@ -159,6 +159,9 @@ pub struct SleufBaseApp {
     raster_errors:Vec<Option<String>>,
     overlays: Vec<DxfOverlay>,
     dxf_selection:Option<DxfSelection>,
+    found_layers:Vec<(usize,usize)>,
+    found_layers_open:bool,
+    found_layers_pos:Option<Pos2>,
     virtual_trenches: Vec<VirtualTrench>,
     trench_markers:Vec<Vec<sleufbase_rust::cross_section::Marker>>,
     show_trench_dialog: bool,
@@ -266,6 +269,7 @@ impl Default for SleufBaseApp {
             raster_errors:Vec::new(),
             overlays:Vec::new(),
             dxf_selection:None,
+            found_layers:Vec::new(),found_layers_open:false,found_layers_pos:None,
             virtual_trenches:Vec::new(),
             trench_markers:Vec::new(),
             show_trench_dialog:false,
@@ -399,6 +403,7 @@ impl SleufBaseApp {
         self.template_state=doc.template_export;
         self.raster_textures=vec![None;self.geotiffs.len()]; self.overlays=doc.overlays;
         self.dxf_selection=None;
+        self.found_layers.clear();self.found_layers_open=false;self.found_layers_pos=None;
         self.bgt_layers=doc.bgt_layers; self.cadastral=doc.cadastral;
         self.virtual_trenches=doc.virtual_trenches; self.comments=doc.comments;
         self.trench_markers=markers;
@@ -1363,6 +1368,7 @@ impl SleufBaseApp {
 
 
 
+        self.show_found_layers_popup(ctx);
         self.show_virtual_form_dialogs(ctx);
         self.show_marxact_orientation(ctx);
         self.show_settings_window(ctx);
