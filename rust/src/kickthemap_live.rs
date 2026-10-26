@@ -805,7 +805,7 @@ impl KickTheMapLiveClient {
             None=>{
                 check()?;
                 let browser=browser.ok_or("KickTheMap gaf geen bruikbare downloadlink terug; meld je aan via het privé Edge-venster voor de browserfallback")?;
-                browser.signed_download_url(job,kind)?
+                browser.signed_download_url_with_cancel(job,kind,cancel)?
             }
         };
         let download_client=Client::builder()

@@ -1,0 +1,18 @@
+{
+  "repository": "LukaStuurman/SleufBase-RUST",
+  "workflow_run": 40269300409,
+  "revision": "4d33eebedba8ba427d8416429389867603ec3451",
+  "workflow_conclusion": "success",
+  "portable_artifact": 12628051486,
+  "installer_artifact": 12628800644,
+  "github_archive_digests": [
+    "dd38ea31c674402bddb2256bd9167c5d82479414379faad747518d071aa2b76b",
+    "6ce3f05c8f14540c52ed8947775455167ed128c2dca4b05f3e38154ed2cb27f8"
+  ],
+  "portable_files": 13,
+  "installer_checksum_verified": true,
+  "msvc_cli_help": true,
+  "dxf_entities": 5,
+  "xlsx_rows": 3,
+  "installer_executed": false
+}

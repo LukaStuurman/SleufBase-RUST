@@ -1,11 +1,9 @@
 //! Bounded one-shot fetch/XHR capture in the exact process-owned Edge tab.
 //! Original contract: kickthemap_browser.DownloadCaptureApi and capture JS.
 use super::*;
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
-    sync::atomic::AtomicBool,
-};
-use tungstenite::protocol::WebSocketConfig;
+use std::sync::atomic::AtomicBool;
+#[cfg(test)]
+use std::net::TcpStream;
 pub struct CaptureHandle {
     channel: BrowserChannel,
     target: String,
@@ -24,69 +22,11 @@ impl BrowserChannel {
         self.capture_command_budget(method, params, target, cancel, Duration::from_secs(4))
     }
     fn capture_command_budget(
-        &self,
-        method: &str,
-        params: Value,
-        target: &str,
-        cancel: &AtomicBool,
-        budget: Duration,
+        &self, method: &str, params: Value, target: &str,
+        cancel: &AtomicBool, budget: Duration,
     ) -> Result<Value, String> {
-        crate::input::check(cancel)?;
-        validated_ws_url(target, self.port)?;
-        let stream = TcpStream::connect_timeout(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), self.port),
-            Duration::from_millis(200),
-        )
-        .map_err(|e| format!("Edge-captureverbinding: {e}"))?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(150)))
-            .map_err(|e| e.to_string())?;
-        stream
-            .set_write_timeout(Some(Duration::from_millis(200)))
-            .map_err(|e| e.to_string())?;
-        let config = WebSocketConfig::default()
-            .max_message_size(Some(512 * 1024))
-            .max_frame_size(Some(512 * 1024));
-        let (mut socket, _) = tungstenite::client::client_with_config(target, stream, Some(config))
-            .map_err(|e| format!("Edge-capturehandshake: {e}"))?;
-        socket
-            .send(Message::Text(
-                json!({"id":1,"method":method,"params":params})
-                    .to_string()
-                    .into(),
-            ))
-            .map_err(|e| e.to_string())?;
-        let deadline = Instant::now() + budget;
-        loop {
-            crate::input::check(cancel)?;
-            if Instant::now() > deadline {
-                return Err("Edge-captureantwoord duurde te lang".into());
-            }
-            let message = match socket.read() {
-                Ok(m) => m,
-                Err(tungstenite::Error::Io(e))
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    continue
-                }
-                Err(e) => return Err(format!("Edge-captureantwoord: {e}")),
-            };
-            if let Message::Text(body) = message {
-                let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-                if value["id"] == 1 {
-                    if value.get("error").is_some() {
-                        return Err("Edge heeft de captureopdracht geweigerd".into());
-                    }
-                    return value
-                        .get("result")
-                        .cloned()
-                        .ok_or("Edge-captureantwoord ontbreekt".into());
-                }
-            }
-        }
+        cdp::command(self.port,target,method,params,cancel,
+            cdp::Limits{duration:budget,response_bytes:512*1024})
     }
     /// Arms only the selected job in a tab in this BrowserChannel's own process.
     pub fn arm_download_capture(

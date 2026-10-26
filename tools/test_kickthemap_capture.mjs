@@ -43,3 +43,4 @@ function harness(response=()=>new Response(JSON.stringify({status:true,data:{url
  const h=harness();const form=new FormData();form.set('projectId','42');form.set('fileName','f.tiff');const request=new Request('https://www.my.kickthemap.com/jobs/get-file-url',{method:'POST',body:form});await h.context.fetch(request);await flush();assert.equal(h.capture.request.request_mode,'multipart');
 }
 console.log('Native capture JS: 9 fetch/XHR/GET/body-budget/nonblocking/identity/cleanup scenarios passed');
+await import('./test_kickthemap_signed_url.mjs');

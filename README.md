@@ -6,6 +6,8 @@ De code staat nu in deze zelfstandige repository. **Dit is een migratiepreview:*
 publicatie betekent niet dat alle oorspronkelijke functies en praktijksituaties
 volledig zijn geaccepteerd. Zie [de overdracht en testresultaten](rust/HANDOFF_2026-10-26.md)
 en [de volledige acceptatievoorwaarden](rust/PARITY.md).
+De [nieuwste controles en browserverbeteringen](rust/VERIFICATION_2026-10-26_CONTROLS.md)
+beschrijven de aanvullende tests en opgeloste fouten.
 
 De export ondersteunt een projectnaam en vult de bladdatum automatisch in.
 Cyclomedia-kaartachtergronden en het StreetSmart-venster zijn op verzoek verwijderd.
@@ -38,7 +40,8 @@ Python is uitsluitend nodig voor de ontwikkelhulpmiddelen die pakketten controle
 - `rust/`: applicatie, tests, oorspronkelijke referentie-uitkomsten en installerbron.
 - `assets/`: DXF-sjabloon, logo's en iconen.
 - `tools/`: pakketcontrole en tests van de browsercapture.
-- `SOURCE_MANIFEST.json`: herkomst en SHA-256 van de overgezette bestanden.
+- `SOURCE_MANIFEST.json`: herkomst en SHA-256 bij de eerste bronoverdracht;
+  daaropvolgende verbeteringen zijn afzonderlijk in de Git-geschiedenis vastgelegd.
 
 De oorspronkelijke Python-bron en onafhankelijke vergelijkingshulpmiddelen blijven
 beschikbaar in [SleufBase](https://github.com/LukaStuurman/SleufBase).
