@@ -210,8 +210,12 @@ impl SleufBaseApp {
                 self.pan = egui::Vec2::ZERO;
             }
             "addresses" => self.open_tiff_addresses(),
-            "maps" => self.open_map_export(),
-            "cadastral" => self.open_cadastral_overview(),
+            "maps" => {
+                if let Some(folder)=rfd::FileDialog::new().set_title("Kies exportmap voor kaarten").pick_folder(){
+                    self.start_maps_export(folder);
+                }
+            }
+            "cadastral" => self.export_cadastral_from_actions(),
             "template" => self.open_template_export(),
             "clear_refs" => self.clear_raster_references(),
             "starts" => self.load_all_shell_start_points(),
