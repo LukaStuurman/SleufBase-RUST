@@ -66,7 +66,7 @@ pub(super) struct BrowserUi {
     pub(super) cancel:Arc<AtomicBool>,
     pub(super) download_notice:Option<Receiver<String>>,
     capture_status:Option<Receiver<String>>,
-    status:String,
+    pub(super) status:String,
 }
 impl Default for BrowserUi {
     fn default()->Self {
@@ -130,7 +130,7 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()
+        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.launching.is_some()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
@@ -175,20 +175,14 @@ impl SleufBaseApp {
         self.browser_ui.capturing=Some(rx);
         self.browser_ui.status="Sessie van het eigen Edge-venster controleren…".into();
         std::thread::spawn(move|| {
-            let result=browser.cookies()
-                .and_then(|cookies|KickTheMapLiveClient::from_browser_cookies(&cookies))
+            // Validate through the authenticated tab first. An independent
+            // HTTP bootstrap may be rejected even when Edge is signed in.
+            let result=browser.csrf_token().and_then(|csrf|browser.cookies()
+                .and_then(|cookies|KickTheMapLiveClient::from_authenticated_browser(&cookies,&csrf)))
                 .and_then(|mut session|{
                     if known_nonempty{session.require_empty_confirmation();}
-                    match session.fetch_jobs() {
-                        Ok(jobs)=>Ok((session,jobs)),
-                        Err(original)=>{
-                            // Site API endpoints and token behavior can differ
-                            // for requests made outside the real browser. Try
-                            // the same-origin fetch from this same owned tab.
-                            session.fetch_jobs_from_browser(||browser.browser_job_payload()).map(|jobs|(session,jobs))
-                                .map_err(|fallback|format!("{original}; browserfallback: {fallback}"))
-                        }
-                    }
+                    session.fetch_jobs_from_browser(||browser.browser_job_payload())
+                        .map(|jobs|(session,jobs))
                 });
             let _=tx.send((browser,result));
         });
@@ -289,6 +283,7 @@ impl SleufBaseApp {
                         "Browseraanmelding nog niet bruikbaar: {err}. Je kunt opnieuw proberen."
                     ),
                 }
+                self.message=self.browser_ui.status.clone();
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.browser_ui.capturing=None;

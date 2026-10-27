@@ -1,7 +1,7 @@
 //! KickTheMap live account + jobs API in Rust. No Python, no external browser
 //! cookies, no password storage and no anti-bot bypass. Authenticated requests
 //! are restricted to fixed HTTPS endpoints at www.my.kickthemap.com.
-//! Recaptcha/WebView2 interactive authentication still requires a native UI port.
+//! Interactive authentication is handled by the owned Edge session.
 
 use crate::jobs_cache::Job;
 use reqwest::blocking::{Client, Response};
@@ -15,6 +15,8 @@ use std::time::Duration;
 
 #[path="kickthemap_strategy.rs"]
 pub mod strategy;
+
+pub const INTERACTIVE_LOGIN_REQUIRED:&str="KickTheMap vraagt om reCAPTCHA. Kies Open KickTheMap in Edge, meld je daar aan en klik op Sessie overnemen.";
 
 const ORIGIN: &str = "https://www.my.kickthemap.com";
 const MAX_HTML: u64 = 8 * 1024 * 1024;
@@ -370,7 +372,7 @@ impl KickTheMapLiveClient {
             .error_for_status().map_err(|e| format!("KickTheMap aanmelden: {e}"))?;
         let html = response_text(signin, MAX_HTML)?;
         if login_requires_browser(&html) {
-            return Err("KickTheMap vereist interactieve reCAPTCHA-aanmelding; browserlogin moet nog in Rust worden geïntegreerd".into());
+            return Err(INTERACTIVE_LOGIN_REQUIRED.into());
         }
         let token = html_token(&html, "input", "_token")
             .ok_or("Loginformulier bevat geen geldig _token")?;
@@ -402,6 +404,17 @@ impl KickTheMapLiveClient {
     pub fn from_browser_cookies(cookies:&[crate::kickthemap_browser::BrowserCookie])
         ->Result<Self,String>
     {
+        Self::browser_session(cookies,None)
+    }
+    /// The CSRF token must come from our owned, authenticated browser tab.
+    /// The caller verifies the jobs response in that same tab before adopting.
+    pub fn from_authenticated_browser(cookies:&[crate::kickthemap_browser::BrowserCookie],csrf:&str)->Result<Self,String>{
+        if csrf.is_empty()||csrf.len()>8192||!csrf.bytes().all(|c|c.is_ascii_graphic()) {
+            return Err("KickTheMap-browser heeft geen geldig CSRF-token".into());
+        }
+        Self::browser_session(cookies,Some(csrf))
+    }
+    fn browser_session(cookies:&[crate::kickthemap_browser::BrowserCookie],browser_csrf:Option<&str>)->Result<Self,String>{
         use reqwest::cookie::Jar;
         use std::sync::Arc;
         let base=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
@@ -426,6 +439,7 @@ impl KickTheMapLiveClient {
             .timeout(Duration::from_secs(25))
             .user_agent("SleufBase-Rust/0.1 (interactive Edge session)")
             .build().map_err(|e|e.to_string())?;
+        let csrf=if let Some(token)=browser_csrf {token.to_owned()} else {
         let home=client.get(format!("{ORIGIN}/")).send()
             .map_err(|e|format!("KickTheMap browser-sessie valideren: {e}"))?
             .error_for_status().map_err(|e|format!("KickTheMap sessie: {e}"))?;
@@ -433,8 +447,9 @@ impl KickTheMapLiveClient {
         if login_page(&page) {
             return Err("De Edge-browser is nog niet bij KickTheMap ingelogd".into());
         }
-        let csrf=html_token(&page,"meta","csrf-token")
-            .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?;
+        html_token(&page,"meta","csrf-token")
+            .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?
+        };
         Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
     /// Compatibility entry point: the editable account hint is not identity proof.
@@ -584,6 +599,19 @@ mod tests {
         });
         let client=Client::builder().redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
         (KickTheMapLiveClient{client,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+    }
+    #[test]
+    fn owned_browser_bootstrap_uses_browser_csrf_and_verified_jobs_without_http(){
+        let cookies=vec![crate::kickthemap_browser::BrowserCookie{name:"laravel_session".into(),value:"fixture".into(),domain:"www.my.kickthemap.com".into(),path:"/".into(),secure:true}];
+        for invalid in ["","bad\r\nheader","with space"]{
+            assert!(KickTheMapLiveClient::from_authenticated_browser(&cookies,invalid).is_err());
+        }
+        let mut session=KickTheMapLiveClient::from_authenticated_browser(&cookies,"browser-csrf").unwrap();
+        assert_eq!(session.csrf,"browser-csrf");assert!(session.account_email.is_empty());
+        let jobs=session.fetch_jobs_from_browser(||Ok(r#"{"data":[{"Id":42,"AboutProject":"PS42","email":"fixture@example.test","created_at":"2026-10-27T12:00:00"}]}"#.into())).unwrap();
+        assert_eq!(jobs.len(),1);assert_eq!(jobs[0].job_id,42);
+        assert!(session.fetch_jobs_from_browser(||Ok("<html>signin</html>".into())).is_err());
+        assert!(session.download_prefixes.contains_key(&42));
     }
     #[test]
     fn download_link_refreshes_csrf_and_retries_same_request_mode(){

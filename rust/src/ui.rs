@@ -804,8 +804,13 @@ impl SleufBaseApp {
         self.live_rx=Some(rx);
         self.live_busy=true;
         self.message="KickTheMap jobs vernieuwen...".into();
+        let browser=self.browser_ui.browser.as_ref().map(|browser|browser.channel());
         std::thread::spawn(move || {
-            let result=session.fetch_jobs();
+            let result=session.fetch_jobs().or_else(|original|{
+                if let Some(browser)=browser {
+                    session.fetch_jobs_from_browser(||browser.browser_job_payload())
+                }else{Err(original)}
+            });
             let _=tx.send(result.map(|jobs|(session,jobs)));
         });
     }
@@ -917,6 +922,11 @@ impl SleufBaseApp {
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
+                if err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED {
+                    self.open_kickthemap_login();
+                    self.shell.login_submitted=true;
+                    self.browser_ui.status=err.clone();
+                }
                 self.message=format!("KickTheMap live: {err}");
             }
             Some(Err(TryRecvError::Disconnected))=>{

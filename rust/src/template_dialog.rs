@@ -209,40 +209,35 @@ pub(crate) fn show(
     let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut result = None;
     let contents = |ui: &mut egui::Ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Projectnaam");
-            ui.add(
-                egui::TextEdit::singleline(&mut d.state.project)
-                    .desired_width((ctx.screen_rect().width() - 300.).clamp(160., 490.)),
-            );
-            ui.label("Tekenaar");
-            ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(120.));
+        ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+        ui.spacing_mut().icon_width=18.;
+        egui::ScrollArea::vertical().id_salt("template-settings")
+            .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]).show(ui,|ui|{
+        ui.heading("1. Project en sjabloon");
+        let field_width=(ui.available_width()-110.).max(80.);
+        egui::Grid::new("template-identity").num_columns(2).min_col_width(90.).show(ui,|ui|{
+            ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut d.state.project).desired_width(field_width));ui.end_row();
+            ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(field_width));ui.end_row();
         });
+
+        ui.label(d.state.template.as_ref().map_or_else(||"Sjabloon: ingebouwd SleufBase-sjabloon".into(),|p|format!("Eigen sjabloon: {}",p.display())));
+        ui.collapsing("Eigen DXF-sjabloon gebruiken (optioneel)",|ui|{
+            ui.small("Voor de standaardexport is geen bestand nodig.");
+            if ui.button("Eigen DXF-sjabloon kiezen…").clicked(){
+                if let Some(p)=rfd::FileDialog::new().add_filter("DXF-sjabloon",&["dxf"]).pick_file(){d.state.template=Some(p);}
+            }
+            if d.state.template.is_some()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){d.state.template=None;}
+        });
+
 
         ui.label("De exportdatum wordt automatisch op ieder gebruikt blad ingevuld (dd-mm-jjjj).");
         font_folders(ui, &mut d.state.font_directories);
         server_mode(ui, &mut d.state.server_mode);
         logos(ui, &mut d.state.logos);
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label(d.state.template.as_ref().map_or_else(
-                || "Ingebouwd SleufBase-sjabloon".into(),
-                |p| p.display().to_string(),
-            ));
-            if ui.button("Ander sjabloon…").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("DXF-sjabloon", &["dxf"])
-                    .pick_file()
-                {
-                    d.state.template = Some(p);
-                }
-            }
-            if d.state.template.is_some() && ui.button("Ingebouwd sjabloon").clicked() {
-                d.state.template = None;
-            }
-        });
 
         ui.separator();
+        ui.heading("2. Proefsleuven en volgorde");
         ui.label("Kies de volgorde en het PS-nummer. Ctrl/Shift selecteert meerdere regels; dubbele PS-nummers mogen.");
 
         egui::ScrollArea::vertical()
@@ -449,6 +444,8 @@ pub(crate) fn show(
             );
         });
 
+        });
+        ui.separator();
         let included = d
             .state
             .rows
@@ -469,7 +466,8 @@ pub(crate) fn show(
             if ui
                 .add_enabled(
                     sync.is_ok() && included > 0,
-                    egui::Button::new("Exporteren…"),
+                    egui::Button::new(egui::RichText::new("Exporteren…").color(egui::Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(234,88,12)),
                 )
                 .clicked()
             {
@@ -487,10 +485,11 @@ pub(crate) fn show(
     egui::Window::new("DXF-sjabloon exporteren")
         .open(&mut open)
         .default_width(1000.)
-        .default_height(730.)
+        .default_height((ctx.screen_rect().height()-90.).clamp(220.,730.))
+        .constrain_to(ctx.screen_rect().shrink(12.))
         .max_width((ctx.screen_rect().width() - 48.).max(280.))
         .max_height((ctx.screen_rect().height() - 48.).max(200.))
-        .vscroll(true)
+        .vscroll(false)
         .resizable(false)
         .show(ctx, contents);
 
@@ -543,6 +542,24 @@ mod tests {
             |ctx| result = show(ctx, d, rasters, &[], 7),
         );
         (result, output)
+    }
+    #[test]
+    fn export_footer_remains_reachable_with_many_sources_and_small_windows(){
+        let rasters=(0..40).map(|i|{let mut r=raster();r.path=format!("PS{i:02}-lange-bestandsnaam.tiff").into();r}).collect::<Vec<_>>();
+        for size in [egui::vec2(680.,420.),egui::vec2(1200.,760.),egui::vec2(1500.,930.)]{
+            for dpi in [1.,1.25,2.]{
+                let ctx=egui::Context::default();ctx.set_pixels_per_point(dpi);
+                let mut d=Some(Dialog::new(State::default(),&rasters,7));
+                let mut out=None;
+                for _ in 0..4 {out=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),..Default::default()},|ctx|{show(ctx,&mut d,&rasters,&[],7);}));}
+                let out=out.unwrap();
+                for label in ["Exporteren…","Annuleren"]{
+                    let (rect,clip)=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some((t.galley.rect.translate(t.pos.to_vec2()),s.clip_rect)),_=>None}).expect(label);
+                    assert!(rect.min.x>=0.&&rect.min.y>=0.&&rect.max.x<=size.x&&rect.max.y<=size.y,"{size:?}: {rect:?}");
+                    assert!(clip.contains_rect(rect),"footer clipped: {label}");
+                }
+            }
+        }
     }
     #[test]
     fn actual_window_exports_project_value_and_escape_discards_draft_edits() {

@@ -133,6 +133,16 @@ impl Browser {
     pub fn cookies(&self)->Result<Vec<BrowserCookie>,String>{
         parse_browser_cookies(&self.cdp("Storage.getCookies",json!({}))?)
     }
+    pub fn csrf_token(&self)->Result<String,String>{
+        let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
+        let result=self.command("Runtime.evaluate",json!({
+            "expression":r#"(()=>{if(document.querySelector('input[type="password"]'))throw new Error('Meld je eerst aan');return document.querySelector('meta[name="csrf-token"]')?.content||'';})()"#,
+            "returnByValue":true
+        }),Some(&ws))?;
+        if result.get("exceptionDetails").is_some(){return Err("Meld je eerst volledig aan in het geopende Edge-venster".into());}
+        result["result"]["value"].as_str().filter(|s|!s.is_empty())
+            .map(str::to_owned).ok_or("KickTheMap-tabblad heeft nog geen actieve sessie".into())
+    }
     pub fn browser_jobs(&self)->Result<Vec<crate::jobs_cache::Job>,String>{
         crate::kickthemap_live::parse_live_jobs(&self.browser_job_payload()?)
     }
@@ -150,15 +160,7 @@ impl Browser {
         Ok(())
     }
     pub fn browser_job_payload(&self)->Result<String,String>{
-        let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
-        let script=r#"(async()=>{let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
-        let result=self.command("Runtime.evaluate",
-            json!({"expression":script,"awaitPromise":true,"returnByValue":true}),Some(&ws))?;
-        if result.get("exceptionDetails").is_some() {return Err("KickTheMap job-API kon niet in het browservenster worden opgevraagd".into());}
-        let content=result["result"]["value"].as_str()
-            .ok_or("KickTheMap-browser heeft geen jobgegevens geretourneerd")?;
-        if content.len()>MAX_CDP_RESPONSE{return Err("KickTheMap browser-resultaat te groot".into());}
-        Ok(content.to_owned())
+        self.channel().browser_job_payload()
     }
 }
 
@@ -211,6 +213,18 @@ impl Browser {
     }
 }
 impl BrowserChannel {
+    pub fn browser_job_payload(&self)->Result<String,String>{
+        let ws=self.job_tab(&crate::input::NEVER_CANCEL)?;
+        let script=r#"(async()=>{let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
+        let result=cdp::command(self.port,&ws,"Runtime.evaluate",
+            json!({"expression":script,"awaitPromise":true,"returnByValue":true}),&crate::input::NEVER_CANCEL,
+            cdp::Limits{duration:Duration::from_secs(25),response_bytes:MAX_CDP_RESPONSE})?;
+        if result.get("exceptionDetails").is_some() {return Err("KickTheMap job-API kon niet in het browservenster worden opgevraagd".into());}
+        let content=result["result"]["value"].as_str()
+            .ok_or("KickTheMap-browser heeft geen jobgegevens geretourneerd")?;
+        if content.len()>MAX_CDP_RESPONSE{return Err("KickTheMap browser-resultaat te groot".into());}
+        Ok(content.to_owned())
+    }
     fn command(&self,method:&str,params:Value,target:Option<&str>,cancel:&std::sync::atomic::AtomicBool)->Result<Value,String>{
         let ws=target.unwrap_or(&self.websocket);
         cdp::command(self.port,ws,method,params,cancel,cdp::Limits{duration:Duration::from_secs(15),response_bytes:512*1024})
@@ -221,7 +235,7 @@ impl BrowserChannel {
         let page=list.iter().find(|p|{
             p["type"]=="page" && p["url"].as_str().is_some_and(|s|
                 reqwest::Url::parse(s).ok().is_some_and(|u|
-                    u.origin().ascii_serialization()==ORIGIN))
+                    u.scheme()=="https" && matches!(u.host_str(),Some("www.my.kickthemap.com"|"my.kickthemap.com")) && u.port_or_known_default()==Some(443)))
         }).ok_or("Er is geen KickTheMap-tabblad actief in het eigen Edge-venster")?;
         let id=page["targetId"].as_str().filter(|id|!id.is_empty()&&id.len()<=128&&id.bytes().all(|c|c.is_ascii_alphanumeric()||b"-_".contains(&c)))
             .ok_or("Ongeldige Edge-tabidentiteit")?;

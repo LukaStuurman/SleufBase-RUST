@@ -112,7 +112,7 @@ impl SleufBaseApp {
             self.message = "Er is al een lopende taak of projectkeuze".into();
             return;
         }
-        if !options.template.is_file() ||
+        if (!options.template.as_os_str().is_empty() && !options.template.is_file()) ||
             output.extension().is_none_or(|ext| !ext.to_string_lossy().eq_ignore_ascii_case("dxf"))
         {
             self.message = "Kies een geldig DXF-sjabloon en een uitvoer-DXF".into();

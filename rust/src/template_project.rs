@@ -234,7 +234,7 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
     let all_comments=crate::map_comments::combined_all(comments,rasters,trenches)?;
     crate::dxf_fonts::Catalog::validate_dirs(&opts.font_directories)?;
     opts.profile_style.validate()?;
-    if !opts.template.is_file() {
+    if !opts.template.as_os_str().is_empty() && !opts.template.is_file() {
         return Err("Kies een bestaand DXF-sjabloon".into());
     }
     if !(30..=600).contains(&opts.dpi)
@@ -536,10 +536,14 @@ mod tests {
         let jobs=[sample_job(17)];
         let mut opts=Options::default();
         opts.choices=suggest(&jobs,&[raster(Some(17))],&[]);
+        // Empty means the built-in template, so validation reaches the raster.
         assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
-            .err().unwrap().contains("DXF-sjabloon"));
+            .err().unwrap().contains("GeoTIFF niet gevonden"));
         let dir=tempfile::tempdir().unwrap();
         opts.template=dir.path().join("template.dxf");
+        // A user-selected missing file must never silently fall back.
+        assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
+            .err().unwrap().contains("DXF-sjabloon"));
         std::fs::write(&opts.template,b"dummy").unwrap();
         assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
             .err().unwrap().contains("GeoTIFF niet gevonden"));
