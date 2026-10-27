@@ -76,6 +76,7 @@ pub(super) struct Editor {
     end:Vertex,
     width:f64,
     selected:Option<usize>,
+    jump_to_objects:Option<bool>,
     object:ObjectForm,
     confirm_delete:bool,
     error:String,
@@ -100,7 +101,7 @@ impl Editor {
             index,original:source.clone(),draft:source.clone(),
             label:source.label.clone(),start:source.start,
             end:source.end,width:source.width_meters,
-            selected:None,object:ObjectForm::default(),
+            selected:None,jump_to_objects:None,object:ObjectForm::default(),
             confirm_delete:false,error:String::new(),paste:String::new(),notice:String::new(),shift_x:0.,shift_y:0.,
             dekband_start:0.,dekband_end:source.length(),
             dekband_name:"Dekband".into(),dekband_rgb:[17,24,39],
@@ -157,7 +158,7 @@ impl Editor {
             points
         };
         let (rect,_response)=ui.allocate_exact_size(
-            Vec2::new(ui.available_width().max(240.),190.),egui::Sense::hover()
+            Vec2::new(ui.available_width().max(1.),190.),egui::Sense::hover()
         );
         let painter=ui.painter_at(rect);
         painter.rect_filled(rect,6.,Color32::from_rgb(250,250,250));
@@ -243,13 +244,24 @@ impl SleufBaseApp {
         let mut action=None;
         egui::Window::new("Virtuele proefsleuf en meetobjecten bewerken")
             .open(&mut open).default_width(730.)
-            .default_height(650.)
+            .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
+            .constrain_to(ctx.screen_rect().shrink(12.))
             .resizable(true).show(ctx,|ui|{
-                egui::ScrollArea::vertical().max_height(660.).show(ui,|ui|{
+                settings_ui::control_style(ui);
+                ui.set_max_width(ui.available_width());
+                ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                ui.horizontal_wrapped(|ui|{
+                    if ui.button("1. Sleufgegevens").clicked(){editor.jump_to_objects=Some(false);}
+                    if ui.button("2. Meetobjecten invoeren").clicked(){editor.jump_to_objects=Some(true);}
+                    ui.small("3. Opslaan in project");
+                });
+                egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
+                    .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]).show(ui,|ui|{
                     editor.ahn_controls(ui,ctx);
                     ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
                     let measured=edit::is_measured(&editor.original);
-                    ui.heading("Proefsleuf");
+                    let heading=ui.heading("1. Proefsleuf");
+                    if editor.jump_to_objects==Some(false){heading.scroll_to_me(Some(egui::Align::Min));editor.jump_to_objects=None;}
                     ui.horizontal(|ui|{
                         ui.label("Naam");
                         ui.text_edit_singleline(&mut editor.label);
@@ -388,7 +400,8 @@ impl SleufBaseApp {
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
                     ui.separator();
-                    ui.heading("Meetobjecten");
+                    let heading=ui.heading("2. Meetobjecten");
+                    if editor.jump_to_objects==Some(true){heading.scroll_to_me(Some(egui::Align::Min));editor.jump_to_objects=None;}
                     ui.small("Kettingmaat: meters vanaf het beginpunt. Dwarsafstand: positief links van de meetas.");
                     ui.horizontal(|ui|{
                         ui.label("Object");
@@ -401,13 +414,13 @@ impl SleufBaseApp {
                         ui.text_edit_singleline(&mut editor.object.role);
                     });
                     ui.horizontal(|ui|{
-                        ui.label("Kettingmaat");
+                        ui.label("Kettingmaat (m)");
                         ui.add(egui::DragValue::new(&mut editor.object.chainage).speed(0.05));
-                        ui.label("Dwarsafstand");
+                        ui.label("Dwarsafstand (m)");
                         ui.add(egui::DragValue::new(&mut editor.object.offset).speed(0.02));
                     });
                     ui.horizontal(|ui|{
-                        ui.checkbox(&mut editor.object.has_elevation,"Z-hoogte");
+                        ui.checkbox(&mut editor.object.has_elevation,"Z-hoogte (m NAP)");
                         ui.add_enabled(editor.object.has_elevation,
                             egui::DragValue::new(&mut editor.object.elevation).speed(0.05));
                     });
@@ -475,13 +488,16 @@ impl SleufBaseApp {
                             }
                         }
                     });
+                    });
+                });
                     ui.separator();
                     if !editor.error.is_empty() {
                         ui.colored_label(DARK,&editor.error);
                     }
                     if !editor.notice.is_empty() {ui.small(&editor.notice);}
-                    ui.horizontal(|ui|{
-                        if ui.button("Opslaan in project").clicked() {action=Some(Action::Save);}
+                    ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
+                    ui.horizontal_wrapped(|ui|{
+                        if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
                         if ui.button("Handmatige kopie").clicked() {action=Some(Action::Copy);}
                         if ui.button("Proefsleuf verwijderen…").clicked(){editor.confirm_delete=true;}
                     });
@@ -493,7 +509,6 @@ impl SleufBaseApp {
                         });
                     }
                     });
-                });
             });
         if let Some(cmd)=action {
             match cmd {
@@ -571,5 +586,55 @@ mod tests {
         assert_eq!(app.virtual_trenches[0].label,"After");
         assert_eq!(app.virtual_trenches[0].objects.len(),1);
         assert!((app.virtual_trenches[0].objects[0].position.y-200.2).abs()<1e-9);
+    }
+}
+
+#[cfg(test)]
+mod usability_tests {
+    use super::*;
+    fn fixture()->SleufBaseApp {
+        let t=VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+        let mut app=SleufBaseApp{virtual_trenches:vec![t],..Default::default()};
+        app.open_virtual_editor(0);app
+    }
+    fn frame(app:&mut SleufBaseApp,ctx:&egui::Context,size:Vec2,events:Vec<egui::Event>)->egui::FullOutput{
+        ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,size)),events,..Default::default()},|ctx|app.show_virtual_editor(ctx))
+    }
+    fn position(out:&egui::FullOutput,label:&str)->Pos2 {
+        out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).expect(label)
+    }
+    #[test]
+    fn section_navigation_adds_an_object_then_saves_the_draft(){
+        let ctx=egui::Context::default();theme::install(&ctx);let mut app=fixture();let size=Vec2::new(1200.,760.);
+        for _ in 0..4 {frame(&mut app,&ctx,size,vec![]);}
+        for label in ["2. Meetobjecten invoeren","Meetobject toevoegen","Opslaan in project"]{
+            let mut out=frame(&mut app,&ctx,size,vec![]);
+            for _ in 0..4 {out=frame(&mut app,&ctx,size,vec![]);}
+            let pos=position(&out,label);assert!(pos.y<size.y);
+            for pressed in [true,false] {frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+            if label=="Meetobject toevoegen"{assert!(app.virtual_trenches[0].objects.is_empty());assert_eq!(app.trench_editor.as_ref().unwrap().draft.objects.len(),1);}
+        }
+        assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].objects.len(),1);
+    }
+    #[test]
+    fn save_stays_visible_and_validation_preserves_project_at_multiple_sizes_and_dpi(){
+        for size in [Vec2::new(680.,420.),Vec2::new(1200.,760.),Vec2::new(1500.,930.)] {
+            for dpi in [1.,1.25,2.] {
+                let ctx=egui::Context::default();theme::install(&ctx);ctx.set_pixels_per_point(dpi);
+                let mut app=fixture();app.trench_editor.as_mut().unwrap().end=app.virtual_trenches[0].start;
+                for _ in 0..3 {frame(&mut app,&ctx,size,vec![]);}
+                let out=frame(&mut app,&ctx,size,vec![]);
+                let pos=position(&out,"Opslaan in project");
+                assert!(pos.x>0.&&pos.x<size.x&&pos.y>0.&&pos.y<size.y,"{size:?} {dpi}: {pos:?}");
+                for pressed in [true,false] {frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+                assert!(app.trench_editor.is_some());assert_eq!(app.virtual_trenches[0].width_meters,0.6);
+                assert!(!app.trench_editor.as_ref().unwrap().error.is_empty());
+                app.trench_editor.as_mut().unwrap().end=app.virtual_trenches[0].end;
+                app.trench_editor.as_mut().unwrap().width=0.8;
+                let out=frame(&mut app,&ctx,size,vec![]);let pos=position(&out,"Opslaan in project");
+                for pressed in [true,false] {frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+                assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].width_meters,0.8);
+            }
+        }
     }
 }

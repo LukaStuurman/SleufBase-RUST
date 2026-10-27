@@ -2,6 +2,8 @@
 //! Uses the same default PDOK source and WMS 1.1.1 parameters as Python pdok.py.
 //! The source URL is fixed; this module never forwards arbitrary endpoints.
 
+#[path="pdok_tile_pool.rs"]
+mod tile_pool;
 use crate::model::Bounds;
 use image::ImageDecoder;
 use std::{
@@ -444,7 +446,7 @@ pub fn request_tiled_with_progress(
     // Desktop requests retain grid tiles, not a duplicate full-frame entry
     // that would evict those same tiles from the byte-bounded cache.
     let cache_frame=progress.is_none();
-    let image = tiled_progress(
+    let image = tile_pool::parallel(
         bounds,
         width,
         height,

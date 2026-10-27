@@ -80,9 +80,9 @@ fn menu(ui: &mut egui::Ui, label: &str, items: &[(&str, &'static str)]) -> Optio
     ui.menu_button(label, |ui| {
         ui.set_min_width(190.);
         ui.style_mut().override_font_id = Some(egui::FontId::proportional(12.));
-        ui.spacing_mut().item_spacing.y = 0.;
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(255, 244, 237);
-        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 244, 237);
+        ui.spacing_mut().item_spacing.y = 3.;
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(255, 224, 199);
+        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 224, 199);
         for &(label, id) in items {
             if label.is_empty() {
                 ui.add_space(4.);
@@ -92,7 +92,7 @@ fn menu(ui: &mut egui::Ui, label: &str, items: &[(&str, &'static str)]) -> Optio
                 .add_sized(
                     [ui.available_width(), 30.],
                     egui::Button::new(label)
-                        .frame(false)
+                        .frame(true)
                         .corner_radius(8)
                         .wrap_mode(egui::TextWrapMode::Extend),
                 )
@@ -126,7 +126,7 @@ fn tiff_row(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
             INK
         }))
         .selected(selected)
-        .frame(false)
+        .frame(true)
         .stroke(Stroke::NONE)
         .corner_radius(0)
         .min_size(egui::vec2(ui.available_width(), 18.))
@@ -146,7 +146,7 @@ impl SleufBaseApp {
                 bottom: 2,
             }))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.x = 2.;
+                ui.spacing_mut().item_spacing.x = 6.;
                 ui.spacing_mut().button_padding = egui::vec2(10., 4.);
                 ui.spacing_mut().interact_size.y = 26.;
                 ui.style_mut().override_font_id =
@@ -459,7 +459,7 @@ impl SleufBaseApp {
                         ui.set_min_size(egui::vec2(ui.available_width(), list_height));
                         ui.spacing_mut().button_padding = egui::Vec2::ZERO;
                         ui.spacing_mut().interact_size.y = 18.;
-                        ui.spacing_mut().item_spacing.y = 0.;
+                        ui.spacing_mut().item_spacing.y = 3.;
                         for (i, raster) in self.geotiffs.iter().enumerate() {
                             let label = raster
                                 .path

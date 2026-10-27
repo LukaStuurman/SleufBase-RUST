@@ -99,12 +99,16 @@ impl SleufBaseApp {
             egui::Window::new("DXF-sjabloon exporteren")
                 .open(&mut open)
                 .default_width(730.)
-                .default_height(650.)
+                .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
+                .constrain_to(ctx.screen_rect().shrink(12.))
                 .resizable(true)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().max_height(570.).show(ui, |ui| {
+                    settings_ui::control_style(ui);
+                    ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                    egui::ScrollArea::vertical().id_salt("project-template-body")
+                        .max_height((ui.available_height()-105.).max(80.)).auto_shrink([false,false]).show(ui, |ui| {
                         ui.heading("1. CAD-sjabloon en uitvoer");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui.button("DXF-sjabloon kiezen…").clicked() {
                                 if let Some(path) = rfd::FileDialog::new()
                                     .add_filter("AutoCAD DXF", &["dxf"]).pick_file() {
@@ -113,7 +117,7 @@ impl SleufBaseApp {
                             }
                             ui.label(dialog.options.template.display().to_string());
                         });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui.button("Nieuwe uitvoer-DXF kiezen…").clicked() {
                                 if let Some(path) = rfd::FileDialog::new()
                                     .add_filter("AutoCAD DXF", &["dxf"])
@@ -124,11 +128,10 @@ impl SleufBaseApp {
                                 ui.label(path.display().to_string());
                             }
                         });
-                        ui.horizontal(|ui| {
-                            ui.label("Project:");
-                            ui.text_edit_singleline(&mut dialog.options.project);
-                            ui.label("Getekend door:");
-                            ui.text_edit_singleline(&mut dialog.options.drawn_by);
+                        let field_width=((ui.available_width()-12.)/2.).clamp(120.,320.);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Project");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));});
+                            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Getekend door");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));});
                         });
                         ui.separator();
                         ui.heading("2. Kaarten en profielen");
@@ -137,19 +140,19 @@ impl SleufBaseApp {
                         crate::template_dialog::server_mode(ui,&mut dialog.options.server_mode);
                         ui.checkbox(&mut dialog.options.paired,"Beide richtingen (Normaal / Reverse)");
                         if dialog.options.paired {ui.small("Kies na export in AutoCAD de gewenste richting met Versie.");}
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.label("Resolutie (DPI)");
                             ui.add(egui::DragValue::new(&mut dialog.options.dpi).range(72..=300));
                             ui.label("Kaartschaal 1:");
                             ui.add(egui::DragValue::new(&mut dialog.options.scale).range(1.0..=100_000.).speed(1.));
                         });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.radio_value(&mut dialog.options.background, BackgroundKind::Blank,
                                 "Geen luchtfoto (witte kaart)");
                             ui.add_enabled_ui(dialog.options.server_mode==sleufbase_rust::template_server::Mode::Fresh,|ui|{ui.radio_value(&mut dialog.options.background, BackgroundKind::Pdok,
                                 "PDOK-luchtfoto (netwerk)");});
                         });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.checkbox(&mut dialog.options.include_bgt, "BGT-gegevens meenemen");
                             ui.checkbox(&mut dialog.options.include_cadastral,
                                 "Kadaster-gegevens meenemen");
@@ -185,7 +188,7 @@ impl SleufBaseApp {
                         for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
                             ui.push_id(idx, |ui| {
                                 ui.group(|ui| {
-                                    ui.horizontal(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
                                         if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
                                         ui.strong(match slot.source {
@@ -199,7 +202,7 @@ impl SleufBaseApp {
                                     if matches!(slot.source,Source::Empty(_)){ui.small("Dit vak blijft leeg op het blad.");return;}
                                     ui.label(format!("Exportlabel: {}",preview_labels[idx].as_deref().unwrap_or("niet meenemen")));
 
-                                    ui.horizontal(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
                                         ui.label("GeoTIFF:");
                                         let selected_name = slot.raster.and_then(|i| rasters.get(i))
                                             .and_then(|r|r.path.file_name())
@@ -251,7 +254,7 @@ impl SleufBaseApp {
                                     }
                                     if let Some(raster_index)=slot.raster {
                                         if let Some(info)=rasters.get(raster_index) {
-                                            ui.horizontal(|ui| {
+                                            ui.horizontal_wrapped(|ui| {
                                                 if let Some(Some(preview))=raster_previews.get(raster_index) {
                                                     ui.add(egui::Image::new((preview.id(),egui::vec2(190.,120.))));
                                                 }
@@ -321,20 +324,21 @@ impl SleufBaseApp {
                                 });
                             });
                         }
+                    });
                         ui.separator();
                         if !dialog.error.is_empty() {
                             ui.colored_label(DARK, &dialog.error);
                         }
                         ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
+                        let (_,invalid_labels)=dialog.editor.preview(&dialog.options.choices);
                         let ready = invalid_labels.is_empty() && dialog.options.template.is_file() &&
                             dialog.output.as_ref().is_some_and(|p|!p.exists()) &&
                             dialog.options.choices.iter().any(|c|c.include&&!matches!(c.source,Source::Empty(_))) &&
                             dialog.options.choices.iter().filter(|c|c.include)
                                 .all(|c|c.raster.is_some()||matches!(c.source,Source::Virtual(_)|Source::Empty(_)));
-                        if ui.add_enabled(ready, egui::Button::new("Volledige project-sjabloonexport starten")).clicked() {
+                        if ui.add_enabled(ready, egui::Button::new(egui::RichText::new("Volledige project-sjabloonexport starten").color(Color32::WHITE)).fill(ORANGE)).clicked() {
                             launch = dialog.output.clone();
                         }
-                    });
                 });
             if let Some((index,control,shift))=clicked_row{dialog.editor.select(&dialog.options.choices,index,control,shift);}else if sync_editor{dialog.editor.sync(&dialog.options.choices);}
 

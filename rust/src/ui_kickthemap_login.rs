@@ -45,12 +45,14 @@ impl SleufBaseApp {
                     jobs=ui.add_enabled(!busy&&self.live_session.is_some(),egui::Button::new("Open jobs")).clicked();
                 });
                 ui.add_space(8.);
-                ui.collapsing("Aanmelden via je browser",|ui| {
+                ui.group(|ui| {
+                    ui.strong("Aanmelden via je browser (met reCAPTCHA)");
                     ui.label("Open een eigen KickTheMap-venster in Edge, log daar zelf in en neem daarna de sessie over.");
                     launch=ui.add_enabled(self.browser_ui.browser.is_none()&&!busy,
                         egui::Button::new("Open KickTheMap in Edge")).clicked();
                     capture=ui.add_enabled(self.browser_ui.browser.is_some()&&!busy,
                         egui::Button::new("Sessie overnemen")).clicked();
+                    if !self.browser_ui.status.is_empty(){ui.label(&self.browser_ui.status);}
                 });
             });
         if !open || cancel {

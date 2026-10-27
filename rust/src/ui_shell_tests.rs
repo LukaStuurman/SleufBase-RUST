@@ -138,6 +138,8 @@ fn capture(
     size: [u32; 2],
 ) -> (Vec<(String, egui::Rect)>, image::RgbaImage) {
     let ctx = egui::Context::default();
+    // A new egui context needs the production theme even when reusing an app.
+    app.shell.installed=false;
     let mut textures = HashMap::new();
     let mut result = None;
     for index in 0..3 {
@@ -670,4 +672,48 @@ fn login_fields_accept_keyboard_navigation_and_cancel_clears_the_password() {
     click(&mut app,&ctx,label_position(&out,"Annuleren"));
     assert!(app.live_password.is_empty());assert!(!app.shell.login_open);
     assert!(app.live_rx.is_none());
+}
+
+#[test]
+fn menu_hover_paints_a_clear_background_for_top_and_submenu_buttons(){
+    let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
+    frame(&mut app,&ctx,vec![]);let out=frame(&mut app,&ctx,vec![]);
+    let pos=label_position(&out,"Acties");
+    let out=frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pos)]);
+    let orange=Color32::from_rgb(255,224,199);
+    assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Rect(r) if r.rect.contains(pos)&&r.fill==orange)));
+    let out=click(&mut app,&ctx,pos);let pos=label_position(&out,"Project opslaan");
+    let out=frame(&mut app,&ctx,vec![egui::Event::PointerMoved(pos)]);
+    assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Rect(r) if r.rect.contains(pos)&&r.fill==orange)));
+}
+#[test]
+fn interactive_login_error_reaches_the_browser_controls_without_starting_a_browser(){
+    let mut app=SleufBaseApp::default();let (tx,rx)=mpsc::channel();
+    app.live_busy=true;app.live_rx=Some(rx);
+    tx.send(Err(sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED.into())).unwrap();
+    app.poll_live_jobs();assert!(app.shell.login_open);assert!(!app.live_busy);
+    let ctx=egui::Context::default();frame(&mut app,&ctx,vec![]);
+    let out=frame(&mut app,&ctx,vec![]);
+    label_position(&out,"Open KickTheMap in Edge");
+    label_position(&out,"Sessie overnemen");
+    assert!(app.browser_ui.browser.is_none());assert!(!app.live_operation_busy());
+    assert!(!app.message.contains("nog in Rust"));
+}
+#[test]
+fn polish_visual_review_captures_virtual_and_template_dialogs(){
+    let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR") else{return};
+    let dir=PathBuf::from(dir);std::fs::create_dir_all(&dir).unwrap();
+    for size in [[680,420],[1200,760]] {
+        let mut app=SleufBaseApp::default();
+        app.virtual_trenches.push(sleufbase_rust::virtual_trench::VirtualTrench::new("PS12".into(),sleufbase_rust::Vertex{x:155000.,y:463000.,z:Some(2.)},sleufbase_rust::Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
+        app.open_virtual_editor(0);
+        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("virtual-{}x{}.png",size[0],size[1]))).unwrap();
+        app.trench_editor=None;app.open_project_template_dialog();
+        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-{}x{}.png",size[0],size[1]))).unwrap();
+        app.project_template_dialog=None;
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
+        app.open_template_export();
+        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-order-{}x{}.png",size[0],size[1]))).unwrap();
+    }
 }
