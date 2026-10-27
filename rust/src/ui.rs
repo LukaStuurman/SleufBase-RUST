@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 
 #[path="ui_file_loading.rs"]
 mod file_loading;
+#[path="ui_kickthemap_login.rs"]
+mod kickthemap_login_ui;
 #[path="ui_exporting.rs"]
 mod exporting;
 #[path="ui_template_export.rs"]
@@ -1062,6 +1064,17 @@ fn canvas(
             }));
         }
     }
+    if let Some(nav)=navigation.as_deref_mut(){
+        if let Some(target)=nav.fit_bounds.take(){
+            let w=(rect.width()-56.).max(1.) as f64;
+            let h=(rect.height()-56.).max(1.) as f64;
+            nav.focus=Some(location_ui::Focus{
+                center:[(target.min_x+target.max_x)/2.,(target.min_y+target.max_y)/2.],
+                meters_per_pixel:((target.max_x-target.min_x).max(1.)/w)
+                    .max((target.max_y-target.min_y).max(1.)/h),
+            });
+        }
+    }
     let focus=navigation.as_ref().and_then(|n|n.focus).or_else(||{
         (bounds.is_none()&&navigation.is_some()).then_some(location_ui::Focus{center:[155000.,463000.],meters_per_pixel:0.1})
     });
@@ -1411,6 +1424,7 @@ impl SleufBaseApp {
         self.show_map_comment_editor(ctx);
         if self.trench_editor.is_some() {self.show_virtual_editor(ctx);}
         if self.browser_ui.open {self.show_kickthemap_workspace(ctx);}
+        self.show_kickthemap_login(ctx);
 
 
 

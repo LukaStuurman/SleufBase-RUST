@@ -434,6 +434,9 @@ fn initial_viewport_matches_original_size_minimum_and_brand_icon() {
 fn settings_use_original_tab_order_and_keep_the_footer_visible() {
     for (category, name) in [
         (settings_ui::Category::Maps, "settings-maps"),
+        (settings_ui::Category::Dxf, "settings-dxf"),
+        (settings_ui::Category::Trenches, "settings-trenches"),
+        (settings_ui::Category::KickTheMap, "settings-kickthemap"),
         (settings_ui::Category::Backups, "settings-backups"),
     ] {
         let mut app = SleufBaseApp::default();
@@ -466,6 +469,13 @@ fn settings_use_original_tab_order_and_keep_the_footer_visible() {
                 .unwrap();
         }
     }
+    if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR") {
+        let mut app=SleufBaseApp::default();app.open_settings();
+        app.settings_dialog.as_mut().unwrap().words=true;
+        let (_,image)=capture(&mut app,[1500,930]);
+        image.save(PathBuf::from(dir).join("settings-words.png")).unwrap();
+    }
+
 }
 
 fn shortcut(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
@@ -562,4 +572,102 @@ fn physical_raster_and_klic_shortcuts_preserve_sources_and_ignore_duplicate_path
             assert_eq!(std::fs::read(source).unwrap(), bytes);
         }
     }
+}
+
+#[test]
+fn double_clicking_a_physical_or_virtual_trench_fits_only_that_trench() {
+    for physical in [false,true] {
+        for size in [[1200,760],[1500,930]] {
+            let ctx=egui::Context::default();let mut app=layer_app();
+            app.comments.push(Comment{x:100000.,y:100000.,text:"far away".into()});
+            let target;let label;
+            if physical {
+                let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+                let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+                sleufbase_rust::geotiff_rotation::set(&mut raster,37.).unwrap();
+                target=raster.bounds;label="gray16.tiff";
+                app.geotiffs.push(raster);app.raster_textures.push(None);app.raster_errors.push(None);
+            } else {
+                let mut bounds=None;
+                for (x,y) in app.virtual_trenches[0].measured_boundary() {
+                    bounds=union_bounds(bounds,Some(Bounds{min_x:x,min_y:y,max_x:x,max_y:y}));
+                }
+                target=bounds.unwrap();label="PS1";
+            }
+            let frame=|app:&mut SleufBaseApp,events| {
+                let mut raw=input(size);raw.events=events;
+                ctx.run(raw,|ctx|app.render(ctx))
+            };
+            frame(&mut app,vec![]);let out=frame(&mut app,vec![]);
+            let before=app.project_view.camera.clone().unwrap();
+            let pos=label_position(&out,label);
+            for click in 0..2 {
+                for pressed in [true,false] {
+                    frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                        pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);
+                }
+                frame(&mut app,vec![]);
+                if click==0 {assert_eq!(app.project_view.camera.as_ref(),Some(&before));}
+            }
+            let after=app.project_view.camera.as_ref().unwrap();
+            assert!((after.center[0]-(target.min_x+target.max_x)/2.).abs()<1e-6);
+            assert!((after.center[1]-(target.min_y+target.max_y)/2.).abs()<1e-6);
+            assert!(after.meters_per_pixel<before.meters_per_pixel/100.);
+            let visible=app.navigation.viewport.unwrap();
+            assert!(visible.min_x<=target.min_x&&visible.max_x>=target.max_x);
+            assert!(visible.min_y<=target.min_y&&visible.max_y>=target.max_y);
+            assert_eq!(app.comments.len(),1);assert_eq!(app.virtual_trenches.len(),2);
+            app.navigation.fit_bounds=Some(target);
+            app.apply_project(NativeProject::default(),None,false,Vec::new(),&ctx);
+            assert!(app.navigation.fit_bounds.is_none(),"project switch must discard a pending trench fit");
+        }
+    }
+}
+#[test]
+fn login_menu_opens_a_real_form_and_blank_submission_never_starts_network() {
+    let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
+    frame(&mut app,&ctx,vec![]);let out=frame(&mut app,&ctx,vec![]);
+    let out=click(&mut app,&ctx,label_position(&out,"KickTheMap"));
+    let out=click(&mut app,&ctx,label_position(&out,"Inloggen..."));
+    assert!(app.shell.login_open);assert!(!app.browser_ui.open);
+    label_position(&out,"KickTheMap inloggen");
+    label_position(&out,"E-mail");label_position(&out,"Wachtwoord");
+    app.live_password="test-secret-never-persist".into();
+    let out=frame(&mut app,&ctx,vec![]);
+    assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text().contains("test-secret"))));
+    let out=click(&mut app,&ctx,label_position(&out,"Inloggen"));
+    assert!(app.message.contains("Vul KickTheMap"));
+    assert!(!app.live_busy&&app.live_rx.is_none());
+    assert!(app.live_password.is_empty());
+    assert!(!serde_json::to_string(&app.snapshot()).unwrap().contains("test-secret"));
+    app.live_password="temporary".into();
+    click(&mut app,&ctx,label_position(&out,"Annuleren"));
+    assert!(!app.shell.login_open);assert!(app.live_password.is_empty());
+}
+#[test]
+fn login_form_renders_at_minimum_size_without_contacting_accounts() {
+    let mut app=SleufBaseApp::default();app.open_kickthemap_login();
+    let (labels,image)=capture(&mut app,[1200,760]);
+    for text in ["KickTheMap inloggen","E-mail","Wachtwoord","Inloggen","Annuleren"] {
+        let (_,rect)=labels.iter().find(|(s,_)|s==text).unwrap();
+        assert!(rect.min.x>=0.&&rect.max.x<=1200.&&rect.min.y>=0.&&rect.max.y<=760.);
+    }
+    if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR") {
+        image.save(PathBuf::from(dir).join("kickthemap-login.png")).unwrap();
+    }
+}
+
+#[test]
+fn login_fields_accept_keyboard_navigation_and_cancel_clears_the_password() {
+    let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
+    app.open_kickthemap_login();frame(&mut app,&ctx,vec![]);
+    frame(&mut app,&ctx,vec![egui::Event::Text("example@example.invalid".into())]);
+    assert_eq!(app.live_email,"example@example.invalid");
+    frame(&mut app,&ctx,vec![shortcut(egui::Key::Tab,egui::Modifiers::NONE)]);
+    let out=frame(&mut app,&ctx,vec![egui::Event::Text("temporary-secret".into())]);
+    assert_eq!(app.live_password,"temporary-secret");
+    assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text().contains("temporary-secret"))));
+    click(&mut app,&ctx,label_position(&out,"Annuleren"));
+    assert!(app.live_password.is_empty());assert!(!app.shell.login_open);
+    assert!(app.live_rx.is_none());
 }

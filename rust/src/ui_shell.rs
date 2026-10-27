@@ -7,6 +7,9 @@ pub(super) struct State {
     pub settings_scan: Option<sleufbase_rust::recovery::ScanWorker>,
     pub settings_generation: Option<u64>,
     focused_layer: Option<(egui::Id, bool)>,
+    pub login_open: bool,
+    pub login_focus: bool,
+    pub login_submitted: bool,
     pub installed: bool,
     pub extended: bool,
     pub coords: String,
@@ -28,6 +31,7 @@ impl Default for State {
             settings_scan: None,
             settings_generation: None,
             focused_layer: None,
+            login_open: false,login_focus:false,login_submitted:false,
             installed: false,
             extended: false,
             coords: "RD: -".into(),
@@ -213,6 +217,7 @@ impl SleufBaseApp {
             }
             "zoom" => {
                 self.navigation.focus = None;
+                self.navigation.fit_bounds = None;
                 self.navigation.viewport = None;
                 self.zoom = 1.;
                 self.pan = egui::Vec2::ZERO;
@@ -235,8 +240,7 @@ impl SleufBaseApp {
                 self.open_kickthemap_workspace();
             }
             "login" => {
-                self.browser_ui.show_login = true;
-                self.open_kickthemap_workspace();
+                self.open_kickthemap_login();
             },
             "objects" => self.save_dxf(),
             "logout" => self.logout_live_jobs(),
@@ -440,6 +444,7 @@ impl SleufBaseApp {
     fn show_shell_tiffs(&mut self, ui: &mut egui::Ui, height: f32) {
         theme::title(ui, "GeoTIFF Proefsleuven");
         let mut contexts = Vec::new();
+        let mut zoom_target = None;
         theme::card(18, 14, 14).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let list_height = (height - 90.).max(28.);
@@ -473,6 +478,7 @@ impl SleufBaseApp {
                             if response.has_focus() && self.raster_points.selected.as_ref() == Some(&raster.path) {
                                 self.shell.focused_layer = Some((response.id, false));
                             }
+                            if response.double_clicked() { zoom_target=Some(raster.bounds); }
                             contexts.push((false,i,response.clone()));
                             if let Some(error) = self.raster_errors.get(i).and_then(|e| e.as_ref())
                             {
@@ -488,6 +494,13 @@ impl SleufBaseApp {
                             }
                             if response.has_focus() && self.virtual_map.selected == Some(i) {
                                 self.shell.focused_layer = Some((response.id, false));
+                            }
+                            if response.double_clicked() {
+                                let mut bounds=None;
+                                for (x,y) in trench.measured_boundary() {
+                                    bounds=union_bounds(bounds,Some(Bounds{min_x:x,min_y:y,max_x:x,max_y:y}));
+                                }
+                                zoom_target=bounds;
                             }
                             contexts.push((true,i,response));
                         }
@@ -517,6 +530,12 @@ impl SleufBaseApp {
                 }
             });
         });
+        if let Some(bounds)=zoom_target {
+            self.navigation.fit_bounds=Some(bounds);
+            self.navigation.viewport=None;
+            self.zoom=1.;self.pan=egui::Vec2::ZERO;
+            self.dirty=true;
+        }
         // The menu belongs to each row. Making the entire card clickable after
         // its children would intercept ordinary selection and footer clicks.
         for (is_virtual,index,response) in contexts {

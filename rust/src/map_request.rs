@@ -77,6 +77,26 @@ impl Viewport {
             && (a.max_y - a.min_y) / self.size[1].max(1) as f64
                 <= (b.max_y - b.min_y) / view.size[1].max(1) as f64 * 1.15
     }
+    /// Stable world-grid requests retain neighbouring pixels and share WMS
+    /// tiles across pans. Quarter-octave levels keep detail within 19%.
+    pub fn buffered(self) -> Self {
+        let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
+            .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
+        let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
+        if !resolution.is_finite() || resolution<=0. {return self;}
+        let tile=512.*resolution;
+        let pad=256.*resolution;
+        let left=((self.bounds.min_x-pad)/tile).floor();
+        let bottom=((self.bounds.min_y-pad)/tile).floor();
+        let right=((self.bounds.max_x+pad)/tile).ceil();
+        let top=((self.bounds.max_y+pad)/tile).ceil();
+        let width=(right-left)*512.; let height=(top-bottom)*512.;
+        // Large/high-DPI views retain the existing bounded exact-view path.
+        if width>10000. || height>10000. || width*height>50_000_000. {return self;}
+        let planned=Self {bounds:Bounds{min_x:left*tile,min_y:bottom*tile,
+            max_x:right*tile,max_y:top*tile},size:[width as u32,height as u32],..self};
+        if planned.validate().is_ok() && planned.covers(self) {planned} else {self}
+    }
     pub fn cadastral_too_far(self) -> bool {
         self.source == Provider::Cadastral
             && self
@@ -125,6 +145,14 @@ impl Scheduler {
         }
         let provider_changed = self.desired.map(|v| v.source) != view.map(|v| v.source);
         self.desired = view;
+        // A pan inside the active/cached buffer must not cancel its fetch.
+        // Drag transitions alone never invalidate a usable world-space image.
+        if !provider_changed && view.is_some_and(|v| !v.cadastral_too_far()
+            && (self.active.is_some_and(|r| r.view.covers(v))
+                || (self.active.is_none() && self.cached.is_some_and(|c| c.covers(v))))) {
+            self.deadline=None;
+            return Ok(false);
+        }
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
         if provider_changed || view.is_none() || view.is_some_and(Viewport::cadastral_too_far) {
@@ -152,7 +180,7 @@ impl Scheduler {
         }
         let request = Request {
             generation: self.generation,
-            view: self.desired?,
+            view: self.desired?.buffered(),
         };
         self.deadline = None;
         self.active = Some(request);
@@ -606,4 +634,39 @@ mod tests {
         }
         assert!(!worker.busy());
     }
+    #[test]
+    fn buffered_pan_keeps_active_work_and_completed_cache_while_zoom_and_sources_refresh() {
+        let mut scheduler=Scheduler::default();let base=view();
+        scheduler.update(Some(base),false,Duration::ZERO).unwrap();
+        let request=scheduler.due(Duration::from_millis(45)).unwrap();
+        assert!(request.view.covers(base));
+        let mut moved=base;moved.bounds.min_x+=100.;moved.bounds.max_x+=100.;
+        assert!(!scheduler.update(Some(moved),true,Duration::from_millis(60)).unwrap());
+        assert!(scheduler.accepts(request));
+        assert!(scheduler.complete(request,true));
+        assert!(!scheduler.update(Some(moved),false,Duration::from_millis(70)).unwrap());
+        assert!(scheduler.due(Duration::from_secs(1)).is_none());
+        let mut zoom=moved;zoom.size=[400,320];
+        assert!(scheduler.update(Some(zoom),false,Duration::from_secs(2)).unwrap());
+        let sharp=scheduler.due(Duration::from_millis(2045)).unwrap();
+        assert!(sharp.view.covers(zoom));
+        zoom.source=Provider::Osm;
+        assert!(scheduler.update(Some(zoom),false,Duration::from_secs(3)).unwrap());
+        assert!(!scheduler.accepts(sharp));
+    }
+    #[test]
+    fn world_grid_tiles_are_stable_across_pans_and_requests_remain_bounded() {
+        let base=Viewport{bounds:Bounds{min_x:155000.,min_y:463000.,max_x:156024.,max_y:463512.},
+            size:[1024,512],..view()};
+        let a=base.buffered();let mut next=base;
+        next.bounds.min_x+=512.;next.bounds.max_x+=512.;
+        let b=next.buffered();
+        assert_eq!(a.size,b.size);
+        assert_eq!(b.bounds.min_x-a.bounds.min_x,512.);
+        assert!(a.covers(base)&&b.covers(next));
+        let huge=Viewport{size:[10000,5000],..base};
+        huge.buffered().validate().unwrap();
+        assert!(huge.buffered().covers(huge));
+    }
+
 }

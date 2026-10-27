@@ -135,7 +135,8 @@ pub struct SharedRaster {
     pub height: u32,
     pub rgba: std::sync::Arc<[u8]>,
 }
-const CACHE_ENTRIES: usize = 24;
+// Byte quota remains authoritative; retain enough grid tiles to avoid LRU thrash.
+const CACHE_ENTRIES: usize = 512;
 #[derive(Clone, PartialEq, Eq)]
 struct CacheKey {
     source: Source,
@@ -440,6 +441,9 @@ pub fn request_tiled_with_progress(
         return image::RgbaImage::from_raw(width, height, rgba.to_vec())
             .ok_or_else(|| "PDOK-cache bevat ongeldige pixels".into());
     }
+    // Desktop requests retain grid tiles, not a duplicate full-frame entry
+    // that would evict those same tiles from the byte-bounded cache.
+    let cache_frame=progress.is_none();
     let image = tiled_progress(
         bounds,
         width,
@@ -454,7 +458,7 @@ pub fn request_tiled_with_progress(
         .lock()
         .map_err(|_| "PDOK-cache niet beschikbaar")?
         .max_bytes;
-    if image.as_raw().len() <= budget {
+    if cache_frame && image.as_raw().len() <= budget {
         client.remember(key, std::sync::Arc::from(image.as_raw().as_slice()))?;
     }
     Ok(image)
@@ -817,8 +821,8 @@ mod tests {
             .lookup_shared(Source::Aerial, bounds, 1, 1)
             .unwrap()
             .is_none());
-        client.cache.lock().unwrap().max_bytes = 1000;
-        for width in 1..=30 {
+        client.cache.lock().unwrap().max_bytes = 10000;
+        for width in 1..=(CACHE_ENTRIES as u32 + 6) {
             client
                 .remember(
                     cache_key(Source::Aerial, bounds, width, 1),
@@ -826,7 +830,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(client.cache.lock().unwrap().entries.len(), 24);
+        assert_eq!(client.cache.lock().unwrap().entries.len(), CACHE_ENTRIES);
         let cancel = AtomicBool::new(true);
         assert!(client
             .request_shared(Source::Aerial, bounds, 30, 1, &cancel)
@@ -975,4 +979,53 @@ mod tests {
         .is_err());
         assert!(decode_response(jpeg, 64, 64, &AtomicBool::new(true)).is_err());
     }
+    #[test]
+    fn panning_grid_requests_downloads_only_missing_edge_tiles_over_real_http() {
+        use std::io::{Read,Write};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url=reqwest::Url::parse(&format!("http://{}/tile",listener.local_addr().unwrap())).unwrap();
+        let count=Arc::new(AtomicUsize::new(0));let seen=count.clone();
+        let stop=Arc::new(AtomicBool::new(false));let stopping=stop.clone();
+        let server=std::thread::spawn(move|| {
+            let deadline=std::time::Instant::now()+Duration::from_secs(60);
+            while !stopping.load(Ordering::Relaxed)&&std::time::Instant::now()<deadline {
+                match listener.accept() {
+                    Ok((mut socket,_))=>{
+                        socket.set_nonblocking(false).unwrap();
+                        socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                        let mut header=[0;4096];let _=socket.read(&mut header).unwrap();
+                        let number=seen.fetch_add(1,Ordering::Relaxed)+1;
+                        let image=image::RgbaImage::from_pixel(512,512,image::Rgba([number as u8,40,80,255]));
+                        let mut png=std::io::Cursor::new(Vec::new());
+                        image.write_to(&mut png,image::ImageFormat::Png).unwrap();let png=png.into_inner();
+                        write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",png.len()).unwrap();
+                        socket.write_all(&png).unwrap();
+                    }
+                    Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>std::thread::sleep(Duration::from_millis(1)),
+                    Err(e)=>panic!("{e}"),
+                }
+            }
+        });
+        let client=WmsClient::new().unwrap();client.cache.lock().unwrap().max_bytes=64*1024*1024;
+        let base=crate::map_request::Viewport{source:crate::map_request::Provider::Aerial,
+            bounds:Bounds{min_x:0.,min_y:0.,max_x:2048.,max_y:2048.},size:[2048,2048],logical_meters_per_pixel:Some(1.)};
+        let cancel=AtomicBool::new(false);
+        let fetch=|view:crate::map_request::Viewport| {
+            let mut progress=|_:Progress<'_>|Ok(());
+            tiled_progress(view.bounds,view.size[0],view.size[1],&cancel,|b,w,h| {
+                let raster=client.request_url(Source::Aerial,b,w,h,url.clone(),&cancel)?;
+                Ok(PdokRaster{bounds:b,width:w,height:h,rgba:raster.rgba.to_vec()})
+            },Some(&mut progress)).unwrap()
+        };
+        let first=fetch(base.buffered());
+        assert_eq!(count.load(Ordering::Relaxed),36);
+        let mut moved=base;moved.bounds.min_x+=512.;moved.bounds.max_x+=512.;
+        let second=fetch(moved.buffered());
+        assert_eq!(count.load(Ordering::Relaxed),42,"30 overlapping tiles must come from cache");
+        assert_eq!(first.get_pixel(532,20),second.get_pixel(20,20),"cached tiles must keep their world alignment");
+        stop.store(true,Ordering::Relaxed);server.join().unwrap();
+    }
+
 }
