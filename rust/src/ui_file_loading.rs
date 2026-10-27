@@ -287,11 +287,12 @@ impl SleufBaseApp {
             if matches!(purpose, LoadPurpose::GeoTiffs | LoadPurpose::Inputs { .. }) {
                 self.schedule_raster_previews();
             }
-            if matches!(purpose, LoadPurpose::MarXact | LoadPurpose::Inputs { .. }) {
-                self.zoom = 1.;
-                self.pan = egui::Vec2::ZERO;
-                if matches!(purpose, LoadPurpose::Inputs { .. }) {self.navigation.focus=None;self.navigation.viewport=None;}
-            }
+            // A deliberate import fits the new contents; background refreshes
+            // and layer visibility changes never reset the camera.
+            self.zoom = 1.;
+            self.pan = egui::Vec2::ZERO;
+            self.navigation.focus=None;
+            self.navigation.viewport=None;
         }
         let summary = match purpose {
             LoadPurpose::Dxf => format!("{added} DXF-overlays geladen."),

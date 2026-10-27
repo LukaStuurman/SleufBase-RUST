@@ -92,6 +92,7 @@ pub(super) struct Navigation {
     pub raster_opacity:Option<f32>,
     pub show_background:Option<bool>,
     pub pointer_tool:bool,
+    pub camera_changed:bool,
     pub focus: Option<Focus>,
     pub viewport: Option<Bounds>,
     pub marker: Option<([f64; 2], Instant)>,

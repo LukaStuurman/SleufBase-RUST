@@ -467,3 +467,99 @@ fn settings_use_original_tab_order_and_keep_the_footer_visible() {
         }
     }
 }
+
+fn shortcut(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+}
+fn layer_app() -> SleufBaseApp {
+    let mut app = SleufBaseApp::default();
+    for label in ["PS1", "PS2"] {
+        app.virtual_trenches.push(VirtualTrench::new(label.into(),
+            Vertex {x:1., y:2., z:None}, Vertex {x:3., y:2., z:None}, 1.).unwrap());
+    }
+    app
+}
+#[test]
+fn list_delete_and_backspace_remove_only_the_focused_selected_row() {
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        let ctx = egui::Context::default();
+        let mut app = layer_app();
+        frame(&mut app, &ctx, vec![]);
+        let out = frame(&mut app, &ctx, vec![]);
+        click(&mut app, &ctx, label_position(&out, "PS1"));
+        frame(&mut app, &ctx, vec![shortcut(key, egui::Modifiers::NONE)]);
+        assert_eq!(app.virtual_trenches.len(), 1);
+        assert_eq!(app.virtual_trenches[0].label, "PS2");
+        assert!(app.virtual_map.selected.is_none());
+        assert!(app.dirty);
+        frame(&mut app, &ctx, vec![shortcut(key, egui::Modifiers::NONE)]);
+        assert_eq!(app.virtual_trenches.len(), 1, "repeat must not remove the next row");
+    }
+}
+#[test]
+fn layer_shortcuts_ignore_dialogs_map_focus_and_modified_keys() {
+    for blocked in ["settings", "map", "ctrl", "unfocused"] {
+        let ctx = egui::Context::default();
+        let mut app = layer_app();
+        frame(&mut app, &ctx, vec![]);
+        let out = frame(&mut app, &ctx, vec![]);
+        click(&mut app, &ctx, label_position(&out, "PS1"));
+        match blocked {
+            "settings" => {app.open_settings(); frame(&mut app, &ctx, vec![]);},
+            "map" => {click(&mut app, &ctx, Pos2::new(1100., 500.));},
+            "unfocused" => {ctx.memory_mut(|m| {if let Some(id)=m.focused(){m.surrender_focus(id);}});},
+            _ => {},
+        }
+        let modifiers = if blocked == "ctrl" {egui::Modifiers::CTRL} else {egui::Modifiers::NONE};
+        frame(&mut app, &ctx, vec![shortcut(egui::Key::Delete, modifiers)]);
+        assert_eq!(app.virtual_trenches.len(), 2, "{blocked}");
+    }
+}
+
+#[test]
+fn backspace_edits_location_text_without_removing_the_selected_layer() {
+    let ctx = egui::Context::default();
+    let mut app = layer_app();
+    frame(&mut app, &ctx, vec![]);
+    let out = frame(&mut app, &ctx, vec![]);
+    click(&mut app, &ctx, label_position(&out, "PS1"));
+    app.open_location();
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::Text("abc".into())]);
+    let out = frame(&mut app, &ctx, vec![shortcut(egui::Key::Backspace, egui::Modifiers::NONE)]);
+    assert!(out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == "ab")));
+    assert_eq!(app.virtual_trenches.len(), 2);
+}
+#[test]
+fn physical_raster_and_klic_shortcuts_preserve_sources_and_ignore_duplicate_paths() {
+    for overlay in [false, true] {
+        for duplicate in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = SleufBaseApp::default();
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+            let label;
+            if overlay {
+                let path = root.join("cad-space/R2018-normal-ascii.dxf");
+                label = path.file_name().unwrap().to_str().unwrap().to_owned();
+                app.overlays.push(load_dxf(&path).unwrap());
+                if duplicate {app.overlays.push(app.overlays[0].clone());}
+            } else {
+                let path = root.join("rasters/gray16.tiff");
+                label = "gray16.tiff".to_owned();
+                app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
+                if duplicate {app.geotiffs.push(app.geotiffs[0].clone());}
+                app.raster_textures = vec![None;app.geotiffs.len()];
+                app.raster_errors = vec![None;app.geotiffs.len()];
+            }
+            let source = if overlay {app.overlays[0].path.clone()} else {app.geotiffs[0].path.clone()};
+            let bytes = std::fs::read(&source).unwrap();
+            frame(&mut app, &ctx, vec![]);
+            let out = frame(&mut app, &ctx, vec![]);
+            click(&mut app, &ctx, label_position(&out, &label));
+            frame(&mut app, &ctx, vec![shortcut(egui::Key::Delete, egui::Modifiers::NONE)]);
+            let remaining = if overlay {app.overlays.len()} else {app.geotiffs.len()};
+            assert_eq!(remaining, if duplicate {2} else {0});
+            assert_eq!(std::fs::read(source).unwrap(), bytes);
+        }
+    }
+}

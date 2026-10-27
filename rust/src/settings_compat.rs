@@ -91,9 +91,36 @@ impl ExportPreferences {
     }
 }
 
+/// Startup defaults are separate from a saved project's camera and layer choices.
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(default,deny_unknown_fields)]
+pub struct ViewerPreferences {
+    pub background_source:String,
+    pub use_background:bool,
+}
+impl Default for ViewerPreferences {
+    fn default()->Self {
+        let view=crate::project_view::ProjectView::default();
+        Self{background_source:view.background_source,use_background:view.use_background}
+    }
+}
+impl ViewerPreferences {
+    pub fn validate(&self)->Result<(),String>{
+        use crate::project_view::BackgroundProvider as B;
+        if matches!(B::from_label(&self.background_source),B::PdokAerial|B::Cadastral|B::OpenStreetMap){Ok(())}
+        else{Err("Kies een geldige achtergrond op het kaartscherm".into())}
+    }
+    pub fn project_view(&self)->crate::project_view::ProjectView{
+        crate::project_view::ProjectView{background_source:self.background_source.clone(),
+            use_background:self.use_background,..Default::default()}
+    }
+}
+
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MigratedSettings {
+    #[serde(default)]
+    pub viewer:ViewerPreferences,
     #[serde(default)]
     pub export_preferences:ExportPreferences,
     #[serde(default)]
@@ -111,6 +138,7 @@ pub struct MigratedSettings {
 impl Default for MigratedSettings {
     fn default()->Self {
         Self {
+            viewer:Default::default(),
             export_preferences:ExportPreferences::default(),
             map_export:Default::default(),
             dxf_label_gap:default_label_gap(),
@@ -132,6 +160,7 @@ impl MigratedSettings {
         crate::object_dxf::Options{label_gap:self.dxf_label_gap,..Default::default()}
     }
     pub fn validate(&self)->Result<(),String> {
+        self.viewer.validate()?;
         self.export_preferences.validate()?;
         self.map_export.validate()?;
         crate::rule_settings::validate(&self.object_rules)?;
@@ -199,6 +228,7 @@ pub fn from_legacy_json(content:&str)->Result<MigratedSettings,String> {
         .map_err(|e|format!("Instellingen JSON ongeldig: {e}"))?;
     let obj=value.as_object().ok_or("Instellingen moeten een JSON-object zijn")?;
     Ok(MigratedSettings{
+        viewer:Default::default(),
         export_preferences:ExportPreferences::from_legacy(&value),
         map_export:crate::map_batch::Settings{
             background:obj.get("map_export_background_source").and_then(Value::as_str)
@@ -318,5 +348,25 @@ mod project_override_tests{
         assert_eq!(base.export_preferences.template_cross_section_marker_diameter,0.05);assert!(!serde_json::to_string(&out).unwrap().contains("never copy"));
         assert_eq!(with_project_overrides(&base,&json!({"map_export_background_source":"cyclomedia_aerial"})).unwrap().map_export.background,"pdok");
         assert!(with_project_overrides(&base,&json!({"map_export_background_source":"future-provider"})).unwrap_err().contains("nog niet ondersteund"));
+    }
+}
+
+#[cfg(test)]
+mod viewer_preferences_tests {
+    use super::*;
+    #[test]
+    fn old_settings_without_viewer_keep_the_previous_startup_defaults() {
+        let mut json = serde_json::to_value(MigratedSettings::default()).unwrap();
+        json.as_object_mut().unwrap().remove("viewer");
+        let settings: MigratedSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(settings.viewer.project_view(), crate::project_view::ProjectView::default());
+        settings.validate().unwrap();
+    }
+    #[test]
+    fn unsupported_startup_backgrounds_are_rejected() {
+        for source in ["white", "not-a-provider", "cyclomedia_aerial"] {
+            let settings = ViewerPreferences {background_source:source.into(), use_background:true};
+            assert!(settings.validate().is_err());
+        }
     }
 }

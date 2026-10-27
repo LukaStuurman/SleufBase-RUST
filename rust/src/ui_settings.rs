@@ -58,6 +58,7 @@ pub(crate) struct Dialog {
     /// Caller supplies active view state; None leaves the viewer untouched.
     pub viewer: Option<ViewerDraft>,
     pub autosave_count: Option<usize>,
+    pub project_scoped: bool,
     /// Caller takes this request and opens its existing autosave selector.
     pub restore_autosave_requested: bool,
     rules: Vec<RuleRow>,
@@ -108,6 +109,7 @@ impl Dialog {
             error: String::new(),
             viewer: None,
             autosave_count: None,
+            project_scoped: false,
             restore_autosave_requested: false,
             rules: settings
                 .object_rules
@@ -161,14 +163,13 @@ impl Dialog {
         settings.kickthemap_material_choices = choices(&self.materials)?;
         settings.kickthemap_profile_extra_choices = choices(&self.extras)?;
         settings.marxact_name_mappings = mappings(&self.mappings)?;
-        settings.validate()?;
         if let Some(viewer) = &self.viewer {
-            use sleufbase_rust::project_view::BackgroundProvider;
-            if !matches!(BackgroundProvider::from_label(&viewer.background_source),
-                BackgroundProvider::PdokAerial | BackgroundProvider::Cadastral | BackgroundProvider::OpenStreetMap) {
-                return Err("Kies een geldige achtergrond op het kaartscherm".into());
-            }
+            settings.viewer = sleufbase_rust::settings_compat::ViewerPreferences {
+                background_source: viewer.background_source.clone(),
+                use_background: viewer.use_background,
+            };
         }
+        settings.validate()?;
         Ok(Saved {
             viewer: self.viewer.clone(),
             settings,
@@ -284,7 +285,7 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
                     ui.selectable_value(&mut viewer.background_source, source.label().into(), display(source));
                 }
             });
-        ui.small("SleufBase start standaard met PDOK Luchtfoto. Hiervoor is geen account nodig.");
+        ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
         ui.checkbox(&mut viewer.use_background, "Achtergrondkaart tonen op het kaartscherm");
         ui.separator();
     }
@@ -296,13 +297,24 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     };
     egui::ComboBox::from_id_salt("settings-export-background").selected_text(label(background))
         .show_ui(ui, |ui| {
-            for value in ["pdok", "cadastral", "osm"] {
+            for value in ["pdok", "cadastral", "osm", "white"] {
                 ui.selectable_value(background, value.into(), label(value));
             }
         });
     ui.add_space(12.);
     ui.checkbox(&mut state.draft.map_export.include_cad,
         "KLIC-overlays meenemen in kaartexport en sjabloonkaarten");
+    ui.add_space(12.);
+    super::theme::strong(ui,"A4-kaarten exporteren");
+    ui.horizontal(|ui| {
+        ui.label("Resolutie (DPI)");
+        ui.add(egui::DragValue::new(&mut state.draft.map_export.dpi).range(30..=600));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Schaal 1:");
+        ui.add(egui::DragValue::new(&mut state.draft.map_export.scale).range(1. ..=100_000.).speed(1.));
+    });
+    ui.small("Deze schaal en resolutie gelden voor Acties → Export kaarten.");
 }
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     let p = &mut state.draft.export_preferences;
@@ -480,6 +492,9 @@ pub(crate) fn show(
                                 );
                             }
                         });
+                        if state.project_scoped {
+                            ui.small("Opslaan past deze instellingen toe op dit project en bewaart ze als standaard. Sla ook het project op om zijn instellingen te behouden. Back-ups gelden voor de hele app.");
+                        }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
                             Category::Dxf => "Stel de proefsleufweergave, kleuren en gekoppelde rasters in.",
@@ -872,4 +887,37 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn maps_tab_exposes_offline_export_and_resolution_at_normal_window_sizes() {
+        for size in [egui::vec2(1200.,760.), egui::vec2(1500.,930.), egui::vec2(1920.,1080.)] {
+            let ctx = egui::Context::default();
+            let mut dialog = Some(Dialog::new(&MigratedSettings::default(), &AutosaveSettings::default()));
+            dialog.as_mut().unwrap().project_scoped = true;
+            let frame = |dialog: &mut Option<Dialog>, events| ctx.run(egui::RawInput {
+                screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)), events, ..Default::default()
+            }, |ctx| {assert!(show(ctx,dialog,|_,_| panic!("render must not save")).is_none());});
+            frame(&mut dialog,vec![]);
+            let output=frame(&mut dialog,vec![]);
+            let position=|out:&egui::FullOutput,label:&str| out.shapes.iter().find_map(|s|
+                if let egui::Shape::Text(t)=&s.shape {(t.galley.text()==label).then(|| t.galley.rect.translate(t.pos.to_vec2()).center())}else{None})
+                .unwrap_or_else(||panic!("Missing {label} at {size:?}"));
+            for label in ["Resolutie (DPI)","Schaal 1:","Opslaan","Annuleren"] {
+                let p=position(&output,label);
+                assert!(p.x>0. && p.x<size.x && p.y>0. && p.y<size.y);
+            }
+            let click=|dialog:&mut Option<Dialog>,pos| {for pressed in [true,false] {
+                frame(dialog,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                    pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);
+            }};
+            click(&mut dialog,position(&output,"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)"));
+            let popup=frame(&mut dialog,vec![]);
+            click(&mut dialog,position(&popup,"Wit (zonder internet)"));
+            assert_eq!(dialog.as_ref().unwrap().draft.map_export.background,"white");
+            let saved=dialog.as_mut().unwrap().try_save(&mut |settings,_| {
+                assert_eq!(settings.map_export.background,"white"); Ok(())
+            }).unwrap();
+            assert_eq!(saved.settings.map_export.background,"white");
+        }
+    }
+
 }

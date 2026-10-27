@@ -6,6 +6,7 @@ use theme::{APP_BG, INPUT_BG, MUTED, SURFACE_ALT};
 pub(super) struct State {
     pub settings_scan: Option<sleufbase_rust::recovery::ScanWorker>,
     pub settings_generation: Option<u64>,
+    focused_layer: Option<(egui::Id, bool)>,
     pub installed: bool,
     pub extended: bool,
     pub coords: String,
@@ -26,6 +27,7 @@ impl Default for State {
         Self {
             settings_scan: None,
             settings_generation: None,
+            focused_layer: None,
             installed: false,
             extended: false,
             coords: "RD: -".into(),
@@ -360,6 +362,7 @@ impl SleufBaseApp {
         }
     }
     pub(super) fn show_original_sidebar(&mut self, ctx: &egui::Context) {
+        self.shell.focused_layer = None;
         let width = (ctx.screen_rect().width().max(1200.) * 0.255).clamp(360., 400.);
         egui::SidePanel::left("original-sidebar").default_width(width).min_width(340.)
             .frame(egui::Frame::new().fill(APP_BG).inner_margin(egui::Margin { left: 18, right: 14, top: 18, bottom: 18 }))
@@ -464,7 +467,11 @@ impl SleufBaseApp {
                                 label.as_ref(),
                             );
                             if response.clicked() || response.secondary_clicked() {
+                                response.request_focus();
                                 selected = Some((false, i));
+                            }
+                            if response.has_focus() && self.raster_points.selected.as_ref() == Some(&raster.path) {
+                                self.shell.focused_layer = Some((response.id, false));
                             }
                             contexts.push((false,i,response.clone()));
                             if let Some(error) = self.raster_errors.get(i).and_then(|e| e.as_ref())
@@ -476,7 +483,11 @@ impl SleufBaseApp {
                             let response =
                                 tiff_row(ui, self.virtual_map.selected == Some(i), &trench.label);
                             if response.clicked() || response.secondary_clicked() {
+                                response.request_focus();
                                 selected = Some((true, i));
+                            }
+                            if response.has_focus() && self.virtual_map.selected == Some(i) {
+                                self.shell.focused_layer = Some((response.id, false));
                             }
                             contexts.push((true,i,response));
                         }
@@ -561,13 +572,16 @@ impl SleufBaseApp {
                                 .file_name()
                                 .unwrap_or_default()
                                 .to_string_lossy();
-                            if ui
+                            let response = ui
                                 .selectable_label(
                                     self.project_view.selected_dxf.as_ref() == Some(&overlay.path),
                                     label,
-                                )
-                                .clicked()
-                            {
+                                );
+                            if response.has_focus() && self.project_view.selected_dxf.as_ref() == Some(&overlay.path) {
+                                self.shell.focused_layer = Some((response.id, true));
+                            }
+                            if response.clicked() {
+                                response.request_focus();
                                 self.project_view.selected_dxf = Some(overlay.path.clone());
                                 self.dxf_selection = None;
                                 self.dirty = true;
@@ -576,13 +590,44 @@ impl SleufBaseApp {
                     }
                 });
             if ui.button("Verwijder geselecteerde KLIC").clicked() {
-                if let Some(path) = self.project_view.selected_dxf.take() {
-                    self.overlays.retain(|o| o.path != path);
-                    self.dxf_selection = None;
-                    self.dirty = true;
-                }
+                self.remove_shell_overlay();
             }
         });
+    }
+
+    pub(super) fn handle_layer_shortcuts(&mut self, ctx: &egui::Context) {
+        let Some((id, overlay)) = self.shell.focused_layer else { return; };
+        // List shortcuts are local to the focused selected row. Text editors,
+        // menus, floating dialogs and a click in the map must retain their keys.
+        let blocked = ctx.memory(|m| m.focused() != Some(id) || m.any_popup_open()
+            || m.areas().visible_layer_ids().iter().any(|layer|
+                matches!(layer.order, egui::Order::Middle | egui::Order::Foreground)));
+        if blocked || self.trench_editor.is_some() || ctx.input(|i| i.modifiers != egui::Modifiers::NONE) { return; }
+        // Project files can contain duplicate paths. A path selection cannot
+        // identify one such row, so never delete several layers with one key.
+        if overlay {
+            if self.project_view.selected_dxf.as_ref().is_some_and(|path|
+                self.overlays.iter().filter(|o| &o.path == path).count() != 1) { return; }
+        } else if self.virtual_map.selected.is_none() {
+            if self.raster_points.selected.as_ref().is_some_and(|path|
+                self.geotiffs.iter().filter(|r| &r.path == path).count() != 1) { return; }
+        }
+        let remove = ctx.input_mut(|input|
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+            || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace));
+        if remove {
+            if overlay { self.remove_shell_overlay(); } else { self.remove_shell_tiff(); }
+            ctx.memory_mut(|m| m.surrender_focus(id));
+            self.shell.focused_layer = None;
+        }
+    }
+
+    fn remove_shell_overlay(&mut self) {
+        if let Some(path) = self.project_view.selected_dxf.take() {
+            self.overlays.retain(|o| o.path != path);
+            self.dxf_selection = None;
+            self.dirty = true;
+        }
     }
 
     fn remove_shell_tiff(&mut self) {
