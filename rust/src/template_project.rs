@@ -536,10 +536,14 @@ mod tests {
         let jobs=[sample_job(17)];
         let mut opts=Options::default();
         opts.choices=suggest(&jobs,&[raster(Some(17))],&[]);
+        // Empty means the built-in template, so validation reaches the raster.
         assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
-            .err().unwrap().contains("DXF-sjabloon"));
+            .err().unwrap().contains("GeoTIFF niet gevonden"));
         let dir=tempfile::tempdir().unwrap();
         opts.template=dir.path().join("template.dxf");
+        // A user-selected missing file must never silently fall back.
+        assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
+            .err().unwrap().contains("DXF-sjabloon"));
         std::fs::write(&opts.template,b"dummy").unwrap();
         assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
             .err().unwrap().contains("GeoTIFF niet gevonden"));
