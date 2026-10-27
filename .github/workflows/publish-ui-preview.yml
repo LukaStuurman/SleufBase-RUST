@@ -13,7 +13,11 @@ permissions:
 
 jobs:
   release:
-    if: ${{ false }} # Publication held until map follow-up is verified.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
       - name: Check that the completed build is still main

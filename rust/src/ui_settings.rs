@@ -271,25 +271,66 @@ fn rule_fields(ui: &mut egui::Ui, rows: &mut Vec<RuleRow>) {
         });
     }
 }
+fn checkbox(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+    ui.scope(|ui| {
+        let style=ui.style_mut();
+        style.spacing.icon_width=18.;style.spacing.icon_width_inner=12.;
+        style.spacing.icon_spacing=9.;style.spacing.interact_size.y=30.;
+        for visual in [&mut style.visuals.widgets.inactive,&mut style.visuals.widgets.hovered,
+            &mut style.visuals.widgets.active] {
+            visual.bg_fill=egui::Color32::WHITE;
+            visual.weak_bg_fill=egui::Color32::WHITE;
+            visual.bg_stroke=egui::Stroke::new(1.5_f32,egui::Color32::from_rgb(83,99,122));
+            visual.corner_radius=4.into();
+            visual.fg_stroke=egui::Stroke::new(2_f32,egui::Color32::from_rgb(25,66,110));
+        }
+        ui.checkbox(value,label)
+    }).inner
+}
+fn section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new().fill(egui::Color32::WHITE)
+        .stroke(egui::Stroke::new(1_f32,egui::Color32::from_rgb(208,218,231)))
+        .corner_radius(10).inner_margin(16).show(ui,|ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y=10.;
+            super::theme::strong(ui,title);
+            ui.add_space(4.);
+            content(ui);
+        });
+}
+fn viewer_fields(ui: &mut egui::Ui, viewer: &mut ViewerDraft) {
+    use sleufbase_rust::project_view::BackgroundProvider as Background;
+    let display=|source:Background|match source {
+        Background::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",
+        Background::Cadastral=>"PDOK kadastrale kaart",Background::OpenStreetMap=>"OpenStreetMap",
+        _=>"Onbekende achtergrond",
+    };
+    egui::ComboBox::from_id_salt("settings-viewer-background")
+        .selected_text(display(Background::from_label(&viewer.background_source))).show_ui(ui,|ui| {
+            for source in [Background::PdokAerial,Background::Cadastral,Background::OpenStreetMap] {
+                ui.selectable_value(&mut viewer.background_source,source.label().into(),display(source));
+            }
+        });
+    checkbox(ui,&mut viewer.use_background,"Achtergrondkaart tonen op het kaartscherm");
+    ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
+}
 fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
-    if let Some(viewer) = &mut state.viewer {
-        use sleufbase_rust::project_view::BackgroundProvider as Background;
-        super::theme::strong(ui,"Achtergrond op het kaartscherm");
-        let display=|source:Background|match source {
-            Background::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",Background::Cadastral=>"PDOK kadastrale kaart",
-            Background::OpenStreetMap=>"OpenStreetMap",_=>"Onbekende achtergrond",
-        };
-        egui::ComboBox::from_id_salt("settings-viewer-background")
-            .selected_text(display(Background::from_label(&viewer.background_source))).show_ui(ui, |ui| {
-                for source in [Background::PdokAerial, Background::Cadastral, Background::OpenStreetMap] {
-                    ui.selectable_value(&mut viewer.background_source, source.label().into(), display(source));
-                }
+    if ui.available_width()>=1000. && state.viewer.is_some() {
+        ui.columns(2,|columns| {
+            section(&mut columns[0],"Achtergrond op het kaartscherm",|ui| {
+                viewer_fields(ui,state.viewer.as_mut().unwrap());
             });
-        ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
-        ui.checkbox(&mut viewer.use_background, "Achtergrondkaart tonen op het kaartscherm");
-        ui.separator();
+            section(&mut columns[1],"Achtergrond voor kaartuitvoer en sjabloonkaarten",|ui| export_map_fields(ui,state));
+        });
+    } else {
+        if let Some(viewer)=&mut state.viewer {
+            section(ui,"Achtergrond op het kaartscherm",|ui| viewer_fields(ui,viewer));
+            ui.add_space(12.);
+        }
+        section(ui,"Achtergrond voor kaartuitvoer en sjabloonkaarten",|ui| export_map_fields(ui,state));
     }
-    super::theme::strong(ui,"Achtergrond voor kaartuitvoer en sjabloonkaarten");
+}
+fn export_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     let background = &mut state.draft.map_export.background;
     let label = |value: &str| match value {
         "pdok" => "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)", "osm" => "OpenStreetMap", "cadastral" => "PDOK kadastrale kaart",
@@ -302,7 +343,7 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             }
         });
     ui.add_space(12.);
-    ui.checkbox(&mut state.draft.map_export.include_cad,
+    checkbox(ui, &mut state.draft.map_export.include_cad,
         "KLIC-overlays meenemen in kaartexport en sjabloonkaarten");
     ui.add_space(12.);
     super::theme::strong(ui,"A4-kaarten exporteren");
@@ -317,8 +358,8 @@ fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     ui.small("Deze schaal en resolutie gelden voor Acties → Export kaarten.");
 }
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    section(ui,"Weergave proefsleuf in kadastrale DXF-export",|ui| {
     let p = &mut state.draft.export_preferences;
-    super::theme::strong(ui,"Weergave proefsleuf in kadastrale DXF-export");
     let mode_label = |mode: &str| match mode {
         "polygon" => "Witte vlakken per TIFF",
         "centerline" => "Detecteer proefsleuf als polyline (breedte 0.6 m)",
@@ -335,11 +376,15 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
                 ui.selectable_value(&mut p.dxf_trench_export_mode, key.into(), label);
             }
         });
-    ui.checkbox(
+    checkbox(ui,
         &mut p.include_tiffs_in_dxf_export,
         "GeoTIFF-afbeeldingen meenemen in DXF-export",
     );
     ui.small("De export zet hiervoor kopieën van de TIFFs in een map naast het DXF-bestand.");
+    });
+    ui.add_space(12.);
+    section(ui,"Labels en kleuren",|ui| {
+    let p = &mut state.draft.export_preferences;
     ui.horizontal(|ui| {
         ui.label("Afstand van proefsleufnaam tot hartlijn (meter)");
         ui.add(egui::DragValue::new(&mut state.draft.dxf_label_gap).range(0.0..=100.).speed(0.1));
@@ -353,35 +398,37 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             ui.text_edit_singleline(value);
         });
     }
+    });
 }
 fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
-    super::theme::strong(ui,"Proefsleuven & sjabloon");
-    ui.small("Ingebouwd in de app en automatisch meegeleverd.");
+    super::theme::strong(ui,"Dwarsprofielen");
     let p = &mut state.draft.export_preferences;
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_include_cross_sections,
         "Dwarsprofielen automatisch maken vanuit KickTheMap",
     );
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_generate_reverse_cross_section_sheet,
         "Ook een omgekeerde versie van het sjabloon exporteren",
     );
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_show_profile_direction,
         "Toon 0-punt RD in afstandsband en referentiepunt op sjabloonkaart",
     );
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_enable_maaiveld_edit_points,
         "Kaartpunten gebruiken voor maaiveldtekst en kleur",
     );
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_avoid_multileader_collisions,
         "Leidingverwijzingen binnen het profiel houden en overlap beperken",
     );
-    ui.checkbox(
+    checkbox(ui,
         &mut p.template_clip_cross_section_markers_to_profile,
         "Verwijzingscirkels afknippen op de profielgrenzen",
     );
+    ui.separator();
+    super::theme::strong(ui,"Symbolen en opmaak");
     ui.horizontal(|ui| {
         ui.label("Diameter verwijzingssymbool dwarsprofiel (meter)");
         ui.add(
@@ -395,7 +442,11 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         ui.text_edit_singleline(&mut p.template_cross_section_diameter_text);
     });
     egui::ComboBox::from_label("Opdrachtgeverlogo op Blad1")
-        .selected_text(&p.template_client_logo_preset)
+        .selected_text(match p.template_client_logo_preset.as_str() {
+            ""=>"Geen", "brabant_water"=>"Brabant Water", "enexis"=>"Enexis", "wml"=>"WML",
+            "hurkmans"=>"Hurkmans groep", "hanab"=>"Hanab", "bgm"=>"BGM", "apk"=>"APK",
+            "custom"=>"Eigen bestand", _=>"Onbekend logo",
+        })
         .show_ui(ui, |ui| {
             for (key, label) in [
                 ("", "Geen"),
@@ -425,10 +476,11 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         });
     }
     ui.separator();
-    ui.checkbox(&mut state.draft.template_auto_fill_bgt_fysiek_voorkomen,
+    super::theme::strong(ui,"Automatische uitvoer");
+    checkbox(ui, &mut state.draft.template_auto_fill_bgt_fysiek_voorkomen,
         "Maaiveld automatisch invullen vanuit BGT");
     ui.small("Vult midden, links en rechts vanuit BGT. Handmatige tekst blijft staan.");
-    ui.checkbox(&mut state.draft.template_auto_export_discipline_excel,
+    checkbox(ui, &mut state.draft.template_auto_export_discipline_excel,
         "Automatisch discipline-Excel naast sjabloon-DXF");
     ui.collapsing("Eigen DXF-sjabloon", |ui| {
         ui.horizontal(|ui| {
@@ -456,14 +508,16 @@ pub(crate) fn show(
     let title = if state.words { "KickTheMap – woordenlijst" } else { "Instellingen" };
     egui::Window::new(title)
         .id(egui::Id::new("sleufbase-settings-dialog"))
-        .default_pos(viewport.min + egui::vec2(12., 12.))
+        .fixed_pos(viewport.min + egui::vec2(12.,12.))
+        .fixed_size(egui::vec2((viewport.width()-56.).max(180.),(viewport.height()-100.).max(140.)))
+        // Position and size already reserve the frame/title margins. Automatic
+        // Area constraints otherwise shift the first measured frames on hover.
+        .constrain(false)
         .open(&mut open)
-        .resizable(true)
-        .default_width((viewport.width() - 40.).max(200.))
-        .default_height((viewport.height() - 76.).max(160.))
-        .max_width((viewport.width() - 32.).max(200.))
-        .max_height((viewport.height() - 64.).max(160.))
+        .movable(false)
+        .resizable(false)
         .show(ctx, |ui| {
+            ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
             // Footer is outside the scroll area, preserving access at every category.
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
@@ -509,13 +563,13 @@ pub(crate) fn show(
                         .max_height(ui.available_height())
                         .show(ui, |ui| {
                             if state.words {
-                                rule_fields(ui, &mut state.rules);
+                                section(ui,"Woorden, lagen en profielnamen",|ui| rule_fields(ui,&mut state.rules));
                                 return;
                             }
                             match state.category {
-                                Category::Backups => {
+                                Category::Backups => section(ui,"Automatisch opslaan en herstel",|ui| {
                                     super::theme::strong(ui,"Autosave");
-                                    ui.checkbox(
+                                    checkbox(ui,
                                         &mut state.autosave.enabled,
                                         "Automatisch opslaan",
                                     );
@@ -541,11 +595,11 @@ pub(crate) fn show(
                                     if ui.button("Autosave laden…").clicked() {
                                         state.restore_autosave_requested = true;
                                     }
-                                }
+                                }),
                                 Category::Maps => map_fields(ui, state),
                                 Category::Dxf => dxf_fields(ui, state),
-                                Category::Trenches => trench_fields(ui, state),
-                                Category::KickTheMap => {
+                                Category::Trenches => section(ui,"Proefsleuven en uitvoer",|ui| trench_fields(ui,state)),
+                                Category::KickTheMap => section(ui,"Keuzes en naamkoppelingen",|ui| {
                                     super::theme::strong(ui,"KickTheMap woordenlijst");
                                     ui.label("Beheer woorden/codes, DXF-lagen, kleuren en dwarsprofielen in een ruime aparte weergave.");
                                     if ui.button("Woordenlijst beheren…").clicked() {
@@ -583,7 +637,7 @@ pub(crate) fn show(
                                     if ui.button("Naamkoppeling toevoegen").clicked() {
                                         state.mappings.push((String::new(), String::new()));
                                     }
-                                }
+                                }),
                             }
                         });
                 });
@@ -917,6 +971,56 @@ mod tests {
                 assert_eq!(settings.map_export.background,"white"); Ok(())
             }).unwrap();
             assert_eq!(saved.settings.map_export.background,"white");
+        }
+    }
+
+    #[test]
+    fn settings_geometry_does_not_grow_when_only_the_mouse_moves() {
+        for (size,dpi) in [egui::vec2(680.,420.),egui::vec2(1200.,760.),egui::vec2(1500.,930.)]
+            .into_iter().flat_map(|size| [1.,1.25,2.].map(move|dpi|(size,dpi))) {
+            for (category,words) in Category::ALL.into_iter().map(|c|(c,false))
+                .chain(std::iter::once((Category::KickTheMap,true))) {
+                let ctx=egui::Context::default();
+                super::super::theme::install(&ctx);
+                ctx.set_pixels_per_point(dpi);
+                let mut dialog=Some(Dialog::new(&MigratedSettings::default(),&AutosaveSettings::default()));
+                dialog.as_mut().unwrap().category=category;
+                dialog.as_mut().unwrap().words=words;
+                dialog.as_mut().unwrap().viewer=Some(ViewerDraft{background_source:"OpenStreetMap".into(),use_background:true});
+                dialog.as_mut().unwrap().project_scoped=true;
+                let frame=|dialog:&mut Option<Dialog>,events| {ctx.run(egui::RawInput{
+                    screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),events,..Default::default()
+                },|ctx| {show(ctx,dialog,|_,_|panic!("hover saved settings"));})};
+                for _ in 0..2 {frame(&mut dialog,vec![]);}
+                let rect=|| egui::AreaState::load(&ctx,egui::Id::new("sleufbase-settings-dialog")).unwrap().rect();
+                let before=rect();
+                for i in 0..16 {
+                    frame(&mut dialog,vec![egui::Event::PointerMoved(egui::pos2(20.+i as f32*31.,50.+(i%7) as f32*43.))]);
+                    assert_eq!(rect(),before,"hover changed {category:?} at {size:?}");
+                }
+                assert!(before.left()>=0.&&before.top()>=0.&&before.right()<=size.x&&before.bottom()<=size.y,
+                    "settings outside viewport: {before:?} / {size:?}");
+            }
+        }
+    }
+    #[test]
+    fn checkbox_icons_have_visible_outlines_and_both_states_toggle() {
+        let ctx=egui::Context::default();let mut checked=false;let mut target=None;
+        let frame=|value:&mut bool,events,target:&mut Option<egui::Rect>|ctx.run(egui::RawInput{
+            screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(500.,200.))),events,..Default::default()
+        },|ctx|{egui::CentralPanel::default().show(ctx,|ui|{*target=Some(checkbox(ui,value,"Zichtbare keuze").rect);});});
+        frame(&mut checked,vec![],&mut target);
+        for expected in [true,false] {
+            let pos=target.unwrap().center();
+            for pressed in [true,false] {
+                frame(&mut checked,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                    pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}],&mut target);
+            }
+            assert_eq!(checked,expected);
+            let out=frame(&mut checked,vec![],&mut target);
+            assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Rect(r)
+                if r.rect.width()>=17.&&r.rect.width()<=20.&&r.stroke.width>=1.
+                    &&r.stroke.color.r()<150&&r.stroke.color.b()<180)),"checkbox outline missing");
         }
     }
 

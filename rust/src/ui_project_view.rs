@@ -8,7 +8,7 @@ pub(super) fn capture_camera(view:&raster_point_ui::View)->Camera{
 /// Apply once after loading; later frames retain normal interactive navigation.
 pub(super) fn restore_camera(view:&ProjectView,navigation:&mut location_ui::Navigation,zoom:&mut f64,pan:&mut egui::Vec2){
     navigation.focus=view.camera.as_ref().map(|c|location_ui::Focus{center:c.center,meters_per_pixel:c.meters_per_pixel});
-    navigation.viewport=None;*zoom=1.;*pan=egui::Vec2::ZERO;
+    navigation.viewport=None;navigation.fit_bounds=None;*zoom=1.;*pan=egui::Vec2::ZERO;
 }
 pub(super) fn export_progress(ctx:&egui::Context,worker:&sleufbase_rust::project_exchange_worker::Worker){
     if !worker.is_busy(){return;}

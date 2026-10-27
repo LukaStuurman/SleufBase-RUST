@@ -95,6 +95,7 @@ pub(super) struct Navigation {
     pub camera_changed:bool,
     pub focus: Option<Focus>,
     pub viewport: Option<Bounds>,
+    pub fit_bounds: Option<Bounds>,
     pub marker: Option<([f64; 2], Instant)>,
 }
 impl Navigation {

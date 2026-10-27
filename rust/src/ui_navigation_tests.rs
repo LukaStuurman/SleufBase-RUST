@@ -364,6 +364,18 @@ fn navigation_progressive_background_finishes_instead_of_cancelling_after_first_
     }
     assert_eq!(count.load(Ordering::Relaxed), 1);
     assert!(app.pdok_texture.is_some());
+    let before=app.project_view.camera.clone().unwrap();
+    let mut events=vec![button(egui::pos2(900.,400.),egui::PointerButton::Primary,true),
+        vec![egui::Event::PointerMoved(egui::pos2(1020.,480.))],
+        button(egui::pos2(1020.,480.),egui::PointerButton::Primary,false)];
+    events.push(Vec::new());
+    for events in events {
+        let _=ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),events,..Default::default()},|ctx|app.render(ctx));
+    }
+    std::thread::sleep(Duration::from_millis(80));
+    let _=ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),..Default::default()},|ctx|app.render(ctx));
+    assert_ne!(app.project_view.camera.as_ref().unwrap().center,before.center);
+    assert_eq!(count.load(Ordering::Relaxed),1,"small pan must reuse completed background");
 }
 
 #[test]

@@ -4,6 +4,11 @@ Deze Windows-preview verbetert de kaartbediening en de instellingen. De originel
 
 ## Verbeteringen
 
+- Schuiven hergebruikt kaarttegels op een vast wereldraster met een buffer rondom de viewport. Alleen ontbrekende randtegels hoeven opnieuw van het netwerk te komen; het vorige complete beeld blijft staan tijdens aanvullen.
+- Dubbelklik op een fysieke of virtuele proefsleuf in de lijst zoomt naar die sleuf, inclusief gedraaide rasters.
+- Het instellingenvenster blijft stabiel tijdens muisbewegingen. Alle tabs hebben gegroepeerde velden en duidelijk omlijnde checkboxen.
+- **KickTheMap → Inloggen…** opent een apart formulier met e-mail, afgeschermd wachtwoord, lokale validatie en browseraanmelding als alternatief.
+
 - De kaart vult de volledige viewport: voortgang van achtergrondtegels verandert de camera niet meer en annuleert de overige tegels niet.
 - Zoomen blijft bij de cursor; pannen, laagzichtbaarheid en vensterformaat behouden de kaartpositie. RD-coördinaten blijven nauwkeurig.
 - Kaartachtergrond en zichtbaarheid zijn te bewaren als standaard voor herstart en nieuwe projecten; opgeslagen projecten behouden hun eigen weergave.

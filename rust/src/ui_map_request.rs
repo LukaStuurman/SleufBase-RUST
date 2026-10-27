@@ -6,6 +6,7 @@ pub(super) struct State {
     worker: Option<map_request::Worker>,
     clock: std::time::Instant,
     source: Option<Provider>,
+    complete_image: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -14,6 +15,7 @@ impl Default for State {
             worker: None,
             clock: std::time::Instant::now(),
             source: None,
+            complete_image: false,
         }
     }
 }
@@ -24,6 +26,7 @@ impl State {
             worker.cancel();
         }
         self.source = None;
+        self.complete_image = false;
     }
     #[cfg(test)]
     pub(super) fn with_worker(worker: map_request::Worker) -> Self {
@@ -87,6 +90,7 @@ impl SleufBaseApp {
             self.osm_texture = None;
             self.osm_bounds = None;
             self.map_requests.source = source;
+            self.map_requests.complete_image = false;
         }
         let desired = source.map(|s| viewport(view, s));
         let dragging = view.response.dragged()
@@ -158,6 +162,9 @@ impl SleufBaseApp {
             return;
         }
         if !terminal {
+            // Keep the last complete image visible while missing edge tiles
+            // arrive; replacing it with a partial frame makes every pan flash.
+            if self.map_requests.complete_image { return; }
             self.map_requests.scheduler.preview(request);
         }
         if let Some((completed, total)) = progress {
@@ -200,6 +207,7 @@ impl SleufBaseApp {
                     };
                 }
                 if terminal {
+                    self.map_requests.complete_image = true;
                     self.map_requests.scheduler.complete(request, true);
                     self.message = if pixels.stale_cache {
                         "Kaart geladen uit verouderde cache; netwerk niet beschikbaar".into()
@@ -287,12 +295,11 @@ mod tests {
         let first = scheduler.due(Duration::from_millis(45)).unwrap();
         scheduler.complete(first, true);
         frame(&ctx, [260., 200.], Provider::Aerial, |_, v| {
-            assert!(scheduler
+            assert!(!scheduler
                 .update(Some(v), false, Duration::from_millis(50))
                 .unwrap());
         });
-        let resized = scheduler.due(Duration::from_millis(95)).unwrap();
-        scheduler.complete(resized, true);
+        assert!(scheduler.due(Duration::from_millis(95)).is_none(),"buffer covers the resized viewport");
         frame_at_scale(&ctx, [260., 200.], Provider::Aerial, 1., |_, v| {
             assert_eq!(v.logical_meters_per_pixel, Some(1.));
             assert!(scheduler
@@ -411,4 +418,32 @@ mod tests {
         assert!(app.pdok_bounds.is_none());
         assert!(app.osm_bounds.is_none());
     }
+    #[test]
+    fn filling_missing_tiles_retains_the_previous_complete_texture() {
+        let (sent,received)=mpsc::sync_channel(1);
+        let worker=map_request::Worker::with_fetcher(move |request,cancel,publish| {
+            publish(map_request::Pixels{bounds:request.view.bounds,width:1,height:1,
+                rgba:vec![255,0,0,255],stale_cache:false},1,3)?;
+            sent.send(()).unwrap();
+            while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err("cancelled".into())
+        }).unwrap();
+        let ctx=egui::Context::default();
+        let mut app=SleufBaseApp {map_requests:State::with_worker(worker),..Default::default()};
+        let old=Bounds{min_x:1.,min_y:2.,max_x:3.,max_y:4.};
+        app.map_requests.source=Some(Provider::Aerial);app.map_requests.complete_image=true;
+        app.pdok_bounds=Some(old);
+        app.pdok_texture=Some(ctx.load_texture("complete",egui::ColorImage::new([1,1],Color32::BLUE),Default::default()));
+        frame(&ctx,[180.,140.],Provider::Aerial,|v,_|app.update_map_background(v));
+        app.map_requests.clock-=Duration::from_millis(100);
+        frame(&ctx,[180.,140.],Provider::Aerial,|v,_|app.update_map_background(v));
+        received.recv_timeout(Duration::from_secs(2)).unwrap();
+        app.poll_map_background(&ctx);
+        assert_eq!(app.pdok_bounds,Some(old));
+        assert!(app.map_requests.complete_image);
+        app.map_requests.invalidate();
+    }
+
 }
