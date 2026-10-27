@@ -215,7 +215,7 @@ pub(crate) fn show(
             .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]).show(ui,|ui|{
         ui.heading("1. Project en sjabloon");
         let field_width=(ui.available_width()-110.).max(80.);
-        egui::Grid::new("template-identity").num_columns(2).show(ui,|ui|{
+        egui::Grid::new("template-identity").num_columns(2).min_col_width(90.).show(ui,|ui|{
             ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut d.state.project).desired_width(field_width));ui.end_row();
             ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(field_width));ui.end_row();
         });

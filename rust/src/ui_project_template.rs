@@ -129,7 +129,7 @@ impl SleufBaseApp {
                             }
                         });
                         let field_width=(ui.available_width()-110.).max(80.);
-                        egui::Grid::new("project-template-identity").num_columns(2).show(ui,|ui|{
+                        egui::Grid::new("project-template-identity").num_columns(2).min_col_width(90.).show(ui,|ui|{
                             ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));ui.end_row();
                             ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));ui.end_row();
                         });

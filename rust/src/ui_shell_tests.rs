@@ -733,7 +733,9 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
             }
             let mut out=None;for _ in 0..4{out=Some(ctx.run(input(size),|ctx|app.render(ctx)));}
             let out=out.unwrap();let label=label_position(&out,"Tekenaar");let value=label_position(&out,"Tekenaar-veld-controle");
-            assert!(label.x<value.x);assert!((label.y-value.y).abs()<3.,"{physical} {size:?}: {label:?} {value:?}");
+            assert!(label.x<value.x);
+            for text in ["Projectnaam","Tekenaar"]{assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()==text&&t.galley.rows.len()==1)),"identity label must stay on one line: {text}");}
+            assert!((label.y-value.y).abs()<3.,"{physical} {size:?}: {label:?} {value:?}");
             label_position(&out,"Sjabloon: ingebouwd SleufBase-sjabloon");
             assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Eigen DXF-sjabloon kiezen…")));
             assert!(app.template_job.is_none());
