@@ -283,6 +283,7 @@ impl SleufBaseApp {
                         "Browseraanmelding nog niet bruikbaar: {err}. Je kunt opnieuw proberen."
                     ),
                 }
+                self.message=self.browser_ui.status.clone();
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.browser_ui.capturing=None;

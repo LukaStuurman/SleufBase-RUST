@@ -126,7 +126,7 @@ fn tiff_row(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
             INK
         }))
         .selected(selected)
-        .frame(true)
+        .frame(false)
         .stroke(Stroke::NONE)
         .corner_radius(0)
         .min_size(egui::vec2(ui.available_width(), 18.))
@@ -459,7 +459,7 @@ impl SleufBaseApp {
                         ui.set_min_size(egui::vec2(ui.available_width(), list_height));
                         ui.spacing_mut().button_padding = egui::Vec2::ZERO;
                         ui.spacing_mut().interact_size.y = 18.;
-                        ui.spacing_mut().item_spacing.y = 3.;
+                        ui.spacing_mut().item_spacing.y = 0.;
                         for (i, raster) in self.geotiffs.iter().enumerate() {
                             let label = raster
                                 .path

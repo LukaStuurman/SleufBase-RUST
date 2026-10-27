@@ -193,7 +193,7 @@ fn template_photos_are_persistently_bundled_without_replacing_tiff_or_map() {
     let options=Options {server_mode:sleufbase_rust::template_server::Mode::Offline,
         overview_settings:sleufbase_rust::cadastral_overview::template_defaults(),
         paired:false,
-        template:reference.template,
+        template:PathBuf::new(),
         include_bgt:false,include_cadastral:false,include_cad:false,
         choices:vec![Choice {label:None,legacy_slot:None,manual_scale:None,
             source:Source::Job(0),raster:Some(0),include:true,
@@ -225,7 +225,7 @@ fn template_photos_are_persistently_bundled_without_replacing_tiff_or_map() {
 }
 
 #[test]
-fn virtual_marxact_sheet_exports_full_png_and_profile_source_without_external_geotiff() {
+fn virtual_marxact_sheet_exports_with_builtin_template_and_no_external_geotiff() {
     use sleufbase_rust::virtual_trench::{VirtualTrench,TrenchPoint};
     use sleufbase_rust::model::Vertex;
     let (reference,_)=fixture();
@@ -244,7 +244,7 @@ fn virtual_marxact_sheet_exports_full_png_and_profile_source_without_external_ge
     let options=Options {server_mode:sleufbase_rust::template_server::Mode::Offline,
         overview_settings:sleufbase_rust::cadastral_overview::template_defaults(),
         paired:false,
-        template:reference.template,
+        template:PathBuf::new(),
         include_bgt:false,include_cadastral:false,include_cad:false,
         background:BackgroundKind::Blank,
         choices:vec![Choice{label:None,legacy_slot:None,manual_scale:None,

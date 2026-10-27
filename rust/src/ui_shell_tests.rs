@@ -717,3 +717,26 @@ fn polish_visual_review_captures_virtual_and_template_dialogs(){
         let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-order-{}x{}.png",size[0],size[1]))).unwrap();
     }
 }
+
+#[test]
+fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_row(){
+    for physical in [true,false]{
+        for size in [[680,420],[1200,760],[1500,930]]{
+            let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
+            if physical{
+                let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+                app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
+                app.open_template_export();app.template_order_dialog.as_mut().unwrap().state.drawn_by="Tekenaar-veld-controle".into();
+            }else{
+                app.virtual_trenches.push(VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
+                app.open_project_template_dialog();app.project_template_dialog.as_mut().unwrap().options.drawn_by="Tekenaar-veld-controle".into();
+            }
+            let mut out=None;for _ in 0..4{out=Some(ctx.run(input(size),|ctx|app.render(ctx)));}
+            let out=out.unwrap();let label=label_position(&out,"Tekenaar");let value=label_position(&out,"Tekenaar-veld-controle");
+            assert!(label.x<value.x);assert!((label.y-value.y).abs()<3.,"{physical} {size:?}: {label:?} {value:?}");
+            label_position(&out,"Sjabloon: ingebouwd SleufBase-sjabloon");
+            assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Eigen DXF-sjabloon kiezen…")));
+            assert!(app.template_job.is_none());
+        }
+    }
+}

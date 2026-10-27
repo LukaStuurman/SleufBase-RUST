@@ -214,10 +214,10 @@ pub(crate) fn show(
         egui::ScrollArea::vertical().id_salt("template-settings")
             .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]).show(ui,|ui|{
         ui.heading("1. Project en sjabloon");
-        let field_width=((ui.available_width()-12.)/2.).clamp(120.,400.);
-        ui.horizontal_wrapped(|ui| {
-            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut d.state.project).desired_width(field_width));});
-            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(field_width));});
+        let field_width=(ui.available_width()-110.).max(80.);
+        egui::Grid::new("template-identity").num_columns(2).show(ui,|ui|{
+            ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut d.state.project).desired_width(field_width));ui.end_row();
+            ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(field_width));ui.end_row();
         });
 
         ui.label("De exportdatum wordt automatisch op ieder gebruikt blad ingevuld (dd-mm-jjjj).");
@@ -225,22 +225,13 @@ pub(crate) fn show(
         server_mode(ui, &mut d.state.server_mode);
         logos(ui, &mut d.state.logos);
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label(d.state.template.as_ref().map_or_else(
-                || "Ingebouwd SleufBase-sjabloon".into(),
-                |p| p.display().to_string(),
-            ));
-            if ui.button("Ander sjabloon…").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("DXF-sjabloon", &["dxf"])
-                    .pick_file()
-                {
-                    d.state.template = Some(p);
-                }
+        ui.label(d.state.template.as_ref().map_or_else(||"Sjabloon: ingebouwd SleufBase-sjabloon".into(),|p|format!("Eigen sjabloon: {}",p.display())));
+        ui.collapsing("Eigen DXF-sjabloon gebruiken (optioneel)",|ui|{
+            ui.small("Voor de standaardexport is geen bestand nodig.");
+            if ui.button("Eigen DXF-sjabloon kiezen…").clicked(){
+                if let Some(p)=rfd::FileDialog::new().add_filter("DXF-sjabloon",&["dxf"]).pick_file(){d.state.template=Some(p);}
             }
-            if d.state.template.is_some() && ui.button("Ingebouwd sjabloon").clicked() {
-                d.state.template = None;
-            }
+            if d.state.template.is_some()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){d.state.template=None;}
         });
 
         ui.separator();

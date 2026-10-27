@@ -597,7 +597,9 @@ fn export_with_asset_policy(
     if let Some(overview)=&request.overview {crate::cadastral_overview::protect(output,overview)?;}
     progress("Sjabloon voorbereiden");
     control.check()?;
-    let mut doc = Document::load(&request.template, control.flag())?;
+    let mut doc = if request.template.as_os_str().is_empty(){
+        Document::from_bytes(include_bytes!("../../assets/cadastral_template.dxf").to_vec(),control.flag())?
+    }else{Document::load(&request.template, control.flag())?};
     let bounds = request
         .slots
         .iter()

@@ -234,7 +234,7 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
     let all_comments=crate::map_comments::combined_all(comments,rasters,trenches)?;
     crate::dxf_fonts::Catalog::validate_dirs(&opts.font_directories)?;
     opts.profile_style.validate()?;
-    if !opts.template.is_file() {
+    if !opts.template.as_os_str().is_empty() && !opts.template.is_file() {
         return Err("Kies een bestaand DXF-sjabloon".into());
     }
     if !(30..=600).contains(&opts.dpi)

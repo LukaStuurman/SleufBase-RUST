@@ -107,15 +107,15 @@ impl SleufBaseApp {
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                     egui::ScrollArea::vertical().id_salt("project-template-body")
                         .max_height((ui.available_height()-105.).max(80.)).auto_shrink([false,false]).show(ui, |ui| {
-                        ui.heading("1. CAD-sjabloon en uitvoer");
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("DXF-sjabloon kiezen…").clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("AutoCAD DXF", &["dxf"]).pick_file() {
-                                    dialog.options.template = path;
-                                }
+                        ui.heading("1. Uitvoer en project");
+                        if dialog.options.template.as_os_str().is_empty(){ui.label("Sjabloon: ingebouwd SleufBase-sjabloon");}
+                        else{ui.label(format!("Eigen sjabloon: {}",dialog.options.template.display()));}
+                        ui.collapsing("Eigen DXF-sjabloon gebruiken (optioneel)",|ui|{
+                            ui.small("Voor de standaardexport is geen bestand nodig.");
+                            if ui.button("Eigen DXF-sjabloon kiezen…").clicked(){
+                                if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"]).pick_file(){dialog.options.template=path;}
                             }
-                            ui.label(dialog.options.template.display().to_string());
+                            if !dialog.options.template.as_os_str().is_empty()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){dialog.options.template=PathBuf::new();}
                         });
                         ui.horizontal_wrapped(|ui| {
                             if ui.button("Nieuwe uitvoer-DXF kiezen…").clicked() {
@@ -128,10 +128,10 @@ impl SleufBaseApp {
                                 ui.label(path.display().to_string());
                             }
                         });
-                        let field_width=((ui.available_width()-12.)/2.).clamp(120.,320.);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Project");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));});
-                            ui.vertical(|ui|{ui.set_width(field_width);ui.label("Getekend door");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));});
+                        let field_width=(ui.available_width()-110.).max(80.);
+                        egui::Grid::new("project-template-identity").num_columns(2).show(ui,|ui|{
+                            ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));ui.end_row();
+                            ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));ui.end_row();
                         });
                         ui.separator();
                         ui.heading("2. Kaarten en profielen");
@@ -331,7 +331,7 @@ impl SleufBaseApp {
                         }
                         ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
                         let (_,invalid_labels)=dialog.editor.preview(&dialog.options.choices);
-                        let ready = invalid_labels.is_empty() && dialog.options.template.is_file() &&
+                        let ready = invalid_labels.is_empty() && (dialog.options.template.as_os_str().is_empty()||dialog.options.template.is_file()) &&
                             dialog.output.as_ref().is_some_and(|p|!p.exists()) &&
                             dialog.options.choices.iter().any(|c|c.include&&!matches!(c.source,Source::Empty(_))) &&
                             dialog.options.choices.iter().filter(|c|c.include)
