@@ -21,6 +21,7 @@ impl SleufBaseApp {
             .open(&mut open).collapsible(false).resizable(false)
             .default_width(480.).constrain_to(ctx.screen_rect().shrink(12.))
             .show(ctx,|ui| {
+                settings_ui::control_style(ui);
                 ui.heading("Aanmelden bij KickTheMap");
                 ui.label("Log in om je live jobs en bestanden te laden.");
                 ui.separator();
@@ -40,7 +41,7 @@ impl SleufBaseApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     cancel=ui.button(if busy {"Sluiten"}else{"Annuleren"}).clicked();
-                    submit|=ui.add_enabled(!busy,egui::Button::new("Inloggen")).clicked();
+                    submit|=ui.add_enabled(!busy,egui::Button::new(egui::RichText::new("Inloggen").color(Color32::WHITE)).fill(ORANGE)).clicked();
                     jobs=ui.add_enabled(!busy&&self.live_session.is_some(),egui::Button::new("Open jobs")).clicked();
                 });
                 ui.add_space(8.);

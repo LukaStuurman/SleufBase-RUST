@@ -271,6 +271,15 @@ fn rule_fields(ui: &mut egui::Ui, rows: &mut Vec<RuleRow>) {
         });
     }
 }
+pub(super) fn control_style(ui: &mut egui::Ui) {
+    let visuals=ui.visuals_mut();
+    visuals.widgets.inactive.bg_stroke=egui::Stroke::new(1_f32,egui::Color32::from_rgb(175,190,210));
+    visuals.widgets.inactive.corner_radius=6.into();
+    for widget in [&mut visuals.widgets.hovered,&mut visuals.widgets.active] {
+        widget.bg_stroke=egui::Stroke::new(1.5_f32,egui::Color32::from_rgb(83,99,122));
+        widget.corner_radius=6.into();
+    }
+}
 fn checkbox(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
     ui.scope(|ui| {
         let style=ui.style_mut();
@@ -517,6 +526,7 @@ pub(crate) fn show(
         .movable(false)
         .resizable(false)
         .show(ctx, |ui| {
+            control_style(ui);
             ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
             // Footer is outside the scroll area, preserving access at every category.
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -524,7 +534,8 @@ pub(crate) fn show(
                     if ui.button("Annuleren").clicked() {
                         cancel = true;
                     }
-                    if ui.button("Opslaan").clicked() {
+                    if ui.add(egui::Button::new(egui::RichText::new("Opslaan").color(egui::Color32::WHITE))
+                        .fill(super::ORANGE)).clicked() {
                         requested = true;
                     }
                     if state.words && ui.button("Terug naar instellingen").clicked() {
