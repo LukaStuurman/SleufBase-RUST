@@ -32,3 +32,14 @@ The previous native Windows map audit remains in `map-navigation-audit.md`. Duri
 Full GNU tests have two previously reproduced baseline font geometry failures (`lff_font` and `stroke_font`). An added old-settings test initially caught a PDOK label alias difference; the default now preserves the exact old value and the focused regression passes. The PR records the final GNU/MSVC test and build results.
 
 Still open: comprehensive original/native acceptance of authenticated KickTheMap jobs/login/downloads, real survey-project exports and failure recovery, physical touchpad hardware, and the remaining surfaces listed in `UI_PARITY.md`. No release or blanket parity certification follows from this change.
+
+
+## Preview 3 follow-up (27 October 2026)
+
+The settings scope correction now covers the complete effective export settings, including DXF values, trench preferences, rules and preserved legacy project overrides. The previous Maps-only merge left other tabs showing global defaults even while exports used project values. Opening now stages the effective project settings; successful save applies the full candidate only to the same project generation, and saves global defaults. A scope explanation tells users to save the project and distinguishes app-wide backups.
+
+Three additional regression tests cover actual template/DXF dialog values after save, failed/cancelled/stale drafts, native project roundtrip, and legacy overrides materializing a native settings scope without changing the preserved archive. All 186 UI tests passed locally; Clippy completed. Existing offline UI checks now include the project-scope explanation at three window sizes.
+
+The desktop was available for this follow-up. Native Windows testing used a synthetic GeoTIFF/KLIC project and isolated LOCALAPPDATA/APPDATA. The settings window displayed the project's 12 m DXF label gap rather than the global 3.5 m default. Real UI input changed it to 7 m; Save completed and settings.json contained 7. Screenshots are retained in the task outputs. This supersedes the earlier locked-desktop limitation for these specific settings checks, not the remaining full-parity/practice acceptance limits.
+
+The one-shot release workflow targets v0.1.0-preview.3. It only consumes a successful push build on current main, verifies both checksums and the portable payload and source revision, uploads four assets to a draft, then publishes. The prior preview tags are not overwritten. Final Windows-CI and publication results are recorded in the PR/release.

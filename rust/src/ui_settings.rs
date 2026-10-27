@@ -58,6 +58,7 @@ pub(crate) struct Dialog {
     /// Caller supplies active view state; None leaves the viewer untouched.
     pub viewer: Option<ViewerDraft>,
     pub autosave_count: Option<usize>,
+    pub project_scoped: bool,
     /// Caller takes this request and opens its existing autosave selector.
     pub restore_autosave_requested: bool,
     rules: Vec<RuleRow>,
@@ -108,6 +109,7 @@ impl Dialog {
             error: String::new(),
             viewer: None,
             autosave_count: None,
+            project_scoped: false,
             restore_autosave_requested: false,
             rules: settings
                 .object_rules
@@ -490,6 +492,9 @@ pub(crate) fn show(
                                 );
                             }
                         });
+                        if state.project_scoped {
+                            ui.small("Opslaan past deze instellingen toe op dit project en bewaart ze als standaard. Sla ook het project op om zijn instellingen te behouden. Back-ups gelden voor de hele app.");
+                        }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
                             Category::Dxf => "Stel de proefsleufweergave, kleuren en gekoppelde rasters in.",
@@ -887,6 +892,7 @@ mod tests {
         for size in [egui::vec2(1200.,760.), egui::vec2(1500.,930.), egui::vec2(1920.,1080.)] {
             let ctx = egui::Context::default();
             let mut dialog = Some(Dialog::new(&MigratedSettings::default(), &AutosaveSettings::default()));
+            dialog.as_mut().unwrap().project_scoped = true;
             let frame = |dialog: &mut Option<Dialog>, events| ctx.run(egui::RawInput {
                 screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)), events, ..Default::default()
             }, |ctx| {assert!(show(ctx,dialog,|_,_| panic!("render must not save")).is_none());});
