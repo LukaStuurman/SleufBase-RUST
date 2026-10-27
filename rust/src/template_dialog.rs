@@ -220,11 +220,6 @@ pub(crate) fn show(
             ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut d.state.drawn_by).desired_width(field_width));ui.end_row();
         });
 
-        ui.label("De exportdatum wordt automatisch op ieder gebruikt blad ingevuld (dd-mm-jjjj).");
-        font_folders(ui, &mut d.state.font_directories);
-        server_mode(ui, &mut d.state.server_mode);
-        logos(ui, &mut d.state.logos);
-
         ui.label(d.state.template.as_ref().map_or_else(||"Sjabloon: ingebouwd SleufBase-sjabloon".into(),|p|format!("Eigen sjabloon: {}",p.display())));
         ui.collapsing("Eigen DXF-sjabloon gebruiken (optioneel)",|ui|{
             ui.small("Voor de standaardexport is geen bestand nodig.");
@@ -233,6 +228,13 @@ pub(crate) fn show(
             }
             if d.state.template.is_some()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){d.state.template=None;}
         });
+
+
+        ui.label("De exportdatum wordt automatisch op ieder gebruikt blad ingevuld (dd-mm-jjjj).");
+        font_folders(ui, &mut d.state.font_directories);
+        server_mode(ui, &mut d.state.server_mode);
+        logos(ui, &mut d.state.logos);
+
 
         ui.separator();
         ui.heading("2. Proefsleuven en volgorde");
