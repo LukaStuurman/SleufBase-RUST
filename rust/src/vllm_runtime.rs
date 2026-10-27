@@ -1,7 +1,7 @@
 //! Managed local vLLM executable. Never installs a runtime; model resolution
 //! remains the external executable's explicit, user-triggered serve operation.
 use std::{collections::BTreeMap,fs::{self,OpenOptions},path::{Path,PathBuf},process::Command,sync::{Mutex,atomic::{AtomicBool,Ordering}},time::{Duration,Instant}};
-#[cfg(windows)] #[path="windows_job.rs"] mod windows_job;
+#[cfg(windows)] #[path="windows_job.rs"] pub(crate) mod windows_job;
 #[cfg(windows)] type RuntimeProcess=windows_job::Process;
 #[cfg(not(windows))] type RuntimeProcess=Child;
 #[cfg(not(windows))] use std::process::{Child,Stdio};

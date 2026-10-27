@@ -2,7 +2,7 @@
 
 Deze map bevat de **native Rust-migratiepreview**, niet de huidige stabiele SleufBase-release.
 
-Laat de bijgeleverde `Pillow-LICENSE.txt`, `ezdxf-LICENSE.txt` en `proj4rs-NOTICES.txt` bij de executable staan. De licenties zijn ook in de executable opvraagbaar met `--licenses`.
+Laat de bijgeleverde `Pillow-LICENSE.txt`, `ezdxf-LICENSE.txt` `proj4rs-NOTICES.txt` en `wry-LICENSE.txt` bij de executable staan. De licenties zijn ook in de executable opvraagbaar met `--licenses`.
 
 Laat ook de map `assets/template_logos` naast de executable staan voor de
 standaard Techbase- en opdrachtgeverlogo's in de sjabloonexport. Eigen PNG- en
@@ -32,7 +32,7 @@ De CI levert naast de ZIP een SHA-256-controlebestand `SleufBase-Rust-portable-p
 
 Vergelijk de uitkomst met de SHA-256 in het bestand. Een controlehash bewijst de downloadintegriteit ten opzichte van dat bestand, maar vervangt geen codeondertekening.
 
-`build-info.json` vermeldt de bronrevisie, versie en SHA-256 van alle dertien
+`build-info.json` vermeldt de bronrevisie, versie en SHA-256 van alle veertien
 benodigde bestanden. De build controleert de gehele ZIP, logo's en notices,
 ontbrekende/extra/dubbele namen en de Windows-x64-executable vóór publicatie.
 Een lokale ontwikkelbuild vermeldt expliciet `working-tree` als revisie.
@@ -40,3 +40,7 @@ Een lokale ontwikkelbuild vermeldt expliciet `working-tree` als revisie.
 ## Migratiewaarschuwing
 
 De Rust-migratie is niet 100% functieparitair met SleufBase Python v0.3.62. Bevestig GeoTIFF-matches, AutoCAD-tekeningen, Excel-overzichten en template-uitvoer met echte proefprojecten voordat je de preview in productie gebruikt. Oude Python-projecten worden niet stilzwijgend overschreven. Problemen kun je melden via de GitHub-migratie-PR.
+
+## Ingebouwd KickTheMap-inlogvenster
+
+Klik op Inloggen om binnen SleufBase aan te melden. Er wordt geen apart Edge-browservenster gestart. Microsoft WebView2 Runtime moet wel geinstalleerd zijn. Rond reCAPTCHA zelf af en klik daarna in SleufBase op Sessie overnemen. Een mislukte start toont de eigenlijke WebView2-fout.

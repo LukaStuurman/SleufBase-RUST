@@ -285,9 +285,24 @@ mod tests {
         click(&mut app,&ctx,view.project(b));
         assert_eq!(app.virtual_trenches[1].dekband_rows.len(),1);
         assert_eq!(app.virtual_trenches[1].dekband_rows[0].source_name,"Dekband");
-        app.virtual_trenches[1].start.z=None;app.virtual_trenches[1].start_metadata=serde_json::Value::Null;app.virtual_map.point_name="Nieuwe LS".into();app.virtual_map.point_source="LS".into();app.virtual_map.point_depth=0.7;let center=map::center(&app.virtual_trenches[1]);app.start_virtual_points(1,true);click(&mut app,&ctx,view.project(center));
-        let object=app.virtual_trenches[1].objects.iter().find(|p|p.object_name=="Nieuwe LS").unwrap();assert!(object.position.z.is_none());assert_eq!(object.metadata["sleufbase_depth_meters"],0.7);
-        map::apply_surface_height(&mut app.virtual_trenches[1],map::MapPoint::Start,Some(3.2)).unwrap();let object=app.virtual_trenches[1].objects.iter().find(|p|p.object_name=="Nieuwe LS").unwrap();assert_eq!(object.position.z,Some(2.5));assert!(app.dirty);
+        app.virtual_trenches[1].start.z=None;app.virtual_trenches[1].start_metadata=serde_json::Value::Null;
+        let before=app.virtual_trenches[1].objects.len();let center=map::center(&app.virtual_trenches[1]);
+        app.start_virtual_points(1,true);click(&mut app,&ctx,view.project(center));
+        assert_eq!(app.virtual_trenches[1].objects.len(),before,"a map pick only stages the position");
+        theme::install(&ctx);
+        let editor_frame=|app:&mut SleufBaseApp,events:Vec<egui::Event>|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1000.,800.))),events,..Default::default()},|ctx|app.show_virtual_editor(ctx));
+        let locate=|out:&egui::FullOutput,label:&str|out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).expect(label);
+        let mut out=editor_frame(&mut app,vec![]);for _ in 0..3{out=editor_frame(&mut app,vec![]);}
+        for label in ["Diepte invullen","Opslaan in project"]{
+            let pos=locate(&out,label);
+            for pressed in [true,false]{editor_frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+            out=editor_frame(&mut app,vec![]);
+        }
+        let pending=|p:&&sleufbase_rust::virtual_trench::TrenchPoint|p.metadata.get("sleufbase_depth_meters").and_then(serde_json::Value::as_f64)==Some(0.7);
+        let object=app.virtual_trenches[1].objects.iter().find(pending).unwrap();assert!(object.position.z.is_none());
+        map::apply_surface_height(&mut app.virtual_trenches[1],map::MapPoint::Start,Some(3.2)).unwrap();
+        let object=app.virtual_trenches[1].objects.iter().find(pending).unwrap();assert_eq!(object.position.z,Some(2.5));assert!(app.dirty);
+
     }
     #[test]
     fn source_changes_and_project_switches_discard_stale_modes() {
@@ -434,7 +449,7 @@ enum Mode {
     Reference(Target),
     SelectPoint(Target),
     MovePoint {target:Target,point:map::MapPoint,original:Vertex},
-    AddPoint(Target),
+    EditorPoint(Target),
     Copy {target:Target,label:String,start:Option<XY>},
     Dekband {target:Target,start:Option<XY>},
 }
@@ -448,9 +463,6 @@ pub(super) struct State {
     pointer: Option<XY>,
     context_anchor: Option<XY>,
     references: Vec<(usize, XY)>,
-    point_name:String,
-    point_source:String,
-    point_depth:f64,
     band_name:String,
     band_rgb:[u8;3],
     band_start_depth:f64,
@@ -516,10 +528,23 @@ impl SleufBaseApp {
     }
     pub(super) fn cancel_virtual_map(&mut self) {
         self.virtual_map.mode = None;
+        if let Some(editor)=self.trench_editor.as_mut(){editor.picking_object=false;}
         self.virtual_map.pointer = None;
         self.virtual_map.rotating=None;
         self.virtual_map.rotate_drag=None;
         self.virtual_map.capture=false;
+    }
+    pub(super) fn start_editor_point_pick(&mut self,index:usize){
+        if self.file_intent.is_some()||self.export_intent.is_some()||self.template_job.is_some(){
+            if let Some(editor)=self.trench_editor.as_mut(){editor.picking_object=false;}
+            self.message="Rond eerst de lopende taak af".into();return;
+        }
+        self.stop_raster_rotation();self.raster_points.mode=None;self.cancel_virtual_map();
+        let Some(t)=self.virtual_trenches.get(index)else{return};
+        self.virtual_map.mode=Some(Mode::EditorPoint(Target::new(index,t)));
+        self.virtual_map.generation=self.project_generation;
+        if let Some(editor)=self.trench_editor.as_mut(){editor.picking_object=true;}
+        self.message="Klik een punt op de sleuf voor de nieuwe kabel/leiding; Escape annuleert.".into();
     }
     pub(super) fn refresh_virtual_references(&mut self) {
         self.virtual_map.references = self
@@ -617,11 +642,13 @@ impl SleufBaseApp {
             "Klik om het referentiepunt van deze proefsleuf te plaatsen of te verplaatsen.".into();
     }
     fn start_virtual_points(&mut self,index:usize,adding:bool){
-        if !self.begin_virtual_map(){return;}
-        let Some(t)=self.virtual_trenches.get(index) else{return};
+        if !self.begin_virtual_map()||self.virtual_trenches.get(index).is_none(){return;}
         self.virtual_map.selected=Some(index);
-        self.virtual_map.mode=Some(if adding{Mode::AddPoint(Target::new(index,t))}else{Mode::SelectPoint(Target::new(index,t))});
-        self.message=if adding{"Klik voor een meetobject; het punt wordt op de meetas vastgezet."}else{"Klik op het beginpunt, eindpunt of meetobject en daarna op de nieuwe locatie."}.into();
+        if adding{
+            self.open_virtual_editor(index);self.start_editor_point_pick(index);return;
+        }
+        self.virtual_map.mode=Some(Mode::SelectPoint(Target::new(index,&self.virtual_trenches[index])));
+        self.message="Klik op het beginpunt, eindpunt of meetobject en daarna op de nieuwe locatie.".into();
     }
     fn start_virtual_copy(&mut self,index:usize){
         if !self.begin_virtual_map(){return;}
@@ -1050,7 +1077,7 @@ impl SleufBaseApp {
             ui.small(format!("Geselecteerd: {}", self.virtual_trenches[i].label));
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Meetpunt verplaatsen").clicked(){self.start_virtual_points(i,false);}
-                if ui.button("Meetobject prikken").clicked(){self.start_virtual_points(i,true);}
+                if ui.button("Kabel/leiding prikken").clicked(){self.start_virtual_points(i,true);}
                 if ui.button("Kopie met nieuwe richting").clicked(){self.start_virtual_copy(i);}
                 if ui.button("Dekband prikken").clicked(){self.start_virtual_dekband(i);}
                 if ui.button("Verplaatsen op kaart").clicked() {
@@ -1077,9 +1104,6 @@ impl SleufBaseApp {
                     .into();
                 }
             });
-            if matches!(self.virtual_map.mode,Some(Mode::AddPoint(_))){
-                ui.horizontal_wrapped(|ui|{ui.label("Object");ui.text_edit_singleline(&mut self.virtual_map.point_name);ui.label("Bron");ui.text_edit_singleline(&mut self.virtual_map.point_source);ui.label("Diepte onder beginmaaiveld (m)");ui.add(egui::DragValue::new(&mut self.virtual_map.point_depth).range(0.0..=1000.).speed(0.05));});
-            }
             if matches!(self.virtual_map.mode,Some(Mode::Dekband{..})){
                 ui.horizontal_wrapped(|ui|{ui.label("Dekband");ui.text_edit_singleline(&mut self.virtual_map.band_name);ui.color_edit_button_srgb(&mut self.virtual_map.band_rgb);ui.label("Begindiepte (m)");ui.add(egui::DragValue::new(&mut self.virtual_map.band_start_depth).range(0.0..=1000.).speed(0.05));ui.label("Einddiepte (m)");ui.add(egui::DragValue::new(&mut self.virtual_map.band_end_depth).range(0.0..=1000.).speed(0.05));});
             }
@@ -1117,7 +1141,7 @@ impl SleufBaseApp {
             self.cancel_virtual_map();
         }
         let valid = match &self.virtual_map.mode {
-            Some(Mode::Move { target, .. } | Mode::Reference(target) | Mode::SelectPoint(target) | Mode::AddPoint(target) | Mode::Copy{target,..} | Mode::Dekband{target,..}) => {
+            Some(Mode::Move { target, .. } | Mode::Reference(target) | Mode::SelectPoint(target) | Mode::EditorPoint(target) | Mode::Copy{target,..} | Mode::Dekband{target,..}) => {
                 target.valid(&self.virtual_trenches)
             }
             Some(Mode::MovePoint{target,point,original})=>target.valid(&self.virtual_trenches)&&map::position(&self.virtual_trenches[target.index],*point)==Some(*original),
@@ -1238,13 +1262,12 @@ impl SleufBaseApp {
                             Err(e)=>{self.message=e;self.virtual_map.mode=Some(Mode::MovePoint{target,point,original});}
                         }
                     }
-                    Mode::AddPoint(target)=>{
-                        let trench=&self.virtual_trenches[target.index];let (x,y,_,_)=trench.project(Vertex{x:world[0],y:world[1],z:None});
-                        let z=trench.start.z.map(|z|z-self.virtual_map.point_depth);
-                        let object=sleufbase_rust::virtual_trench::TrenchPoint{metadata:serde_json::json!({"surface_mode":"start","surface_status":"start","surface_z":trench.start.z,"sleufbase_depth_meters":self.virtual_map.point_depth}),role:"object".into(),object_name:if self.virtual_map.point_name.trim().is_empty(){format!("Punt {}",trench.objects.len()+1)}else{self.virtual_map.point_name.clone()},source_name:self.virtual_map.point_source.clone(),position:Vertex{x,y,z},attributes:Default::default()};
-                        match sleufbase_rust::virtual_trench_editor::replace_object(&mut self.virtual_trenches[target.index],None,object){
-                            Ok(())=>{self.hold_virtual_camera(view);self.dirty=true;self.trench_markers.clear();self.message="Meetobject geplaatst op de meetas.".into();self.open_virtual_editor(target.index);}
-                            Err(e)=>{self.message=e;self.virtual_map.mode=Some(Mode::AddPoint(target));}
+                    Mode::EditorPoint(target)=>{
+                        let result=self.trench_editor.as_mut().filter(|e|e.index==target.index)
+                            .ok_or_else(||"De sleufeditor is gesloten".to_owned()).and_then(|e|e.pick_object_position(world));
+                        match result{
+                            Ok(())=>{self.hold_virtual_camera(view);self.message="Punt gekozen. Kies het kabel-/leidingtype in het formulier.".into();}
+                            Err(error)=>{self.message=error;self.cancel_virtual_map();}
                         }
                     }
                     Mode::Copy{target,label,start:None}=>{self.virtual_map.mode=Some(Mode::Copy{target,label,start:Some(world)});self.message="Klik nu de richting van de kopie.".into();}
@@ -1299,7 +1322,7 @@ impl SleufBaseApp {
                         ui.close_menu();
                     }
                     if ui.button("Meetpunt verplaatsen").clicked(){self.start_virtual_points(i,false);ui.close_menu();}
-                    if ui.button("Meetobject prikken").clicked(){self.start_virtual_points(i,true);ui.close_menu();}
+                    if ui.button("Kabel/leiding prikken").clicked(){self.start_virtual_points(i,true);ui.close_menu();}
                     if ui.button("Kopie met nieuwe richting").clicked(){self.start_virtual_copy(i);ui.close_menu();}
                     if ui.button("Dekband prikken").clicked(){self.start_virtual_dekband(i);ui.close_menu();}
                     if ui.button("Referentiepunt plaatsen").clicked() {
@@ -1356,7 +1379,7 @@ impl SleufBaseApp {
                     let t=&self.virtual_trenches[target.index];let p=if matches!(point,map::MapPoint::Object(_)){let(x,y,_,_)=t.project(Vertex{x:pointer[0],y:pointer[1],z:None});[x,y]}else{pointer};
                     painter.circle_stroke(view.project(p),7.,Stroke::new(2.0_f32,ORANGE));
                 }
-                Some(Mode::AddPoint(target))|Some(Mode::Dekband{target,..})=>{
+                Some(Mode::EditorPoint(target))|Some(Mode::Dekband{target,..})=>{
                     let t=&self.virtual_trenches[target.index];let(x,y,along,_)=t.project(Vertex{x:pointer[0],y:pointer[1],z:None});let pos=view.project([x,y]);
                     painter.circle_stroke(pos,7.,Stroke::new(2.0_f32,ORANGE));painter.text(pos+egui::vec2(9.,-9.),egui::Align2::LEFT_BOTTOM,format!("{along:.2} m"),egui::FontId::proportional(12.),INK);
                     if let Some(Mode::Dekband{start:Some(a),..})=&self.virtual_map.mode{let(x,y,_,_)=t.project(Vertex{x:a[0],y:a[1],z:None});painter.line_segment([view.project([x,y]),pos],Stroke::new(4_f32,ORANGE));}

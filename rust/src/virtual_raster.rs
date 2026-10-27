@@ -148,9 +148,9 @@ pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
         if i%256==0 {input::check(cancel)?;}
         let (cx,cy,_,_) = t.project(object.position);
         if matches!(object.role.to_lowercase().as_str(),"start"|"end"){continue;}
-        let preferred=(object.position.x-cx)*nx+(object.position.y-cy)*ny;
-        let ((ax,ay),(bx,by))=crate::cross_section::local_segment(&border,(cx,cy),(nx,ny),preferred)
-            .unwrap_or(((cx+nx*point_width,cy+ny*point_width),(cx-nx*point_width,cy-ny*point_width)));
+        let (vx,vy)=crate::cross_section::crossing_direction((nx,ny),&object.metadata);
+        let ((ax,ay),(bx,by))=crate::cross_section::object_segment_on_boundary(t,object,&border)
+            .unwrap_or(((cx+vx*point_width,cy+vy*point_width),(cx-vx*point_width,cy-vy*point_width)));
         let a=pixel(info,ax,ay);let b=pixel(info,bx,by);
         let color=display_rgb(&object.metadata).unwrap_or([37,99,235]);
         draw::line(&mut result,&[a,b],point_width_px,[color[0],color[1],color[2],235],cancel,&mut budget)?;

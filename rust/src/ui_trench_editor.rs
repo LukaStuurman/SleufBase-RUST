@@ -8,8 +8,10 @@ use sleufbase_rust::{
 use egui::Vec2;
 #[path="ui_trench_ahn.rs"]
 mod ahn_fill;
+#[path="ui_trench_object.rs"]
+mod object_ui;
 
-#[derive(Clone)]
+#[derive(Clone,PartialEq)]
 struct ObjectForm {
     role:String,
     name:String,
@@ -19,6 +21,13 @@ struct ObjectForm {
     offset:f64,
     elevation:f64,
     has_elevation:bool,
+    from_end:bool,
+    diameter:f64,
+    quantity:u32,
+    angle:f64,
+    rgb:Option<[u8;3]>,
+    use_depth:bool,
+    depth:f64,
 }
 
 #[cfg(test)]
@@ -41,6 +50,7 @@ impl Default for ObjectForm {
             role:"kabel".into(),name:"LS".into(),source:"LS".into(),
             attributes:Default::default(),
             chainage:0.,offset:0.,elevation:0.,has_elevation:false,
+            from_end:false,diameter:0.,quantity:1,angle:0.,rgb:None,use_depth:false,depth:0.7,
         }
     }
 }
@@ -53,15 +63,39 @@ impl ObjectForm {
             attributes:object.attributes.clone(),chainage,offset,
             elevation:object.position.z.unwrap_or(0.),
             has_elevation:object.position.z.is_some(),
+            from_end:false,diameter:sleufbase_rust::profile::diameter_mm(&sleufbase_rust::Feature{object_name:String::new(),source_name:String::new(),geometry:sleufbase_rust::Geometry::Point(object.position),attributes:object.attributes.clone()}).unwrap_or(0.),
+            quantity:object.metadata.get("quantity").and_then(serde_json::Value::as_u64).and_then(|n|u32::try_from(n).ok()).unwrap_or_else(||object.attributes[2].split(|c:char|!c.is_ascii_digit()).find_map(|v|v.parse::<u32>().ok()).filter(|n|*n>=1&&*n<=1000).unwrap_or_else(||if object.attributes[2].to_lowercase().contains("dubbel"){2}else{1})),
+            angle:object.metadata.get("crossing_angle_degrees").and_then(serde_json::Value::as_f64).unwrap_or(0.),
+            rgb:sleufbase_rust::virtual_raster::display_rgb(&object.metadata),use_depth:false,
+            depth:object.metadata.get("sleufbase_depth_meters").and_then(serde_json::Value::as_f64).unwrap_or(0.7),
         }
     }
+    fn has_pending_entry(&self)->bool{let mut empty=Self::default();empty.from_end=self.from_end;self!=&empty}
+    fn distance(&self,length:f64)->f64{if self.from_end{length-self.chainage}else{self.chainage}}
+    fn set_distance(&mut self,length:f64,distance:f64)->Result<(),String>{
+        if !length.is_finite()||length<=0.||!distance.is_finite()||distance<0.||distance>length{return Err("De afstand moet binnen de sleuf vallen".into());}
+        self.chainage=if self.from_end{length-distance}else{distance};Ok(())
+    }
+    fn update_quantity_attribute(&mut self){
+        let re=regex::Regex::new(r"(?i)\bdubbel\b").unwrap();
+        let original=re.replace_all(&self.attributes[2],"");
+        let number=regex::Regex::new(r"[0-9]+(?:[.,][0-9]+)?\s*[xX]?").unwrap();
+        let value=if self.quantity>1{self.quantity.to_string()}else{String::new()};
+        self.attributes[2]=if number.is_match(&original){number.replacen(&original,1,value.as_str()).trim().to_owned()}else{format!("{value} {}",original.trim()).trim().to_owned()};
+    }
     fn to_object(&self,trench:&VirtualTrench)->Result<TrenchPoint,String> {
-        Ok(TrenchPoint {metadata:Default::default(),
+        if !self.angle.is_finite()||self.angle.abs()>80.||self.quantity==0||self.quantity>1000||!self.diameter.is_finite()||!(0.0..=10000.).contains(&self.diameter){return Err("Controleer diameter, aantal en kabelhoek".into());}
+        if self.use_depth&&(!self.depth.is_finite()||!(0.0..=1000.).contains(&self.depth)){return Err("Controleer de diepte in meters".into());}
+        let mut metadata=serde_json::json!({"crossing_angle_degrees":self.angle,"quantity":self.quantity});
+        if let Some(rgb)=self.rgb{metadata["display_rgb"]=serde_json::json!(rgb);}
+        if self.use_depth{metadata["surface_mode"]=serde_json::json!("start");metadata["surface_status"]=serde_json::json!("start");metadata["surface_z"]=serde_json::json!(trench.start.z);metadata["sleufbase_depth_meters"]=serde_json::json!(self.depth);}
+        let z=if self.use_depth{trench.start.z.map(|z|z-self.depth)}else{self.has_elevation.then_some(self.elevation)};
+        Ok(TrenchPoint {metadata,
             role:self.role.clone(),object_name:self.name.clone(),
             source_name:self.source.clone(),
             attributes:self.attributes.clone(),
             position:edit::position(trench,self.chainage,self.offset,
-                self.has_elevation.then_some(self.elevation))?,
+                z)?,
         })
     }
 }
@@ -77,6 +111,9 @@ pub(super) struct Editor {
     width:f64,
     selected:Option<usize>,
     jump_to_objects:Option<bool>,
+    objects_tab:bool,
+    pub(super) picking_object:bool,
+    entry_started:bool,
     object:ObjectForm,
     confirm_delete:bool,
     error:String,
@@ -101,7 +138,7 @@ impl Editor {
             index,original:source.clone(),draft:source.clone(),
             label:source.label.clone(),start:source.start,
             end:source.end,width:source.width_meters,
-            selected:None,jump_to_objects:None,object:ObjectForm::default(),
+            selected:None,jump_to_objects:Some(true),objects_tab:true,picking_object:false,entry_started:false,object:ObjectForm::default(),
             confirm_delete:false,error:String::new(),paste:String::new(),notice:String::new(),shift_x:0.,shift_y:0.,
             dekband_start:0.,dekband_end:source.length(),
             dekband_name:"Dekband".into(),dekband_rgb:[17,24,39],
@@ -118,8 +155,11 @@ impl Editor {
         let mut next=self.build()?;
         let mut object=self.object.to_object(&next)?;
         if let Some(old)=self.selected.and_then(|i|next.objects.get(i)){
+            let typed=object.metadata.take();
             object.metadata=old.metadata.clone();
-            if object.position.z!=old.position.z {
+            if !object.metadata.is_object(){object.metadata=serde_json::json!({});}
+            if let Some(typed)=typed.as_object(){object.metadata.as_object_mut().unwrap().extend(typed.clone());}
+            if object.position.z!=old.position.z && !self.object.use_depth {
                 let meta=object.metadata.as_object_mut();
                 if let Some(meta)=meta {
                     meta.remove("sleufbase_depth_meters");
@@ -133,8 +173,16 @@ impl Editor {
         // stored as RD world coordinates and will survive later translations.
         self.draft=next;
         self.selected=None;
-        self.object=ObjectForm::default();
+        self.object=ObjectForm::default();self.entry_started=false;
         Ok(())
+    }
+    pub(super) fn pick_object_position(&mut self,world:[f64;2])->Result<(),String>{
+        if !world.iter().all(|v|v.is_finite()){return Err("Ongeldige kaartpositie".into());}
+        let dx=self.end.x-self.start.x;let dy=self.end.y-self.start.y;let length=dx.hypot(dy);
+        if length<=1e-9{return Err("Stel eerst verschillende begin- en eindpunten in".into());}
+        self.object.chainage=(((world[0]-self.start.x)*dx+(world[1]-self.start.y)*dy)/length).clamp(0.,length);
+        self.object.offset=0.;self.object.from_end=false;self.entry_started=true;self.picking_object=false;self.jump_to_objects=Some(true);
+        self.notice="Positie gekozen. Kies type, diameter en aantal en klik op Kabel/leiding toevoegen.".into();Ok(())
     }
     fn draw_preview(&self,ui:&mut egui::Ui) {
         // Never clone/validate thousands of measured objects per animation
@@ -206,6 +254,10 @@ impl Editor {
         painter.circle_filled(point(start.x,start.y),4.,Color32::GREEN);
         painter.circle_filled(point(end.x,end.y),4.,Color32::RED);
         for obj in sampled {
+            if let Some((a,b))=sleufbase_rust::cross_section::object_segment_on_boundary(t,obj,&outline){
+                let rgb=sleufbase_rust::virtual_raster::display_rgb(&obj.metadata).unwrap_or([37,99,235]);
+                painter.line_segment([point(a.0,a.1),point(b.0,b.1)],Stroke::new(2_f32,Color32::from_rgb(rgb[0],rgb[1],rgb[2])));
+            }
             painter.circle_filled(point(obj.position.x,obj.position.y),3.,INK);
         }
         if let Some(i)=self.selected {
@@ -240,9 +292,19 @@ impl SleufBaseApp {
         let Some(mut editor)=self.trench_editor.take() else{return};
         if editor.index>=self.virtual_trenches.len() {return;}
         editor.poll_ahn();
+        if editor.picking_object {
+            let mut cancel=false;
+            egui::Window::new("Kabel/leiding op de kaart plaatsen").collapsible(false).resizable(false)
+                .fixed_pos(egui::pos2(20.,45.)).show(ctx,|ui|{ui.label("Klik een positie op de sleuf. Daarna kies je het type en de afmetingen.");cancel=ui.button("Annuleer puntplaatsing").clicked();});
+            if cancel{editor.picking_object=false;self.cancel_virtual_map();}
+            self.trench_editor=Some(editor);return;
+        }
+        let reset_scroll=if let Some(tab)=editor.jump_to_objects.take(){editor.objects_tab=tab;true}else{false};
+        let mut pick_requested=false;
+        let mut close_requested=false;
         let mut open=true;
         let mut action=None;
-        egui::Window::new("Virtuele proefsleuf en meetobjecten bewerken")
+        egui::Window::new("Virtuele proefsleuf").id(egui::Id::new("virtual-trench-editor"))
             .open(&mut open).default_width(730.)
             .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
             .constrain_to(ctx.screen_rect().shrink(12.))
@@ -251,17 +313,19 @@ impl SleufBaseApp {
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                 ui.horizontal_wrapped(|ui|{
-                    if ui.button("1. Sleufgegevens").clicked(){editor.jump_to_objects=Some(false);}
-                    if ui.button("2. Meetobjecten invoeren").clicked(){editor.jump_to_objects=Some(true);}
+                    if ui.selectable_label(!editor.objects_tab,"1. Sleufgegevens").clicked(){editor.jump_to_objects=Some(false);}
+                    if ui.selectable_label(editor.objects_tab,"2. Kabel/leiding invoeren").clicked(){editor.jump_to_objects=Some(true);}
                     ui.small("3. Opslaan in project");
                 });
-                egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
-                    .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]).show(ui,|ui|{
-                    editor.ahn_controls(ui,ctx);
+                let scroll=egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
+                    .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]);
+                let scroll=if reset_scroll{scroll.vertical_scroll_offset(0.)}else{scroll};
+                scroll.show(ui,|ui|{
+                    if !editor.objects_tab||editor.ahn_job.is_some(){editor.ahn_controls(ui,ctx);}
                     ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
                     let measured=edit::is_measured(&editor.original);
-                    let heading=ui.heading("1. Proefsleuf");
-                    if editor.jump_to_objects==Some(false){heading.scroll_to_me(Some(egui::Align::Min));editor.jump_to_objects=None;}
+                    if !editor.objects_tab{
+                    ui.heading("Proefsleufgegevens");
                     ui.horizontal(|ui|{
                         ui.label("Naam");
                         ui.text_edit_singleline(&mut editor.label);
@@ -270,6 +334,8 @@ impl SleufBaseApp {
                     if measured {
                         ui.weak("MarXact: originele 3D-meetgrenzen en uitlijning blijven beschermd. Gebruik 'Handmatige kopie' om de as te wijzigen.");
                     }
+                    ui.add_enabled_ui(!measured,|ui|{ui.horizontal(|ui|{ui.label("Sleufbreedte");ui.add(egui::DragValue::new(&mut editor.width).range(0.1..=100.).speed(0.05).suffix(" m"));});});
+                    ui.collapsing("Geometrie en hoogtes (optioneel)",|ui|{
                     ui.add_enabled_ui(!measured,|ui|{
                         ui.horizontal(|ui|{
                             ui.label("Begin RD X");
@@ -283,10 +349,7 @@ impl SleufBaseApp {
                             ui.label("Y");
                             ui.add(egui::DragValue::new(&mut editor.end.y).speed(0.1));
                         });
-                        ui.horizontal(|ui|{
-                            ui.label("Breedte (m)");
-                            ui.add(egui::DragValue::new(&mut editor.width).range(0.1..=100.).speed(0.05));
-                        });
+
                         ui.horizontal(|ui|{
                             let old_start=editor.start.z;
                             let old_end=editor.end.z;
@@ -339,6 +402,7 @@ impl SleufBaseApp {
                                 }
                             }
                         });
+                    });
                     });
                     editor.draw_preview(ui);
                     ui.separator();
@@ -399,48 +463,12 @@ impl SleufBaseApp {
                         });
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
-                    ui.separator();
-                    let heading=ui.heading("2. Meetobjecten");
-                    if editor.jump_to_objects==Some(true){heading.scroll_to_me(Some(egui::Align::Min));editor.jump_to_objects=None;}
-                    ui.small("Kettingmaat: meters vanaf het beginpunt. Dwarsafstand: positief links van de meetas.");
-                    ui.horizontal(|ui|{
-                        ui.label("Object");
-                        ui.text_edit_singleline(&mut editor.object.name);
-                        ui.label("Bron");
-                        ui.text_edit_singleline(&mut editor.object.source);
-                    });
-                    ui.horizontal(|ui|{
-                        ui.label("Rol");
-                        ui.text_edit_singleline(&mut editor.object.role);
-                    });
-                    ui.horizontal(|ui|{
-                        ui.label("Kettingmaat (m)");
-                        ui.add(egui::DragValue::new(&mut editor.object.chainage).speed(0.05));
-                        ui.label("Dwarsafstand (m)");
-                        ui.add(egui::DragValue::new(&mut editor.object.offset).speed(0.02));
-                    });
-                    ui.horizontal(|ui|{
-                        ui.checkbox(&mut editor.object.has_elevation,"Z-hoogte (m NAP)");
-                        ui.add_enabled(editor.object.has_elevation,
-                            egui::DragValue::new(&mut editor.object.elevation).speed(0.05));
-                    });
-                    ui.collapsing("Objectattributen (3 velden)",|ui|{
-                        for attribute in &mut editor.object.attributes {
-                            ui.text_edit_singleline(attribute);
-                        }
-                    });
-                    ui.horizontal(|ui|{
-                        if ui.button(if editor.selected.is_some() {"Wijzig meetobject"}else{"Meetobject toevoegen"}).clicked() {
-                            match editor.add_or_replace() {
-                                Ok(())=>editor.error.clear(),
-                                Err(e)=>editor.error=e,
-                            }
-                        }
-                        if ui.button("Leeg invoerformulier").clicked() {
-                            editor.selected=None;
-                            editor.object=ObjectForm::default();
-                        }
-                    });
+                    }else{
+                    ui.heading("Nieuwe kabel of leiding");
+                    pick_requested=object_ui::show(&mut editor,ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
+                    if ui.button("Leeg invoerformulier").clicked(){editor.selected=None;editor.object=ObjectForm::default();editor.entry_started=false;}
+                    ui.strong(format!("Toegevoegd aan deze sleuf ({})",editor.draft.objects.len()));
+                    if editor.draft.objects.is_empty(){ui.small("Kies een kaartpunt of afstand, vul de gegevens in en klik op Kabel/leiding toevoegen.");}
                     let mut remove=None;
                     egui::ScrollArea::vertical().max_height(190.)
                         .show_rows(ui,24.,editor.draft.objects.len(),|ui,rows|{
@@ -448,8 +476,8 @@ impl SleufBaseApp {
                                 let obj=&editor.draft.objects[index];
                                 let (c,o)=edit::coordinates(&editor.draft,obj.position);
                                 ui.horizontal(|ui|{
-                                    ui.label(format!("{:>3}  {} — {:.2} m / {:+.2} m",
-                                        index+1,obj.object_name,c,o));
+                                    ui.label(format!("{:>3}  {} · Ø{} mm · {}× · {:.2} m / {:+.2} m",
+                                        index+1,obj.object_name,if obj.attributes[1].is_empty(){"?"}else{&obj.attributes[1]},obj.metadata.get("quantity").and_then(serde_json::Value::as_u64).unwrap_or(1),c,o));
                                     if ui.small_button("Bewerk").clicked() {
                                         editor.selected=Some(index);
                                         editor.object=ObjectForm::from_object(&editor.draft,obj);
@@ -488,6 +516,11 @@ impl SleufBaseApp {
                             }
                         }
                     });
+                    }
+                    ui.collapsing("Meer sleufopties",|ui|{
+                        if ui.button("Handmatige kopie").clicked(){action=Some(Action::Copy);}
+                        if ui.button("Proefsleuf verwijderen…").clicked(){editor.confirm_delete=true;}
+                    });
                     });
                 });
                     ui.separator();
@@ -497,9 +530,11 @@ impl SleufBaseApp {
                     if !editor.notice.is_empty() {ui.small(&editor.notice);}
                     ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
                     ui.horizontal_wrapped(|ui|{
+                        if ui.button(if editor.selected.is_some(){"Wijzig kabel/leiding"}else{"Kabel/leiding toevoegen"}).clicked(){
+                            match editor.add_or_replace(){Ok(())=>{editor.error.clear();editor.notice="Toegevoegd aan concept. Klik op Opslaan in project om te bewaren.".into();},Err(e)=>editor.error=e}
+                        }
                         if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
-                        if ui.button("Handmatige kopie").clicked() {action=Some(Action::Copy);}
-                        if ui.button("Proefsleuf verwijderen…").clicked(){editor.confirm_delete=true;}
+                        if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
                     });
                     if editor.confirm_delete {
                         ui.colored_label(DARK,"Alleen deze proefsleuf verwijderen? Alle meetobjecten ervan worden ook verwijderd.");
@@ -510,10 +545,12 @@ impl SleufBaseApp {
                     }
                     });
             });
+        if close_requested{open=false;}
         if let Some(cmd)=action {
             match cmd {
                 Action::Save=>{
-                    match editor.build() {
+                    let result=if editor.entry_started||editor.selected.is_some()||editor.object.has_pending_entry(){editor.add_or_replace().and_then(|_|editor.build())}else{editor.build()};
+                    match result {
                         Ok(next)=>{
                             self.virtual_trenches[editor.index]=next;
                             self.trench_markers.clear();
@@ -549,7 +586,11 @@ impl SleufBaseApp {
                 },
             }
         }
-        if open {self.trench_editor=Some(editor);}
+        if open {
+            if pick_requested{editor.picking_object=true;}
+            let index=editor.index;self.trench_editor=Some(editor);
+            if pick_requested{self.start_editor_point_pick(index);}
+        }
     }
 }
 
@@ -607,12 +648,12 @@ mod usability_tests {
     fn section_navigation_adds_an_object_then_saves_the_draft(){
         let ctx=egui::Context::default();theme::install(&ctx);let mut app=fixture();let size=Vec2::new(1200.,760.);
         for _ in 0..4 {frame(&mut app,&ctx,size,vec![]);}
-        for label in ["2. Meetobjecten invoeren","Meetobject toevoegen","Opslaan in project"]{
+        for label in ["2. Kabel/leiding invoeren","Kabel/leiding toevoegen","Opslaan in project"]{
             let mut out=frame(&mut app,&ctx,size,vec![]);
             for _ in 0..4 {out=frame(&mut app,&ctx,size,vec![]);}
             let pos=position(&out,label);assert!(pos.y<size.y);
             for pressed in [true,false] {frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
-            if label=="Meetobject toevoegen"{assert!(app.virtual_trenches[0].objects.is_empty());assert_eq!(app.trench_editor.as_ref().unwrap().draft.objects.len(),1);}
+            if label=="Kabel/leiding toevoegen"{assert!(app.virtual_trenches[0].objects.is_empty());assert_eq!(app.trench_editor.as_ref().unwrap().draft.objects.len(),1);}
         }
         assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].objects.len(),1);
     }
@@ -636,5 +677,93 @@ mod usability_tests {
                 assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].width_meters,0.8);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cable_entry_tests {
+    use super::*;
+    #[test]
+    fn diameter_bundle_material_depth_and_angle_survive_project_and_export(){
+        let t=VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+        let mut e=Editor::new(0,&t);
+        e.object.name="Waterleiding".into();e.object.source="water".into();e.object.role="leiding".into();
+        e.object.chainage=8.5;e.object.attributes=["PE".into(),"110".into(),"3".into()];e.object.diameter=110.;e.object.quantity=3;e.object.angle=35.;e.object.use_depth=true;e.object.depth=0.7;
+        e.add_or_replace().unwrap();let result=e.build().unwrap();
+        assert_eq!(result.objects.len(),1);assert!((result.objects[0].position.x-155008.5).abs()<1e-8);assert_eq!(result.objects[0].position.z,Some(1.3));
+        let project=NativeProject{virtual_trenches:vec![result],..Default::default()};
+        let restored:NativeProject=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        let t=&restored.virtual_trenches[0];let form=ObjectForm::from_object(t,&t.objects[0]);
+        assert_eq!(form.diameter,110.);assert_eq!(form.quantity,3);assert_eq!(form.angle,35.);
+        let dataset=t.to_dataset(12,false);let feature=&dataset.features[0];
+        assert_eq!(sleufbase_rust::profile::diameter_mm(feature),Some(110.));
+        let label=sleufbase_rust::profile_leaders::description(feature,"Waterleiding","Ø").unwrap();
+        assert!(label.contains("Bundel: 3X")&&label.contains("Ø110")&&label.contains("PE"));
+        let marker=sleufbase_rust::cross_section::markers(t).remove(0);assert!((marker.end.x-marker.start.x).abs()>0.1);
+        e.object.angle=81.;assert!(e.add_or_replace().is_err());assert_eq!(e.draft.objects.len(),1);
+    }
+    #[test]
+    fn actual_map_click_chooses_position_in_the_draft_and_escape_cancels(){
+        for(size,along)in[(egui::vec2(680.,420.),0.),(egui::vec2(1200.,760.),8.5)]{
+            let ctx=egui::Context::default();theme::install(&ctx);
+            let t=VirtualTrench::new("PS".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+            let mut app=SleufBaseApp{virtual_trenches:vec![t],..Default::default()};app.open_virtual_editor(0);
+            app.navigation.focus=Some(location_ui::Focus{center:[155005.,463000.],meters_per_pixel:0.02});
+            app.start_editor_point_pick(0);
+            let frame=|app:&mut SleufBaseApp,events:Vec<egui::Event>|{
+                let mut result=None;
+                let _=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,size)),events,..Default::default()},|ctx|{
+                    egui::CentralPanel::default().show(ctx,|ui|{
+                        app.navigation.pointer_tool=app.virtual_map.captures();
+                        let view=canvas(ui,&[],&[],&[],&[],&app.virtual_trenches,&[],&[],None,&[],None,None,false,&mut app.zoom,&mut app.pan,&app.migrated_settings.object_rules,Some(&mut app.navigation)).unwrap();
+                        app.handle_virtual_map(&view);result=Some(view);
+                    });app.show_virtual_editor(ctx);
+                });result.unwrap()
+            };
+            frame(&mut app,vec![]);let view=frame(&mut app,vec![]);let pos=view.project([155000.+along,463000.]);
+            for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+            let editor=app.trench_editor.as_ref().unwrap();assert!(!editor.picking_object);assert!((editor.object.chainage-along).abs()<1e-6);assert!(editor.entry_started);
+            assert!(app.virtual_trenches[0].objects.is_empty()&&editor.draft.objects.is_empty());
+            app.start_editor_point_pick(0);frame(&mut app,vec![egui::Event::Key{key:egui::Key::Escape,physical_key:None,pressed:true,repeat:false,modifiers:Default::default()}]);
+            assert!(!app.trench_editor.as_ref().unwrap().picking_object);assert!(!app.virtual_map.captures());assert!(app.virtual_trenches[0].objects.is_empty());
+        }
+    }
+}
+#[cfg(test)]
+mod simple_form_tests {
+    use super::*;
+    fn frame(app:&mut SleufBaseApp,ctx:&egui::Context,events:Vec<egui::Event>)->egui::FullOutput{
+        ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),events,..Default::default()},|ctx|app.show_virtual_editor(ctx))
+    }
+    fn pos(out:&egui::FullOutput,text:&str)->Pos2{
+        out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==text=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).expect(text)
+    }
+    fn click(app:&mut SleufBaseApp,ctx:&egui::Context,p:Pos2)->egui::FullOutput{
+        for pressed in [true,false]{frame(app,ctx,vec![egui::Event::PointerMoved(p),egui::Event::PointerButton{pos:p,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+        frame(app,ctx,vec![])
+    }
+    #[test]
+    fn type_dropdown_and_end_distance_save_one_cable_without_a_second_add_action(){
+        let t=VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+        let ctx=egui::Context::default();theme::install(&ctx);let mut app=SleufBaseApp{virtual_trenches:vec![t],..Default::default()};app.open_virtual_editor(0);
+        let mut out=frame(&mut app,&ctx,vec![]);for _ in 0..3{out=frame(&mut app,&ctx,vec![]);}
+        pos(&out,"Kies punt op de kaart");
+        assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Afwijking van haaks op de sleuf")));
+        let selected=app.migrated_settings.object_rules.iter().find(|r|r.keywords.iter().any(|k|k.eq_ignore_ascii_case("ls"))).unwrap().display_label().to_owned();
+        let out=click(&mut app,&ctx,pos(&out,&selected));let out=click(&mut app,&ctx,pos(&out,"Waterleiding"));
+        assert_eq!(app.trench_editor.as_ref().unwrap().object.source,"water");
+        click(&mut app,&ctx,pos(&out,"Eindpunt"));
+        let form=&mut app.trench_editor.as_mut().unwrap().object;assert!(form.from_end);form.set_distance(10.,object_ui::parse_decimal("1,5").unwrap()).unwrap();
+        assert_eq!(form.distance(10.),1.5);assert_eq!(form.chainage,8.5);assert!(form.set_distance(10.,11.).is_err());
+        let out=frame(&mut app,&ctx,vec![]);click(&mut app,&ctx,pos(&out,"Opslaan in project"));
+        assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].objects.len(),1);
+        assert_eq!(app.virtual_trenches[0].objects[0].source_name,"water");assert!((app.virtual_trenches[0].objects[0].position.x-155008.5).abs()<1e-8);
+    }
+    #[test]
+    fn anchor_switch_alone_is_not_a_new_cable_and_count_changes_keep_sleeve_flags(){
+        let mut form=ObjectForm::default();form.from_end=true;assert!(!form.has_pending_entry());
+        assert_eq!(object_ui::parse_decimal("-12,5"),Some(-12.5));assert!(object_ui::parse_decimal("NaN").is_none());assert!(object_ui::parse_decimal("abc").is_none());
+        form.attributes[2]="mantelbuis dubbel 3X".into();form.quantity=4;form.update_quantity_attribute();
+        assert!(form.attributes[2].contains("mantelbuis")&&form.attributes[2].contains('4'));assert!(!form.attributes[2].contains("dubbel"));
     }
 }

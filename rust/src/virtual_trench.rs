@@ -211,7 +211,7 @@ impl VirtualTrench {
             features.push(Feature {
                 object_name:object.object_name.clone(),
                 source_name:object.source_name.clone(),
-                geometry:Geometry::Point(object.position),
+                geometry:Geometry::Point(crate::cross_section::object_axis_position(self,object)),
                 attributes:object.attributes.clone()
             });
         }

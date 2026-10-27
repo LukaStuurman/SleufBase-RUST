@@ -265,15 +265,15 @@ mod tests {
     fn browser_capture_blocks_all_other_account_actions_before_consuming_credentials() {
         let (tx, rx) = mpsc::channel();
         let mut app = SleufBaseApp {
-            live_email: "synthetic@example.test".into(),
-            live_password: "test-only".into(),
+
+
             ..Default::default()
         };
         app.browser_ui.capturing = Some(rx);
         app.login_kickthemap();
         app.refresh_live_jobs();
         app.download_live_job(42, RemoteFileKind::GeoTiff);
-        assert_eq!(app.live_password, "test-only");
+        assert_eq!(app.browser_ui.launch_requests,0);
         assert!(app.live_rx.is_none());
         assert!(app.live_download_rx.is_none());
         assert!(!app.live_busy);

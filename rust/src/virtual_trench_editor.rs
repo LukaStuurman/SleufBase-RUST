@@ -23,6 +23,9 @@ pub fn check(trench: &VirtualTrench) -> Result<(), String> {
         return Err("Te veel meetobjecten in één proefsleuf".into());
     }
     for object in &trench.objects {
+        if let Some(value)=object.metadata.get("crossing_angle_degrees") {
+            if !value.as_f64().is_some_and(|v|v.is_finite()&&v.abs()<=80.){return Err("De kabelhoek moet tussen -80 en 80 graden liggen".into());}
+        }
         if !valid_text(&object.role, MAX_TEXT)
             || !valid_text(&object.object_name, MAX_TEXT)
             || !valid_text(&object.source_name, MAX_TEXT)

@@ -16,7 +16,7 @@ use std::time::Duration;
 #[path="kickthemap_strategy.rs"]
 pub mod strategy;
 
-pub const INTERACTIVE_LOGIN_REQUIRED:&str="KickTheMap vraagt om reCAPTCHA. Kies Open KickTheMap in Edge, meld je daar aan en klik op Sessie overnemen.";
+pub const INTERACTIVE_LOGIN_REQUIRED:&str="KickTheMap vraagt om reCAPTCHA. Open het ingebouwde inlogvenster, meld je daar aan en klik op Sessie overnemen.";
 
 const ORIGIN: &str = "https://www.my.kickthemap.com";
 const MAX_HTML: u64 = 8 * 1024 * 1024;
