@@ -40,6 +40,7 @@ pub(super) struct BrowserUi {
     pub(super) open:bool,
     pub(super) browser:Option<Browser>,
     launching:Option<Receiver<Result<Browser,String>>>,
+    #[cfg(test)] pub(super) launch_requests:usize,
     pub(super) capturing:Option<Receiver<(Browser,Result<(KickTheMapLiveClient,Vec<Job>),String>)>>,
     pub(super) selected:BTreeSet<u64>,
     filters:[String;7],
@@ -71,6 +72,7 @@ pub(super) struct BrowserUi {
 impl Default for BrowserUi {
     fn default()->Self {
         Self {open:false,browser:None,launching:None,capturing:None,
+            #[cfg(test)] launch_requests:0,
             selected:BTreeSet::new(),filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,show_login:false,
@@ -114,7 +116,7 @@ impl SleufBaseApp {
             let capture=match source{
                 RepairSource::File(path)=>read_download_capture(&path),
                 RepairSource::Browser(browser)=>browser.arm_download_capture(id,&cancel).and_then(|handle|{
-                    let _=status_tx.send(format!("Klaar voor job {id}: download nu de GeoTIFF in het geopende Edge-venster. De vastlegging stopt na twee minuten."));
+                    let _=status_tx.send(format!("Klaar voor job {id}: download nu de GeoTIFF in het ingebouwde venster. De vastlegging stopt na twee minuten."));
                     handle.wait(&cancel)
                 }),
             };
@@ -149,7 +151,7 @@ impl SleufBaseApp {
         }
         if let Some((_,cache))=newest {
             self.browser_ui.status=format!(
-                "Offline cache geopend: {} jobs. Log via Edge in voor de huidige gegevens.",
+                "Offline cache geopend: {} jobs. Log via het ingebouwde venster in voor de huidige gegevens.",
                 cache.jobs.len()
             );
             self.jobs_cache=Some(cache);
@@ -160,10 +162,11 @@ impl SleufBaseApp {
             self.browser_ui.browser.is_some() {return;}
         let (tx,rx)=mpsc::channel();
         self.browser_ui.launching=Some(rx);
-        self.browser_ui.status="Een privé Microsoft Edge-venster starten. Log daarin zelf in, inclusief reCAPTCHA.".into();
-        std::thread::spawn(move||{
-            let _=tx.send(Browser::launch());
-        });
+        self.browser_ui.status="Ingebouwd KickTheMap-inlogvenster openen…".into();
+        self.message=self.browser_ui.status.clone();
+        #[cfg(not(test))]
+        std::thread::spawn(move||{let _=tx.send(Browser::launch());});
+        #[cfg(test)] {self.browser_ui.launch_requests+=1;let _=tx.send(Err("Test: ingebouwd inlogvenster niet gestart".into()));}
     }
     pub(super) fn capture_kickthemap_browser(&mut self) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
@@ -173,10 +176,11 @@ impl SleufBaseApp {
         let known_nonempty=!self.live_jobs.is_empty()||self.jobs_cache.as_ref().is_some_and(|c|!c.jobs.is_empty());
         let (tx,rx)=mpsc::channel();
         self.browser_ui.capturing=Some(rx);
-        self.browser_ui.status="Sessie van het eigen Edge-venster controleren…".into();
+        self.browser_ui.status="Sessie van het ingebouwde inlogvenster controleren…".into();
+        self.message=self.browser_ui.status.clone();
         std::thread::spawn(move|| {
             // Validate through the authenticated tab first. An independent
-            // HTTP bootstrap may be rejected even when Edge is signed in.
+            // HTTP bootstrap may be rejected even when the embedded browser is signed in.
             let result=browser.csrf_token().and_then(|csrf|browser.cookies()
                 .and_then(|cookies|KickTheMapLiveClient::from_authenticated_browser(&cookies,&csrf)))
                 .and_then(|mut session|{
@@ -194,7 +198,7 @@ impl SleufBaseApp {
                 self.browser_ui.browser=Some(browser);
                 self.browser_ui.opening_job=None;
                 self.browser_ui.status=match result {
-                    Ok(())=>"Job geopend in het eigen KickTheMap Edge-venster".into(),
+                    Ok(())=>"Job geopend in het ingebouwde KickTheMap-venster".into(),
                     Err(e)=>format!("Job openen mislukt: {e}"),
                 };
             }
@@ -246,22 +250,24 @@ impl SleufBaseApp {
             self.browser_ui.status="Project gewijzigd tijdens downloads; bestanden blijven op schijf, maar zijn niet in het nieuwe project ingeladen".into();
         }
         let event=self.browser_ui.launching.as_ref().map(|rx|rx.try_recv());
+        let received=event.as_ref().is_some_and(|r|!matches!(r,Err(TryRecvError::Empty)));
         match event {
             Some(Ok(Ok(browser)))=>{
                 self.browser_ui.browser=Some(browser);
                 self.browser_ui.launching=None;
-                self.browser_ui.status="Edge staat open. Meld je aan op KickTheMap en klik daarna op 'Sessie overnemen'.".into();
+                self.browser_ui.status="Het ingebouwde venster staat open. Meld je aan en klik daarna op Sessie overnemen.".into();
             }
             Some(Ok(Err(err)))=>{
                 self.browser_ui.launching=None;
-                self.browser_ui.status=format!("Edge starten mislukt: {err}");
+                self.browser_ui.status=format!("Ingebouwd inlogvenster starten mislukt: {err}");
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.browser_ui.launching=None;
-                self.browser_ui.status="Edge-browserproces is onverwacht gestopt".into();
+                self.browser_ui.status="Het ingebouwde inlogvenster is onverwacht gesloten".into();
             }
             _=>{}
         }
+        if received{self.message=self.browser_ui.status.clone();}
         let event=self.browser_ui.capturing.as_ref().map(|rx|rx.try_recv());
         match event {
             Some(Ok((browser,result)))=>{
@@ -272,7 +278,7 @@ impl SleufBaseApp {
                         self.live_jobs_owner=Some(session.snapshot_owner().clone());
                         self.live_session=Some(session);
                         self.live_jobs=jobs;
-                        self.live_password.clear();
+
                         self.save_live_cache();
                         self.browser_ui.status=format!(
                             "KickTheMap verbonden: {} live jobs. Selecteer jobs voor downloads.",
@@ -358,13 +364,13 @@ impl SleufBaseApp {
     }
     fn open_selected_kickthemap_job(&mut self,id:u64){
         let Some(browser)=self.browser_ui.browser.take() else {
-            self.browser_ui.status="Open eerst het eigen KickTheMap Edge-venster en neem de sessie over.".into();
+            self.browser_ui.status="Open eerst het ingebouwde KickTheMap-venster en neem de sessie over.".into();
             return;
         };
         if self.browser_ui.opening_job.is_some(){self.browser_ui.browser=Some(browser);return;}
         let (tx,rx)=mpsc::channel();
         self.browser_ui.opening_job=Some(rx);
-        self.browser_ui.status=format!("Job {id} openen in Edge…");
+        self.browser_ui.status=format!("Job {id} openen in het ingebouwde venster…");
         std::thread::spawn(move||{
             let result=browser.open_job(id);
             let _=tx.send((browser,result));
@@ -412,11 +418,11 @@ impl SleufBaseApp {
                     }
                     if browser.show_login || !live {
                     ui.heading("Browseraanmelding");
-                    ui.label("SleufBase opent een eigen tijdelijk Edge-profiel. Log rechtstreeks in op KickTheMap en los reCAPTCHA zelf op; er wordt geen wachtwoord of bestaande browsersessie uitgelezen.");
+                    ui.label("SleufBase opent een ingebouwd inlogvenster. Log rechtstreeks in op KickTheMap en los reCAPTCHA zelf op; er wordt geen wachtwoord of bestaande browsersessie uitgelezen.");
                     ui.horizontal(|ui|{
                         if ui.add_enabled(browser.browser.is_none() &&
                             browser.launching.is_none()&&browser.capturing.is_none(),
-                            egui::Button::new("Open KickTheMap in Edge")).clicked() {
+                            egui::Button::new("Open ingebouwd inlogvenster")).clicked() {
                             action=Some("launch");
                         }
                         if ui.add_enabled(browser.browser.is_some()&&browser.capturing.is_none()&&!busy,
@@ -424,7 +430,7 @@ impl SleufBaseApp {
                             action=Some("capture");
                         }
                         if ui.add_enabled(browser.browser.is_some()&&browser.capturing.is_none()&&!busy,
-                            egui::Button::new("Privé Edge-venster sluiten")).clicked(){action=Some("close");}
+                            egui::Button::new("Inlogvenster sluiten")).clicked(){action=Some("close");}
                         if ui.add_enabled(live&&!busy,
                             egui::Button::new("Vernieuw live jobs")).clicked(){action=Some("refresh");}
                     });
@@ -522,7 +528,7 @@ impl SleufBaseApp {
                     if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
                         egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
                     if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1&&browser.browser.is_some(),
-                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in Edge")).clicked(){action=Some("repair-browser");}
+                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){action=Some("repair-browser");}
                     ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
                     if busy&&!browser.batch_mode&&ui.button("Download annuleren").clicked(){action=Some("cancel");}
                     if browser.batch_mode||busy {ui.spinner();}
@@ -550,7 +556,7 @@ impl SleufBaseApp {
             Some("capture")=>self.capture_kickthemap_browser(),
             Some("close")=>{
                 self.browser_ui.browser=None;
-                self.browser_ui.status="Privé Edge-venster gesloten".into();
+                self.browser_ui.status="Ingebouwd inlogvenster gesloten".into();
             }
             Some("refresh")=>self.refresh_live_jobs(),
             Some("repair")=>{

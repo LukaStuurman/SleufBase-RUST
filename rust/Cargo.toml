@@ -35,6 +35,8 @@ unicode-script = "0.5.8"
 crc32fast = "1"
 
 [target.'cfg(windows)'.dependencies]
+wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
+winit = "0.30"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
 
 [target.'cfg(windows)'.dev-dependencies]

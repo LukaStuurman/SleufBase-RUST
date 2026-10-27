@@ -234,22 +234,7 @@ impl SleufBaseApp {
                 if ui.button("Open KickTheMap browser & jobbeheer").clicked() {
                     self.open_kickthemap_workspace();
                 }
-                ui.horizontal(|ui| {
-                    ui.label("E-mail");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.live_email)
-                            .desired_width(170.0)
-                            .hint_text("e-mailadres"),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Wachtwoord");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.live_password)
-                            .password(true)
-                            .desired_width(150.0),
-                    );
-                });
+                ui.label("Meld je aan in het ingebouwde KickTheMap-venster; daar kun je reCAPTCHA afronden.");
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!self.live_operation_busy(), egui::Button::new("Inloggen"))

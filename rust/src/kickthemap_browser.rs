@@ -1,9 +1,9 @@
-//! Interactive KickTheMap browser sign-in using a *new*, temporary Microsoft
-//! Edge profile. The operator handles reCAPTCHA in the real browser. CDP is
+//! Interactive KickTheMap browser sign-in using a *new*, temporary SleufBase
+//! WebView2 profile. The operator handles reCAPTCHA in the real browser. CDP is
 //! limited to the locally launched browser, never attached to existing tabs.
 //! Credentials and session cookies are never saved to SleufBase project files.
 use serde_json::{Value,json};
-use std::{fs, path::{Path,PathBuf},process::{Child,Command,Stdio}, time::{Duration,Instant}};
+use std::{fs, path::{Path,PathBuf},process::Command, time::{Duration,Instant}};
 #[cfg(test)]
 use tungstenite::Message;
 
@@ -14,6 +14,10 @@ mod cdp;
 mod capture;
 pub use capture::CaptureHandle;
 
+#[cfg(windows)]
+use crate::vllm_runtime::windows_job::Process as BrowserProcess;
+#[cfg(not(windows))]
+use std::process::Child as BrowserProcess;
 const ORIGIN:&str="https://www.my.kickthemap.com";
 const MAX_CDP_RESPONSE:usize=24*1024*1024;
 #[derive(Clone,Debug)]
@@ -43,84 +47,75 @@ fn parse_cookie(value:&Value)->Option<BrowserCookie>{
 }
 pub fn parse_browser_cookies(payload:&Value)->Result<Vec<BrowserCookie>,String>{
     let items=payload.get("cookies").and_then(Value::as_array)
-        .ok_or("Edge stuurde geen CDP-cookielijst terug")?;
+        .ok_or("Ingebouwde browser stuurde geen CDP-cookielijst terug")?;
     if items.len()>4096 {return Err("Browser-cookielijst is te groot".into());}
     let cookies=items.iter().filter_map(parse_cookie).collect::<Vec<_>>();
     if cookies.is_empty(){return Err("Nog geen KickTheMap-aanmelding gevonden in de geopende browser".into());}
     Ok(cookies)
 }
 pub fn validated_ws_url(raw:&str,port:u16)->Result<String,String>{
-    let url=reqwest::Url::parse(raw).map_err(|_|"Ongeldige Edge DevTools-verbinding")?;
+    let url=reqwest::Url::parse(raw).map_err(|_|"Ongeldige Ingebouwde browser DevTools-verbinding")?;
     if url.scheme()!="ws" || !url.username().is_empty() || url.password().is_some()
         || url.port_or_known_default()!=Some(port)
         || !matches!(url.host_str(),Some("localhost"|"127.0.0.1"|"[::1]"|"::1"))
         || !url.path().starts_with("/devtools/")
         || url.query().is_some() || url.fragment().is_some()
-    {return Err("Edge DevTools-verbinding is niet lokaal of onverwacht".into());}
+    {return Err("Ingebouwde browser DevTools-verbinding is niet lokaal of onverwacht".into());}
     Ok(raw.to_owned())
 }
-fn find_edge()->Result<PathBuf,String>{
-    #[cfg(target_os="windows")] {
-        let mut locations=Vec::new();
-        for name in ["PROGRAMFILES(X86)","PROGRAMFILES","LOCALAPPDATA"] {
-            if let Some(dir)=std::env::var_os(name) {
-                locations.push(PathBuf::from(dir).join("Microsoft/Edge/Application/msedge.exe"));
-            }
-        }
-        if let Some(path)=locations.into_iter().find(|p|p.is_file()){return Ok(path);}
-        Err("Microsoft Edge is niet gevonden; installeer Edge met WebView2-ondersteuning".into())
-    }
-    #[cfg(not(target_os="windows"))] {
-        Err("KickTheMap browseraanmelding wordt alleen op Windows met Microsoft Edge ondersteund".into())
-    }
-}
 fn read_port(profile:&Path)->Result<(u16,String),String>{
-    let contents=fs::read_to_string(profile.join("DevToolsActivePort"))
-        .map_err(|e|format!("Edge DevTools-port nog niet beschikbaar: {e}"))?;
+    let contents=fs::read_to_string(profile.join("EBWebView").join("DevToolsActivePort"))
+        .map_err(|e|format!("Ingebouwde browser DevTools-port nog niet beschikbaar: {e}"))?;
     let mut lines=contents.lines();
-    let port=lines.next().ok_or("Edge DevTools-port ontbreekt")?.trim()
-        .parse::<u16>().map_err(|_|"Edge DevTools-port is ongeldig")?;
-    if port==0 {return Err("Edge DevTools-port is ongeldig".into());}
-    let path=lines.next().ok_or("Edge DevTools-socket ontbreekt")?.trim();
+    let port=lines.next().ok_or("Ingebouwde browser DevTools-port ontbreekt")?.trim()
+        .parse::<u16>().map_err(|_|"Ingebouwde browser DevTools-port is ongeldig")?;
+    if port==0 {return Err("Ingebouwde browser DevTools-port is ongeldig".into());}
+    let path=lines.next().ok_or("Ingebouwde browser DevTools-socket ontbreekt")?.trim();
     if !path.starts_with("/devtools/browser/") || path.len()>512
         || path.bytes().any(|c|c.is_ascii_whitespace())
-    {return Err("Edge DevTools-socket heeft een ongeldig formaat".into());}
+    {return Err("Ingebouwde browser DevTools-socket heeft een ongeldig formaat".into());}
     Ok((port,format!("ws://127.0.0.1:{port}{path}")))
 }
 /// Owns the only browser from which a KickTheMap session can be adopted.
 pub struct Browser {
-    process:Child,
+    process:BrowserProcess,
     _profile:tempfile::TempDir,
     port:u16,
     websocket:String,
 }
 impl Browser {
     pub fn launch()->Result<Self,String>{
-        let edge=find_edge()?;
-        let profile=tempfile::Builder::new().prefix("sleufbase-kickthemap-")
-            .tempdir().map_err(|e|format!("Tijdelijk Edge-profiel: {e}"))?;
-        let mut command=Command::new(edge);
-        command.arg("--remote-debugging-port=0")
-            .arg("--remote-debugging-address=127.0.0.1")
-            .arg(format!("--user-data-dir={}",profile.path().display()))
-            .arg("--no-first-run").arg("--no-default-browser-check")
-            .arg("--new-window").arg(format!("{ORIGIN}/signin"))
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        let process=command.spawn().map_err(|e|format!("Edge starten mislukt: {e}"))?;
+        #[cfg(windows)] {
+            let profile=tempfile::Builder::new().prefix("sleufbase-kickthemap-").tempdir().map_err(|e|e.to_string())?;
+            let mut command=Command::new(std::env::current_exe().map_err(|e|e.to_string())?);
+            command.arg("--kickthemap-webview").arg(profile.path());
+            Self::launch_owned(command,profile)
+        }
+        #[cfg(not(windows))] {Err("De ingebouwde KickTheMap-browser vereist Windows en WebView2".into())}
+    }
+    #[cfg(windows)]
+    fn launch_owned(command:Command,profile:tempfile::TempDir)->Result<Self,String>{
+        let log=fs::File::create(profile.path().join("startup.log")).map_err(|e|e.to_string())?;
+        let process=BrowserProcess::spawn(&command,&log).map_err(|e|format!("Inlogvenster starten: {e}"))?;
         let mut owned=Self{process,_profile:profile,port:0,websocket:String::new()};
-        let deadline=Instant::now()+Duration::from_secs(25);
+        let deadline=Instant::now()+Duration::from_secs(45);
         while Instant::now()<deadline {
             if let Ok((port,websocket))=read_port(owned._profile.path()){
-                owned.port=port;
-                owned.websocket=websocket;
-                return Ok(owned);
+                owned.port=port;owned.websocket=websocket;
+                // WebView2 exposes its diagnostic port before its first page
+                // exists. Wait for the owned webview instead of announcing a
+                // socket-only startup as a ready login window.
+                if owned.cdp("Target.getTargets",json!({})).ok().and_then(|v|v.get("targetInfos").and_then(Value::as_array).map(|a|a.iter().any(|p|p["type"]=="page"))).unwrap_or(false){return Ok(owned);}
             }
-            if owned.process.try_wait().map_err(|e|e.to_string())?.is_some() {
-                return Err("Edge is gestopt voordat het browservenster klaar was".into());
+            if let Some(status)=owned.process.try_wait().map_err(|e|e.to_string())? {
+                let detail=fs::read_to_string(owned._profile.path().join("startup.log")).unwrap_or_default();
+                let detail=detail.chars().take(2000).collect::<String>();
+                return Err(if detail.trim().is_empty(){format!("Het ingebouwde inlogvenster is gesloten voordat de verbinding klaar was ({status})")}
+                    else{format!("Ingebouwd inlogvenster starten: {}",detail.trim())});
             }
-            std::thread::sleep(Duration::from_millis(150));
+            std::thread::sleep(Duration::from_millis(100));
         }
-        Err("Edge-browser start niet met lokale DevTools-verbinding. Controleer bedrijfsbeleid voor remote debugging".into())
+        Err("Het ingebouwde inlogvenster reageert niet. Controleer de WebView2 Runtime en bedrijfsinstellingen voor browserdiagnostiek.".into())
     }
     fn command(&self,method:&str,params:Value,browser_target:Option<&str>)->Result<Value,String>{
         let ws=browser_target.unwrap_or(&self.websocket);
@@ -136,26 +131,27 @@ impl Browser {
     pub fn csrf_token(&self)->Result<String,String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
         let result=self.command("Runtime.evaluate",json!({
-            "expression":r#"(()=>{if(document.querySelector('input[type="password"]'))throw new Error('Meld je eerst aan');return document.querySelector('meta[name="csrf-token"]')?.content||'';})()"#,
+            "expression":r#"(()=>{if(/^\/(signin|login)\/?$/.test(location.pathname))throw new Error('Meld je eerst aan');return document.querySelector('meta[name="csrf-token"]')?.content||'';})()"#,
             "returnByValue":true
         }),Some(&ws))?;
-        if result.get("exceptionDetails").is_some(){return Err("Meld je eerst volledig aan in het geopende Edge-venster".into());}
+        if result.get("exceptionDetails").is_some(){return Err("Meld je eerst volledig aan in het geopende Browser-venster".into());}
         result["result"]["value"].as_str().filter(|s|!s.is_empty())
             .map(str::to_owned).ok_or("KickTheMap-tabblad heeft nog geen actieve sessie".into())
     }
     pub fn browser_jobs(&self)->Result<Vec<crate::jobs_cache::Job>,String>{
         crate::kickthemap_live::parse_live_jobs(&self.browser_job_payload()?)
     }
-    /// Open the selected job in a new tab of *our own* KickTheMap Edge profile.
+    /// Navigate the owned embedded view to the selected KickTheMap job.
     /// Identity comes from a current, authenticated jobs response, never from a
     /// stale cache or a guessed job URL.
     pub fn open_job(&self,job_id:u64)->Result<(),String>{
         let payload=self.browser_job_payload()?;
         let url=job_view_url(&payload,job_id)?;
-        let response=self.command("Target.createTarget",
-            json!({"url":url.as_str()}),None)?;
-        if response["targetId"].as_str().is_none_or(str::is_empty){
-            return Err("Edge kon het KickTheMap-jobtabblad niet openen".into());
+        let target=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
+        let response=self.command("Page.navigate",
+            json!({"url":url.as_str()}),Some(&target))?;
+        if response["frameId"].as_str().is_none_or(str::is_empty)||response.get("errorText").is_some(){
+            return Err("Ingebouwde browser kon het KickTheMap-jobtabblad niet openen".into());
         }
         Ok(())
     }
@@ -203,8 +199,8 @@ fn job_view_url(payload:&str,job_id:u64)->Result<reqwest::Url,String>{
     Ok(url)
 }
 
-/// A lightweight capability limited to this process's own Edge debug port.
-/// It never owns or reads other Edge profiles or browser instances.
+/// A lightweight capability limited to this process's own Ingebouwde browser debug port.
+/// It never owns or reads other Ingebouwde browser profiles or browser instances.
 #[derive(Clone)]
 pub struct BrowserChannel { port:u16, websocket:String }
 impl Browser {
@@ -231,14 +227,14 @@ impl BrowserChannel {
     }
     fn job_tab(&self,cancel:&std::sync::atomic::AtomicBool)->Result<String,String>{
         let targets=self.command("Target.getTargets",json!({}),None,cancel)?;
-        let list=targets["targetInfos"].as_array().ok_or("Edge-taboverzicht ontbreekt")?;
+        let list=targets["targetInfos"].as_array().ok_or("Browser-taboverzicht ontbreekt")?;
         let page=list.iter().find(|p|{
             p["type"]=="page" && p["url"].as_str().is_some_and(|s|
                 reqwest::Url::parse(s).ok().is_some_and(|u|
                     u.scheme()=="https" && matches!(u.host_str(),Some("www.my.kickthemap.com"|"my.kickthemap.com")) && u.port_or_known_default()==Some(443)))
-        }).ok_or("Er is geen KickTheMap-tabblad actief in het eigen Edge-venster")?;
+        }).ok_or("Er is geen KickTheMap-tabblad actief in het eigen Browser-venster")?;
         let id=page["targetId"].as_str().filter(|id|!id.is_empty()&&id.len()<=128&&id.bytes().all(|c|c.is_ascii_alphanumeric()||b"-_".contains(&c)))
-            .ok_or("Ongeldige Edge-tabidentiteit")?;
+            .ok_or("Ongeldige Browser-tabidentiteit")?;
         validated_ws_url(&format!("ws://127.0.0.1:{}/devtools/page/{id}",self.port),self.port)
     }
     /// Fallback to the same-origin browser session for a *signed download URL*.
@@ -337,5 +333,38 @@ mod tests {
             "ws://user@localhost:17293/devtools/page/x",
             "ws://localhost:17293/private",
         ] {assert!(validated_ws_url(candidate,17293).is_err(),"{candidate}");}
+    }
+}
+
+#[cfg(all(test,windows))]
+mod embedded_tests {
+    use super::*;
+    const FIXTURE:&str="kickthemap_browser::embedded_tests::native_webview_fixture";
+    #[test]
+    fn native_webview_fixture(){
+        let Some(profile)=std::env::var_os("SLEUFBASE_WEBVIEW_FIXTURE") else{return};
+        if let Err(error)=crate::kickthemap_webview::run_fixture(Path::new(&profile)){
+            eprintln!("{error}");std::process::exit(3);
+        }
+    }
+    #[test]
+    fn embedded_runtime_opens_local_fixture_and_connects_without_external_edge(){
+        let profile=tempfile::Builder::new().prefix("sleufbase-webview-test-").tempdir().unwrap();
+        let mut command=Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact",FIXTURE,"--nocapture"]).env("SLEUFBASE_WEBVIEW_FIXTURE",profile.path());
+        let browser=Browser::launch_owned(command,profile).unwrap();
+        let deadline=Instant::now()+Duration::from_secs(5);
+        loop {
+            let targets=browser.cdp("Target.getTargets",json!({})).unwrap();
+            let id=targets["targetInfos"].as_array().and_then(|a|a.iter().find(|p|p["type"]=="page")).and_then(|p|p["targetId"].as_str());
+            let Some(id)=id else{assert!(Instant::now()<deadline,"webview page missing");std::thread::sleep(Duration::from_millis(50));continue};
+            let ws=format!("ws://127.0.0.1:{}/devtools/page/{id}",browser.port);
+            let result=browser.command("Runtime.evaluate",json!({"expression":"document.title","returnByValue":true}),Some(&ws)).unwrap();
+            if result["result"]["value"]=="SleufBase local browser fixture"{break;}
+            assert!(Instant::now()<deadline,"local fixture did not load");std::thread::sleep(Duration::from_millis(50));
+        }
+        // Browser owns a kill-on-close process tree; dropping it closes the
+        // hidden fixture and its WebView2 subprocesses before profile removal.
+        drop(browser);
     }
 }

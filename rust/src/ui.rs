@@ -191,8 +191,6 @@ pub struct SleufBaseApp {
     ahn_busy:bool,
     pending_ahn:Option<sleufbase_rust::ahn_pending::Worker>,
     jobs_cache:Option<JobsCache>,
-    live_email:String,
-    live_password:String,
     live_session:Option<KickTheMapLiveClient>,
     browser_ui:kick_browser_ui::BrowserUi,
     live_jobs:Vec<Job>,
@@ -299,8 +297,6 @@ impl Default for SleufBaseApp {
             ahn_busy:false,
             pending_ahn:None,
             jobs_cache:None,
-            live_email:String::new(),
-            live_password:String::new(),
             live_session:None,
             browser_ui:kick_browser_ui::BrowserUi::default(),
             live_jobs:Vec::new(),
@@ -774,24 +770,10 @@ impl SleufBaseApp {
 
 
     fn login_kickthemap(&mut self) {
-        if self.live_operation_busy()||self.browser_ui.batch_mode {return;}
-        let email=self.live_email.trim().to_owned();
-        let password=std::mem::take(&mut self.live_password);
-        if email.is_empty() || password.is_empty() {
-            self.message="Vul KickTheMap e-mailadres en wachtwoord in".into();
-            return;
-        }
-        // Never log, serialize, or retain credentials in the application state.
-        let known_nonempty=self.jobs_cache.as_ref().is_some_and(|c|c.email.trim().eq_ignore_ascii_case(&email)&&!c.jobs.is_empty());
-        let (tx,rx)=mpsc::channel();
-        self.live_rx=Some(rx);
-        self.live_busy=true;
-        self.message="KickTheMap-login en live jobs ophalen...".into();
-        std::thread::spawn(move || {
-            let result=KickTheMapLiveClient::login(&email,&password)
-                .and_then(|mut session|{let _=session.load_download_strategy(&kickthemap_cache_dir());if known_nonempty{session.require_empty_confirmation();}session.fetch_jobs().map(|jobs|(session,jobs))});
-            let _=tx.send(result);
-        });
+        if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
+
+        self.open_kickthemap_login();
+        self.launch_kickthemap_browser();
     }
 
     fn refresh_live_jobs(&mut self) {
@@ -947,7 +929,7 @@ impl SleufBaseApp {
         self.live_session=None;
         self.live_jobs_owner=None;
         self.live_jobs.clear();
-        self.live_password.clear();
+
         self.browser_ui.browser=None;
         self.browser_ui.selected.clear();
         self.browser_ui.queue.clear();

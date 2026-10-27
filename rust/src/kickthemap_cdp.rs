@@ -1,4 +1,4 @@
-//! One bounded, cancellable transport for the process-owned Edge instance.
+//! One bounded, cancellable transport for the process-owned Browser instance.
 use serde_json::{json, Value};
 use std::{
     io::{self, Read, Write},
@@ -26,12 +26,12 @@ struct Stream<'a> {
 impl Stream<'_> {
     fn guard(&self) -> io::Result<()> {
         if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(io::Error::other("Edge-opdracht geannuleerd"));
+            return Err(io::Error::other("Browser-opdracht geannuleerd"));
         }
         if Instant::now() >= self.deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "Edge-antwoord duurde te lang",
+                "Browser-antwoord duurde te lang",
             ));
         }
         Ok(())
@@ -56,7 +56,7 @@ impl Write for Stream<'_> {
 fn check(cancel: &AtomicBool, deadline: Instant) -> Result<(), String> {
     crate::input::check(cancel)?;
     if Instant::now() >= deadline {
-        return Err("Edge-antwoord duurde te lang".into());
+        return Err("Browser-antwoord duurde te lang".into());
     }
     Ok(())
 }
@@ -78,20 +78,20 @@ pub(super) fn command(
 ) -> Result<Value, String> {
     let deadline = Instant::now()
         .checked_add(limits.duration)
-        .ok_or("Ongeldig Edge-tijdbudget")?;
+        .ok_or("Ongeldig Browser-tijdbudget")?;
     check(cancel, deadline)?;
     if target.len() > 4096
         || limits.response_bytes == 0
         || limits.response_bytes > super::MAX_CDP_RESPONSE
     {
-        return Err("Ongeldig Edge-antwoordbudget of doel".into());
+        return Err("Ongeldig Browser-antwoordbudget of doel".into());
     }
     super::validated_ws_url(target, port)?;
     let request = json!({"id":1,"method":method,"params":params}).to_string();
     if request.len() > REQUEST_LIMIT {
-        return Err("Edge-opdracht is te groot".into());
+        return Err("Browser-opdracht is te groot".into());
     }
-    let url = reqwest::Url::parse(target).map_err(|_| "Ongeldig Edge-doel")?;
+    let url = reqwest::Url::parse(target).map_err(|_| "Ongeldig Browser-doel")?;
     let ip = if matches!(url.host_str(), Some("::1" | "[::1]")) {
         IpAddr::V6(Ipv6Addr::LOCALHOST)
     } else {
@@ -102,7 +102,7 @@ pub(super) fn command(
         &SocketAddr::new(ip, port),
         Duration::from_millis(200).min(deadline.saturating_duration_since(Instant::now())),
     )
-    .map_err(|e| format!("Edge-CDP-verbinding: {e}"))?;
+    .map_err(|e| format!("Browser-CDP-verbinding: {e}"))?;
     socket.set_nonblocking(true).map_err(|e| e.to_string())?;
     let stream = Stream {
         socket,
@@ -125,7 +125,7 @@ pub(super) fn command(
                 handshake = state.handshake();
             }
             Err(HandshakeError::Failure(error)) => {
-                return Err(format!("Edge-CDP-handshake: {error}"))
+                return Err(format!("Browser-CDP-handshake: {error}"))
             }
         }
     };
@@ -134,14 +134,14 @@ pub(super) fn command(
     // the message could execute a browser operation twice.
     if let Err(error) = socket.send(Message::Text(request.into())) {
         if !pending(&error) {
-            return Err(format!("Edge-CDP-opdracht: {error}"));
+            return Err(format!("Browser-CDP-opdracht: {error}"));
         }
         loop {
             pause(cancel, deadline)?;
             match socket.flush() {
                 Ok(()) => break,
                 Err(e) if pending(&e) => {}
-                Err(e) => return Err(format!("Edge-CDP-schrijven: {e}")),
+                Err(e) => return Err(format!("Browser-CDP-schrijven: {e}")),
             }
         }
     }
@@ -153,16 +153,16 @@ pub(super) fn command(
                 pause(cancel, deadline)?;
                 continue;
             }
-            Err(e) => return Err(format!("Edge-CDP-antwoord: {e}")),
+            Err(e) => return Err(format!("Browser-CDP-antwoord: {e}")),
         };
         check(cancel, deadline)?;
         if let Message::Text(body) = message {
             let reply: Value =
-                serde_json::from_str(&body).map_err(|_| "Edge gaf ongeldige CDP-gegevens terug")?;
+                serde_json::from_str(&body).map_err(|_| "Browser gaf ongeldige CDP-gegevens terug")?;
             check(cancel, deadline)?;
             if reply["id"] == 1 {
                 if reply.get("error").is_some() {
-                    return Err(format!("Edge ondersteunt CDP {method} niet"));
+                    return Err(format!("Browser ondersteunt CDP {method} niet"));
                 }
                 return reply
                     .get("result")

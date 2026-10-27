@@ -94,6 +94,40 @@ pub struct Marker {
     pub chainage: f64,
 }
 
+/// Direction of a cable relative to the trench: zero is perpendicular.
+pub fn crossing_direction(normal:XY,metadata:&serde_json::Value)->XY {
+    let angle=metadata.get("crossing_angle_degrees").and_then(serde_json::Value::as_f64)
+        .filter(|a|a.is_finite()&&a.abs()<=80.).unwrap_or(0.);
+    if angle==0.{return normal;}
+    let angle=angle.to_radians();
+    (normal.0*angle.cos()+normal.1*angle.sin(),normal.1*angle.cos()-normal.0*angle.sin())
+}
+/// Profile intersection of an oblique measured cable with the trench axis.
+/// Unannotated legacy points retain their exact original coordinates.
+pub fn object_axis_position(trench:&VirtualTrench,object:&crate::virtual_trench::TrenchPoint)->Vertex{
+    let angle=object.metadata.get("crossing_angle_degrees").and_then(serde_json::Value::as_f64).unwrap_or(0.);
+    if angle==0.||!angle.is_finite()||angle.abs()>80.{return object.position;}
+    let length=trench.length();if length<=EPSILON{return object.position;}
+    let normal=(-(trench.end.y-trench.start.y)/length,(trench.end.x-trench.start.x)/length);
+    let d=crossing_direction(normal,&object.metadata);
+    let offset=(object.position.x-trench.start.x)*normal.0+(object.position.y-trench.start.y)*normal.1;
+    let distance=-offset/(d.0*normal.0+d.1*normal.1);
+    Vertex{x:object.position.x+distance*d.0,y:object.position.y+distance*d.1,z:object.position.z}
+}
+/// Preserve the original perpendicular-span rule when no angle was supplied.
+pub fn object_segment(trench:&VirtualTrench,object:&crate::virtual_trench::TrenchPoint)->Option<(XY,XY)>{
+    object_segment_on_boundary(trench,object,&trench.measured_boundary())
+}
+pub fn object_segment_on_boundary(trench:&VirtualTrench,object:&crate::virtual_trench::TrenchPoint,polygon:&[XY])->Option<(XY,XY)>{
+    let length=trench.length();if length<=EPSILON{return None;}
+    let normal=(-(trench.end.y-trench.start.y)/length,(trench.end.x-trench.start.x)/length);
+    let direction=crossing_direction(normal,&object.metadata);
+    let(x,y,_,_)=trench.project(object.position);
+    let angled=object.metadata.get("crossing_angle_degrees").and_then(serde_json::Value::as_f64).is_some_and(|v|v!=0.&&v.is_finite()&&v.abs()<=80.);
+    let(origin,preferred)=if angled{((object.position.x,object.position.y),0.)}else{((x,y),(object.position.x-x)*normal.0+(object.position.y-y)*normal.1)};
+    local_segment(polygon,origin,direction,preferred)
+}
+
 /// Prepare once after geometry edits; callers can reuse these spans during pan/zoom.
 pub fn markers(trench: &VirtualTrench) -> Vec<Marker> {
     markers_with_cancel(trench, &crate::input::NEVER_CANCEL).unwrap_or_default()
@@ -107,18 +141,13 @@ pub fn markers_with_cancel(
     if length <= EPSILON || !length.is_finite() {
         return Ok(Vec::new());
     }
-    let normal = (
-        -(trench.end.y - trench.start.y) / length,
-        (trench.end.x - trench.start.x) / length,
-    );
-    let polygon = trench.measured_boundary();
+    let polygon=trench.measured_boundary();
     let mut output = Vec::new();
     for (index, object) in trench.objects.iter().enumerate() {
         crate::input::check(cancel)?;
         let p = object.position;
-        let (x, y, chainage, _) = trench.project(p);
-        let preferred = (p.x - x) * normal.0 + (p.y - y) * normal.1;
-        let Some((start, end)) = local_segment(&polygon, (x, y), normal, preferred) else {
+        let (_, _, chainage, _) = trench.project(object_axis_position(trench,object));
+        let Some((start, end)) = object_segment_on_boundary(trench,object,&polygon) else {
             continue;
         };
         output.push(Marker {
@@ -137,4 +166,38 @@ pub fn markers_with_cancel(
         })
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod crossing_tests {
+    use super::*;
+    #[test]
+    fn oblique_cables_cross_the_selected_point_and_stay_inside_the_boundary(){
+        let mut t=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();
+        let mut p=crate::virtual_trench::TrenchPoint{metadata:serde_json::Value::Null,role:"kabel".into(),object_name:"LS".into(),source_name:"LS".into(),position:Vertex{x:5.,y:0.,z:Some(1.)},attributes:Default::default()};
+        let perpendicular=object_segment(&t,&p).unwrap();
+        assert_eq!(perpendicular.0.0,5.);assert_eq!(perpendicular.1.0,5.);
+        p.metadata=serde_json::json!({"crossing_angle_degrees":45.});
+        let(a,b)=object_segment(&t,&p).unwrap();
+        assert!((a.0-4.7).abs()<1e-9&&(b.0-5.3).abs()<1e-9);
+        assert!((a.1+0.3).abs()<1e-9&&(b.1-0.3).abs()<1e-9);
+        std::mem::swap(&mut t.start,&mut t.end);
+        let(c,d)=object_segment(&t,&p).unwrap();
+        assert!((a.0-d.0).abs()<1e-9&&(b.0-c.0).abs()<1e-9);
+        p.metadata=serde_json::json!({"crossing_angle_degrees":0.});std::mem::swap(&mut t.start,&mut t.end);
+        assert_eq!(object_segment(&t,&p).unwrap(),perpendicular);
+    }
+}
+#[cfg(test)]
+mod crossing_profile_tests {
+    use super::*;
+    #[test]
+    fn an_offset_oblique_measurement_projects_to_its_true_profile_intersection(){
+        let mut t=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();
+        t.objects.push(crate::virtual_trench::TrenchPoint{metadata:serde_json::json!({"crossing_angle_degrees":45.}),role:"leiding".into(),object_name:"Waterleiding".into(),source_name:"water".into(),position:Vertex{x:5.,y:0.1,z:Some(-1.)},attributes:Default::default()});
+        let point=object_axis_position(&t,&t.objects[0]);assert!((point.x-4.9).abs()<1e-9&&point.y.abs()<1e-9);assert_eq!(point.z,Some(-1.));
+        let data=t.to_dataset(1,false);let crate::Geometry::Point(actual)=data.features[0].geometry else{panic!("point expected")};assert_eq!(actual,point);
+        assert!((markers(&t)[0].chainage-4.9).abs()<1e-9);
+        assert_eq!(t.objects[0].position.x,5.);assert_eq!(t.objects[0].position.y,0.1);
+    }
 }

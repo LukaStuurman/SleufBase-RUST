@@ -1,4 +1,4 @@
-//! Bounded one-shot fetch/XHR capture in the exact process-owned Edge tab.
+//! Bounded one-shot fetch/XHR capture in the exact process-owned Browser tab.
 //! Original contract: kickthemap_browser.DownloadCaptureApi and capture JS.
 use super::*;
 use std::sync::atomic::AtomicBool;
@@ -51,7 +51,7 @@ impl BrowserChannel {
                         })
                 })
             })
-            .ok_or("Open KickTheMap in het eigen Edge-venster")?;
+            .ok_or("Open KickTheMap in het eigen Browser-venster")?;
         let id = info["targetId"]
             .as_str()
             .filter(|id| {
@@ -61,7 +61,7 @@ impl BrowserChannel {
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
             })
-            .ok_or("Ongeldige Edge-tabidentiteit")?;
+            .ok_or("Ongeldige Browser-tabidentiteit")?;
         let target = format!("ws://127.0.0.1:{}/devtools/page/{id}", self.port);
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
@@ -94,7 +94,7 @@ impl BrowserChannel {
                     || result["result"]["value"] != true =>
             {
                 let _ = handle.disarm();
-                Err("De handmatige download kon niet worden geactiveerd in deze Edge-tab".into())
+                Err("De handmatige download kon niet worden geactiveerd in deze Browser-tab".into())
             }
             Ok(_) => Ok(handle),
         }
@@ -122,7 +122,7 @@ impl CaptureHandle {
                 cancel,
             )?;
             if result.get("exceptionDetails").is_some() {
-                return Err("De vastlegsessie is vervangen of de Edge-tab is vernieuwd".into());
+                return Err("De vastlegsessie is vervangen of de Browser-tab is vernieuwd".into());
             }
             if let Some(value) = result
                 .get("result")

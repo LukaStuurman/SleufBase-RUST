@@ -25,7 +25,7 @@ fn print_help() {
     println!("Optioneel vóór de opdracht: --settings Rust-instellingen.json");
     println!("Licenties van overgenomen onderdelen: --licenses");
     println!("Bestaande uitvoerbestanden worden niet overschreven.");
-    println!("Sjabloonexport en een eigen Edge-werkvenster zijn beschikbaar; volledige praktijkacceptatie loopt nog.");
+    println!("Sjabloonexport en een ingebouwd KickTheMap-inlogvenster zijn beschikbaar; volledige praktijkacceptatie loopt nog.");
 }
 
 fn run_cli(args: &[String]) -> Result<(), String> {
@@ -105,10 +105,15 @@ fn run_cli(args: &[String]) -> Result<(), String> {
 
 fn main() -> eframe::Result<()> {
     let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
+    if raw_args.first().is_some_and(|s|s=="--kickthemap-webview") {
+        let result=if raw_args.len()==2 {sleufbase_rust::kickthemap_webview::run(&PathBuf::from(&raw_args[1]))}else{Err("Ongeldige interne browseropdracht".into())};
+        if let Err(error)=result {eprintln!("{error}");std::process::exit(2);}
+        return Ok(());
+    }
     let command=raw_args.first().is_some_and(|s|s.to_string_lossy().starts_with('-')||s=="help");
     if command {
         let args:Vec<String>=match raw_args.iter().map(|s|s.clone().into_string()).collect(){Ok(args)=>args,Err(_)=>{eprintln!("Fout: ongeldige tekst in opdrachtregel");std::process::exit(2);}};
-        if args[0]=="--licenses" {println!("Pillow 11.3.0 — affine rasterrotatie, bilineaire kaartresampling en alphacompositie\n{}\nezdxf 1.4.4 — SHP/SHX/LFF-protocol, fontmetingen en vector-tekstuitlijning (native Rust-port met correcties)\n{}\nproj4rs 0.2.1 — native GPS/RD-navigatie\n{}",include_str!("../third_party/Pillow-LICENSE.txt"),include_str!("../third_party/ezdxf-LICENSE.txt"),include_str!("../third_party/proj4rs-NOTICES.txt"));return Ok(());}
+        if args[0]=="--licenses" {println!("Wry 0.57.0 — ingebouwde WebView2-weergave\n{}",include_str!("../third_party/wry-LICENSE.txt"));println!("Pillow 11.3.0 — affine rasterrotatie, bilineaire kaartresampling en alphacompositie\n{}\nezdxf 1.4.4 — SHP/SHX/LFF-protocol, fontmetingen en vector-tekstuitlijning (native Rust-port met correcties)\n{}\nproj4rs 0.2.1 — native GPS/RD-navigatie\n{}",include_str!("../third_party/Pillow-LICENSE.txt"),include_str!("../third_party/ezdxf-LICENSE.txt"),include_str!("../third_party/proj4rs-NOTICES.txt"));return Ok(());}
         if ["-h", "--help", "help"].contains(&args[0].as_str()) {
             print_help();
             return Ok(());
