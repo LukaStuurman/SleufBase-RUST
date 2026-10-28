@@ -48,6 +48,8 @@ jobs:
       - name: Package and verify portable app
         shell: pwsh
         run: |
+          python tools/test_autocad_template.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_native_preview_package.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/package_native_preview.py --binary rust/target/release/sleufbase-rust.exe --output rust/dist/portable-build --revision "$env:GITHUB_SHA"

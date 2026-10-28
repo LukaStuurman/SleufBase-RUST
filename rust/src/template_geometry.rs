@@ -1125,6 +1125,7 @@ pub fn add(
         let at = document.record_start(end.ok_or("DXF mist laagtabeleinde")?.index());
         let owner = table.handle().ok_or("Laagtabel mist handle")?;
         let mut tags = Tags::default();
+        let (material, plot) = crate::template_prepare::layer_defaults(document)?;
         for layer in new_layers.values() {
             let id = allocate()?;
             tags.record("LAYER", id, owner);
@@ -1136,6 +1137,8 @@ pub fn add(
             tags.tag(62, layer.color);
             tags.tag(6, "Continuous");
             tags.tag(290, 1);
+            tags.tag(390, format_args!("{plot:X}"));
+            tags.tag(347, format_args!("{material:X}"));
             if let Some(lineweight) = layer.lineweight {
                 tags.tag(370, lineweight);
             }

@@ -102,7 +102,7 @@ fn scaled_metrics_and_explicit_band_attribute_positions_match_original_setter() 
     ] {
         assert!((attr.first(code).unwrap().parse::<f64>().unwrap() - wanted).abs() < 1e-10);
     }
-    assert_eq!(attr.first(1), Some("Nieuw Ø 漢😀"));
+    assert_eq!(attr.first(1), Some(r"Nieuw Ø 漢\U+D83D\U+DE00"));
 }
 #[test]
 fn bad_or_ambiguous_attribute_overrides_preserve_the_entire_previous_drawing() {
@@ -151,7 +151,7 @@ fn block_attributes_are_attached_transformed_and_default_values_retained() {
     let attrs: Vec<_> = written.records().filter(|r| r.kind() == "ATTRIB").collect();
     assert_eq!(attrs.len(), 4);
     let attr = attrs.iter().find(|r| r.first(2) == Some("NAME")).unwrap();
-    assert_eq!(attr.first(1), Some("Nieuw Ø 漢😀"));
+    assert_eq!(attr.first(1), Some(r"Nieuw Ø 漢\U+D83D\U+DE00"));
     assert!((attr.first(10).unwrap().parse::<f64>().unwrap() - 10.02).abs() < 1e-10);
     assert!((attr.first(20).unwrap().parse::<f64>().unwrap() - 20.04).abs() < 1e-10);
     assert_eq!(attr.first(30), Some("1"));

@@ -13,6 +13,27 @@ const MAX_RECORDS: usize = 2_000_000;
 const MAX_TEXT: usize = 1024 * 1024;
 const NO_SECTION: usize = usize::MAX;
 
+// AutoCAD's DXF reader rejects literal four-byte UTF-8 scalar values even in
+// modern UTF-8 DXF. Preserve them as DXF escapes for the UTF-16 surrogate pair.
+// Only staged edits use this conversion; untouched source/proxy bytes stay exact.
+fn cad_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.chars().all(|c| u32::from(c) <= 0xFFFF) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    use std::fmt::Write;
+    let mut encoded = String::with_capacity(text.len());
+    for c in text.chars() {
+        if u32::from(c) <= 0xFFFF {
+            encoded.push(c);
+        } else {
+            for unit in c.encode_utf16(&mut [0; 2]) {
+                write!(encoded, "\\U+{unit:04X}").unwrap();
+            }
+        }
+    }
+    std::borrow::Cow::Owned(encoded)
+}
+
 struct Span {
     code: i32,
     whole: Range<usize>,
@@ -432,6 +453,11 @@ impl Document {
                 );
             }
         }
+        for edit in planned.values_mut() {
+            if let std::borrow::Cow::Owned(encoded) = cad_text(&edit.replacement) {
+                edit.replacement = encoded;
+            }
+        }
         let mut previous_end = 0;
         let mut total = self.output_len as i64;
         for (&start, e) in &planned {
@@ -754,6 +780,11 @@ impl Document {
         }
         if !mtext && !matches!(kind, "TEXT" | "ATTRIB" | "ATTDEF") {
             return Err("DXF-record is geen bewerkbare tekst".into());
+        }
+        let encoded = cad_text(text);
+        let text = encoded.as_ref();
+        if text.len() > MAX_TEXT {
+            return Err("Ongeldige of te lange DXF-tekst".into());
         }
         let mut tags = Vec::new();
         for s in spans(&self.source[record.range.clone()], record.range.start) {

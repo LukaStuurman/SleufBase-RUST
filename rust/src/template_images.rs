@@ -268,6 +268,9 @@ pub fn add_images(
         layer.tag(62, 7);
         layer.tag(6, "Continuous");
         layer.tag(290, 1);
+        let (material, plot) = crate::template_prepare::layer_defaults(document)?;
+        layer.id(390, plot);
+        layer.id(347, material);
         let count = document.layer_count() + 1;
         changes.push(document.tag_change(table.index(), 70, &count.to_string())?);
         let at = document.record_start(end.index());

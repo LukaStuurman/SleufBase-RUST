@@ -49,7 +49,7 @@ fn text_edits_keep_opaque_data_and_cannot_inject_tags() {
             .tags()
             .filter(|(c, _)| matches!(c, 1 | 3))
             .collect();
-        assert_eq!(tags.iter().map(|(_, s)| *s).collect::<String>(), text);
+        assert_eq!(tags.iter().map(|(_, s)| *s).collect::<String>(), text.replace('😀', r"\U+D83D\U+DE00"));
         assert!(tags.iter().all(|(_, s)| s.chars().count() <= 250));
         assert!(tags[..tags.len() - 1].iter().all(|(c, _)| *c == 3));
         assert_eq!(tags.last().unwrap().0, 1);
@@ -79,6 +79,21 @@ fn actual_template_round_trip_keeps_every_source_byte() {
     let mut output = Vec::new();
     doc.write_to(&mut output, &AtomicBool::new(false)).unwrap();
     assert_eq!(output, bytes);
+}
+#[test]
+fn supplementary_text_escapes_are_bounded_and_failed_edits_keep_previous_text() {
+    let cancel = AtomicBool::new(false);
+    let mut doc = Document::from_bytes(source("\n"), &cancel).unwrap();
+    doc.replace_text("A", "Ø 漢😀\u{10ffff} \\U+1234").unwrap();
+    let mut before = Vec::new();
+    doc.write_to(&mut before, &cancel).unwrap();
+    let reloaded = Document::from_bytes(before.clone(), &cancel).unwrap();
+    assert_eq!(reloaded.by_handle("A").unwrap().unwrap().first(1), Some(r"Ø 漢\U+D83D\U+DE00\U+DBFF\U+DFFF \U+1234"));
+    // Raw input fits the text budget; its CAD-compatible representation does not.
+    assert!(doc.replace_text("A", &"😀".repeat(75_000)).is_err());
+    let mut after = Vec::new();
+    doc.write_to(&mut after, &cancel).unwrap();
+    assert_eq!(before, after);
 }
 #[test]
 fn corrupt_unsupported_and_cancelled_sources_are_errors() {
