@@ -25,9 +25,12 @@ pub enum TiffSelection {Raster{path:PathBuf},Virtual{job_id:u64,label:String}}
 pub struct ProjectView {
     pub camera:Option<Camera>,pub opacity_percent:f64,pub use_background:bool,
     pub background_source:String,pub selected_tiff:Option<TiffSelection>,pub selected_dxf:Option<PathBuf>,
+    /// Hidden JobFeatures layers (source paths), separate from actual DXF overlays.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub hidden_object_layers:Vec<PathBuf>,
 }
 impl Default for ProjectView {
-    fn default()->Self{let legacy=ProjectUiState::default();Self{camera:None,opacity_percent:legacy.opacity_percent,use_background:legacy.use_background,background_source:legacy.background_source,selected_tiff:None,selected_dxf:None}}
+    fn default()->Self{let legacy=ProjectUiState::default();Self{camera:None,opacity_percent:100.,use_background:legacy.use_background,background_source:legacy.background_source,selected_tiff:None,selected_dxf:None,hidden_object_layers:Vec::new()}}
 }
 fn unique<T>(items:impl Iterator<Item=T>)->Option<T>{let mut items=items;let result=items.next()?;items.next().is_none().then_some(result)}
 impl ProjectView {
@@ -38,6 +41,7 @@ impl ProjectView {
     pub fn validate(&self)->Result<(),String>{
         let mut ui=ProjectUiState::default();ui.opacity_percent=self.opacity_percent;ui.background_source=self.background_source.clone();
         if let Some(camera)=&self.camera{ui.center_x=camera.center[0];ui.center_y=camera.center[1];ui.meters_per_pixel=camera.meters_per_pixel;}ui.validate()?;
+        if self.hidden_object_layers.len()>20_000||self.hidden_object_layers.iter().any(|p|p.as_os_str().len()>32768){return Err("Ongeldige objectlaagschakelaars".into());}
         if self.selected_dxf.as_ref().is_some_and(|p|p.as_os_str().len()>32768)||match &self.selected_tiff{Some(TiffSelection::Raster{path})=>path.as_os_str().len()>32768,Some(TiffSelection::Virtual{label,..})=>label.len()>32768,None=>false}{return Err("Ongeldige projectlaagselectie".into());}Ok(())
     }
     /// Resolve original Python indices before virtual and raster arrays split.
@@ -58,7 +62,7 @@ impl ProjectView {
             let path=crate::legacy_project::asset_path(&archive.source_path,archive.original["dxfs"].get(index)?["path"].as_str()?);
             unique(project.overlays.iter().filter(|o|o.path==path)).map(|o|o.path.clone())
         });
-        let mut view=Self{camera:Some(Camera{center:[ui.center_x,ui.center_y],meters_per_pixel:ui.meters_per_pixel}),opacity_percent:ui.opacity_percent,use_background:ui.use_background,background_source:ui.background_source,selected_tiff,selected_dxf};view.normalize_removed_provider();view.validate()?;Ok(Some(view))
+        let mut view=Self{camera:Some(Camera{center:[ui.center_x,ui.center_y],meters_per_pixel:ui.meters_per_pixel}),opacity_percent:ui.opacity_percent,use_background:ui.use_background,background_source:ui.background_source,selected_tiff,selected_dxf,hidden_object_layers:Vec::new()};view.normalize_removed_provider();view.validate()?;Ok(Some(view))
     }
     pub fn selected_virtual_index(&self,project:&NativeProject)->Option<usize>{
         match &self.selected_tiff{Some(TiffSelection::Virtual{job_id,label})=>unique(project.virtual_trenches.iter().enumerate().filter(|(_,t)|t.job_id==*job_id&&t.label==*label).map(|(i,_)|i)),_=>None}
