@@ -259,6 +259,33 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
 }
 
 #[test]
+fn loaded_job_objects_are_listed_in_klic_overlays_without_duplicate_dxf_files(){
+    let jobs=["PS10","PS2"];
+    let mut app=SleufBaseApp::default();
+    for (index,title) in jobs.iter().enumerate(){
+        let mut ds=sleufbase_rust::parse_job_features(
+            include_str!("../tests/fixtures/jobFeatures.json"),(index+1) as u64,title
+        ).unwrap();
+        ds.source_path=PathBuf::from(format!("{title}_jobFeatures.json"));
+        app.datasets.push(ds);
+    }
+    app.selected=Some(0);
+    let (labels,_)=capture(&mut app,[1500,930]);
+    for title in jobs {
+        assert!(labels.iter().any(|(text,_)|text.starts_with(&format!("Job: {title} ("))));
+    }
+    assert!(app.overlays.is_empty(),"job objects must not be duplicated as DXF files");
+    assert_eq!(app.project_view.opacity_percent,100.);
+    let hidden=app.datasets[0].source_path.clone();
+    app.project_view.hidden_object_layers.push(hidden.clone());
+    let (labels,_)=capture(&mut app,[1500,930]);
+    assert!(labels.iter().any(|(text,_)|text.starts_with("Job: PS10 (")));
+    assert_eq!(app.navigation.hidden_object_layers,vec![hidden.clone()]);
+    assert_eq!(app.snapshot().view.unwrap().hidden_object_layers,vec![hidden]);
+    assert_eq!(app.datasets.len(),2);
+}
+
+#[test]
 fn removal_keeps_raster_indices_and_virtual_selection_consistent() {
     let mut app = SleufBaseApp::default();
     app.virtual_trenches.push(
