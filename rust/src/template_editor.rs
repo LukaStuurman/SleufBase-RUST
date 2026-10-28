@@ -393,15 +393,15 @@ mod tests {
         let mut editor=Editor::new(&mut choices,&[],&[]);
         editor.selected=vec![true,false,false,false];
         let order=editor.sort_choices(&mut choices,template_order::SortMode::NumberAsc);
-        assert_eq!(order,vec![1,0,2,3].iter().copied().collect::<Vec<_>>());
+        assert_eq!(order,vec![1,3,2,0]);
         // The empty slot stays at index 2.
         assert_eq!(choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
-                   [Some("PS2"),Some("PS10"),None,Some("PS2B")]);
-        assert_eq!(choices[1].comments,"private metadata 9");
-        assert_eq!(choices[1].legacy_slot,Some(19));
-        assert_eq!(editor.selected,[false,true,false,false]);
+                   [Some("PS2"),Some("PS2B"),None,Some("PS10")]);
+        assert_eq!(choices[3].comments,"private metadata 9");
+        assert_eq!(choices[3].legacy_slot,Some(19));
+        assert_eq!(editor.selected,[false,false,false,true]);
         let order=editor.sort_choices(&mut choices,template_order::SortMode::NumberDesc);
-        assert_eq!(order,vec![1,3,2,0]);
+        assert_eq!(order,vec![3,1,2,0]);
         assert_eq!(choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
                    [Some("PS10"),Some("PS2B"),None,Some("PS2")]);
         assert_eq!(editor.selected,[true,false,false,false]);
