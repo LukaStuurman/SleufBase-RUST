@@ -49,6 +49,7 @@ pub enum BackgroundKind {
     Blank,
     Pdok,
 }
+#[derive(Clone)]
 pub struct Options {
     pub raster_layout:bool,
     pub server_mode:crate::template_server::Mode,

@@ -43,4 +43,4 @@ De Rust-migratie is niet 100% functieparitair met SleufBase Python v0.3.62. Beve
 
 ## Ingebouwd KickTheMap-inlogvenster
 
-Klik op Inloggen om binnen SleufBase aan te melden. Er wordt geen apart Edge-browservenster gestart. Microsoft WebView2 Runtime moet wel geinstalleerd zijn. Rond reCAPTCHA zelf af en klik daarna in SleufBase op Sessie overnemen. Een mislukte start toont de eigenlijke WebView2-fout.
+Klik op Inloggen om binnen SleufBase aan te melden. Er wordt geen apart Edge-browservenster gestart. De installer bevat de volledige Microsoft WebView2 Runtime en installeert die automatisch als deze ontbreekt; hiervoor is geen aparte download nodig. Een bestaande runtime wordt hergebruikt. De portable ZIP bevat de runtime niet: installeer in dat geval eerst WebView2 of gebruik de installer. Rond reCAPTCHA zelf af en klik daarna in SleufBase op Sessie overnemen. Een mislukte start toont de eigenlijke WebView2-fout.

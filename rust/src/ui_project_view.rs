@@ -183,8 +183,9 @@ mod view_control_tests{
         let general=app.migrated_settings.clone();let mut scoped=general.clone();scoped.dxf_label_gap=2.;scoped.export_preferences.template_include_cross_sections=true;
         scoped.export_preferences.dxf_trench_export_mode="polygon".into();scoped.export_preferences.dxf_centerline_color="#123456".into();app.project_settings=Some(scoped);
         let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
-        app.virtual_trenches.push(VirtualTrench::new("PS1".into(),Vertex{x:155000.,y:463000.,z:None},Vertex{x:155010.,y:463000.,z:None},1.).unwrap());
+
         app.open_template_export();let state=&app.template_order_dialog.as_ref().unwrap().state;assert!(state.profiles);assert_eq!(state.label_gap,2.);assert_eq!(state.overview_settings.centerline_color,[0x12,0x34,0x56]);
+        app.virtual_trenches.push(VirtualTrench::new("PS1".into(),Vertex{x:155000.,y:463000.,z:None},Vertex{x:155010.,y:463000.,z:None},1.).unwrap());
         app.open_project_template_dialog();let opts=&app.project_template_dialog.as_ref().unwrap().options;assert!(opts.choices[0].profile);assert_eq!(opts.overview_settings.trench_mode,sleufbase_rust::cadastral_overview::TrenchMode::Polygon);
         app.save_dxf();assert_eq!(app.export_dialog.as_ref().unwrap().label_gap,2.);assert_eq!(app.migrated_settings,general);
         let restored=serde_json::from_value::<NativeProject>(serde_json::to_value(app.snapshot()).unwrap()).unwrap();assert_eq!(restored.project_settings.unwrap().dxf_label_gap,2.);

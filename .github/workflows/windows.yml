@@ -56,7 +56,11 @@ jobs:
         run: |
           choco install innosetup --version=6.7.1 -y --no-progress --allow-downgrade
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tools/prepare_webview2.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" rust/installer/SleufBase-Rust.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tools/test_native_installer.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installer = 'rust/dist-installer/SleufBase-Rust-preview-Setup.exe'
           if ((Get-Item -LiteralPath $installer).Length -lt 500000) { throw 'Installer is onvolledig' }
