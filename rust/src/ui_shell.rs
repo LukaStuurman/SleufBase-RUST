@@ -633,7 +633,7 @@ impl SleufBaseApp {
                     }
                 });
             if ui.add_enabled(self.project_view.selected_dxf.is_some(),
-                egui::Button::new("Verwijder geselecteerde DXF")).clicked() {
+                egui::Button::new("Verwijder geselecteerde KLIC")).clicked() {
                 self.remove_shell_overlay();
             }
         });
