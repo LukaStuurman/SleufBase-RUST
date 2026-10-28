@@ -49,10 +49,12 @@ fn all_title_fields_match_independent_python_and_other_tags_stay_intact() {
             };
             let handle = format!("{handle:X}");
             let after = output.by_handle(&handle).unwrap().unwrap();
-            let wanted = case["expected"][&handle].as_str();
+            // The original Python fixture stores Unicode scalars; AutoCAD needs
+            // supplementary characters serialized as UTF-16 DXF escapes.
+            let wanted = case["expected"][&handle].as_str().map(|value| value.replace('😀', r"\U+D83D\U+DE00"));
             let tags: Vec<_> = before
                 .tags()
-                .map(|(c, v)| (c, if c == 1 { wanted.unwrap_or(v) } else { v }))
+                .map(|(c, v)| (c, if c == 1 { wanted.as_deref().unwrap_or(v) } else { v }))
                 .collect();
             assert_eq!(
                 tags,

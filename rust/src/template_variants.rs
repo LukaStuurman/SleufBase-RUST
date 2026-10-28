@@ -439,6 +439,7 @@ fn assemble_indexed(
         }
         for name in [&normal, &reverse] {
             if !layer_index.contains_key(&crate::dxf_symbols::key(name)) {
+                let (material, plot) = crate::template_prepare::layer_defaults(indexed)?;
                 let h = allocate(&mut next)?;
                 let mut t = record("LAYER", h, lt.handle().ok_or("Laagtabel mist handle")?);
                 t.extend([
@@ -448,6 +449,8 @@ fn assemble_indexed(
                     tag(70, 0),
                     tag(62, 7),
                     tag(6, "Continuous"),
+                    tag(390, format!("{plot:X}")),
+                    tag(347, format!("{material:X}")),
                 ]);
                 layers.push_str(&copy::encode(&t));
                 added_layers.push((name.clone(), h));

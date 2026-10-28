@@ -37,7 +37,7 @@ fn dictionary_ref(record: RecordView<'_>, name: &str) -> Option<u64> {
     }
     None
 }
-fn layer_defaults(doc: &Document) -> Result<(u64, u64), String> {
+pub(crate) fn layer_defaults(doc: &Document) -> Result<(u64, u64), String> {
     let material = doc
         .records()
         .find(|r| {

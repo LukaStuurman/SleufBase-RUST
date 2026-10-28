@@ -1,0 +1,39 @@
+{
+  "engine": "AutoCAD 2026 Core Console W.122.0.0",
+  "computer_use": false,
+  "baseline_release": "v0.1.0-preview.7",
+  "baseline_rejection": "Error in LAYER Table: Did not receive PlotStyleName",
+  "secondary_rejection": "Literal supplementary UTF-8 in TEXT triggers DXF read error; UTF-16 DXF escapes accepted",
+  "cases": [
+    {
+      "case": "mixed",
+      "sha256": "41c2cf2c41408d8b0f60725951ef8b5c79833834573a2c79b73b4ceb8004ae1b",
+      "entities": 802,
+      "clean_audits": 2,
+      "saved_dwg_bytes": 621583
+    },
+    {
+      "case": "paired",
+      "sha256": "1b9a8ac5413fd0728cccdc31616405e81d7cb8efa75860a42baa8b684785ded2",
+      "entities": 632,
+      "clean_audits": 2,
+      "saved_dwg_bytes": 630202
+    },
+    {
+      "case": "extended",
+      "sha256": "6fbdf731d59447d4415b05f9d2ce75de1c2cbe8381cd7503d1308f6edead5c17",
+      "entities": 1068,
+      "clean_audits": 2,
+      "saved_dwg_bytes": 632570
+    },
+    {
+      "case": "image-only",
+      "sha256": "bc1a3bf3162de56ed0967f4251fbf7922bc68bf237e445c1a2e909f571dd0ea7",
+      "entities": 123,
+      "clean_audits": 2,
+      "saved_dwg_bytes": 25298
+    }
+  ],
+  "acceptance": "DXFIN, populated drawing, zero AUDIT errors, save temporary DWG",
+  "limitation": "Opening saved DWG in another Core Console process returns ErrorStatus 53 for both the unmodified original template and corrected export on this host; no passing DWG reopen or visible UI verification is claimed."
+}

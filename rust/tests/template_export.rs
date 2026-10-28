@@ -29,6 +29,35 @@ fn request(name: &str) -> Request {
     r
 }
 #[test]
+fn autocad_layers_resolve_plot_styles_for_images_geometry_and_paired_variants() {
+    use sleufbase_rust::{dxf_document::Document, template_geometry::{Entity, Layer, Paint, Shape}};
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    for paired in [false, true] {
+        let mut r = if paired { paired_request() } else { request("mixed") };
+        r.settings.paired = paired;
+        for slot in r.slots.iter_mut().flatten() {
+            slot.title.push_str(" Ø 漢😀");
+        }
+        r.layers.push(Layer { name: "CAD compatibility regression".into(), color: 3, true_color: None, lineweight: None });
+        r.geometry.push(Entity { layer: "CAD compatibility regression".into(), paint: Paint::default(), layout: None,
+            shape: Shape::Polyline { vertices: vec![[0., 0.], [1., 1.]], closed: false } });
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("autocad.dxf");
+        template_export::export(&output, &r, &Control::default()).unwrap();
+        let bytes = fs::read(&output).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(!text.contains('😀'), "AutoCAD rejects literal four-byte UTF-8 in DXF");
+        assert!(text.contains(r"\U+D83D\U+DE00"));
+        let doc = Document::from_bytes(bytes, &cancel).unwrap();
+        for layer in doc.records().filter(|record| record.kind() == "LAYER") {
+            let style = layer.first(390).unwrap_or_else(|| panic!("Missing PlotStyleName: {:?}", layer.first(2)));
+            assert!(doc.by_handle(style).unwrap().is_some(), "Dangling plot style {style}");
+        }
+        assert!(doc.records().any(|record| record.kind() == "LAYER" && record.first(2) == Some("PROEFSLEUF_TEMPLATE_IMAGES")));
+        assert!(doc.records().any(|record| record.kind() == "LAYER" && record.first(2) == Some("CAD compatibility regression")));
+    }
+}
+#[test]
 fn explicit_font_paths_are_manifest_relative_and_cannot_be_overwritten_by_export() {
     let dir = tempfile::tempdir().unwrap();
     let fonts = dir.path().join("CAD Fonts");

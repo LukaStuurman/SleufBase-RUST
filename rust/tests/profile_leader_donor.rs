@@ -232,7 +232,7 @@ fn shared_seed_and_unrelated_text_edits_compose_with_multiple_geometry_batches()
         }
         let written = doc(&bytes(&d));
         assert!(written.records().any(
-            |r| r.kind() == "MTEXT" && r.first(1) == Some("Nieuwe onafhankelijke tekst Ø 漢😀")
+            |r| r.kind() == "MTEXT" && r.first(1) == Some(r"Nieuwe onafhankelijke tekst Ø 漢\U+D83D\U+DE00")
         ));
         assert!(written
             .records()
@@ -297,7 +297,7 @@ fn installed_attributes_and_multiple_reference_batches_work_without_document_rep
         .collect::<Vec<_>>();
     assert_eq!(attrs.len(), 4);
     assert_eq!(attrs[0].first(1), Some("Minimale schaal Ø"));
-    assert_eq!(attrs[2].first(1), Some("Tweede batch 漢😀"));
+    assert_eq!(attrs[2].first(1), Some(r"Tweede batch 漢\U+D83D\U+DE00"));
     for (a, scale) in attrs.iter().zip([0.005, 0.005, 0.02, 0.02]) {
         assert!((a.first(40).unwrap().parse::<f64>().unwrap() - scale * 1.5).abs() < 1e-12);
     }
