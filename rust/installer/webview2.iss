@@ -6,10 +6,10 @@
 #endif
 // Microsoft distribution guidance: https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution
 function ValidWebView2Version(const Value: String): Boolean;
-var Packed: Int64;
+var RuntimeVersion: Int64;
 begin
   Result := False;
-  if StrToVersion(Value, Packed) then Result := Packed > 0;
+  if StrToVersion(Value, RuntimeVersion) then Result := RuntimeVersion > 0;
 end;
 
 function WebView2InRegistry(Root: Integer): Boolean;
