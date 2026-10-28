@@ -70,6 +70,11 @@ mod native {
                 let webview=builder.build(&window).map_err(|e|format!("Ingebouwde browser kon niet starten. Controleer of Microsoft WebView2 Runtime is geïnstalleerd: {e}"))?;
                 self.webview = Some(webview);
                 self.window = Some(window);
+                // The fixture lifetime starts after synchronous WebView creation:
+                // runtime initialization on a busy runner can itself take 20s.
+                self.deadline = self
+                    .fixture
+                    .then(|| Instant::now() + Duration::from_secs(60));
                 Ok::<_, String>(())
             })();
             if let Err(error) = result {
@@ -147,7 +152,7 @@ mod native {
             profile: profile.to_owned(),
             visible: !fixture,
             last_visibility: None,
-            deadline: fixture.then(|| Instant::now() + Duration::from_secs(20)),
+            deadline: None,
         };
         event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
         if let Some(error) = app.error.take() {
