@@ -6,6 +6,76 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
+/// Deterministic order for DXF template slots and companion reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortMode { NumberAsc, NumberDesc, NameAsc, NameDesc }
+impl SortMode {
+    pub const ALL:[Self;4]=[Self::NumberAsc,Self::NumberDesc,Self::NameAsc,Self::NameDesc];
+    pub fn label(self)->&'static str {
+        match self {
+            Self::NumberAsc=>"PS-nummer: laag naar hoog",
+            Self::NumberDesc=>"PS-nummer: hoog naar laag",
+            Self::NameAsc=>"Naam: A naar Z",
+            Self::NameDesc=>"Naam: Z naar A",
+        }
+    }
+    pub fn compare(self,an:&str,av:&str,at:&str,bn:&str,bv:&str,bt:&str)->std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let (number_order,both)=match (number(an),number(bn)) {
+            (Some(a),Some(b))=>(numeric_cmp(a.as_bytes(),b.as_bytes()),true),
+            (Some(_),None)=>(Ordering::Less,false),
+            (None,Some(_))=>(Ordering::Greater,false),
+            (None,None)=>(Ordering::Equal,false),
+        };
+        let number_desc=if both {number_order.reverse()}else{number_order};
+        match self {
+            Self::NumberAsc=>number_order.then_with(||natural_cmp(av,bv)).then_with(||natural_cmp(at,bt)),
+            Self::NumberDesc=>number_desc.then_with(||natural_cmp(bv,av)).then_with(||natural_cmp(at,bt)),
+            Self::NameAsc=>natural_cmp(at,bt).then(number_order).then_with(||natural_cmp(av,bv)),
+            Self::NameDesc=>natural_cmp(bt,at).then(number_order).then_with(||natural_cmp(av,bv)),
+        }
+    }
+}
+fn numeric_cmp(a:&[u8],b:&[u8])->std::cmp::Ordering {
+    let a=a.iter().position(|&n|n!=b'0').map_or(&a[a.len()..],|i|&a[i..]);
+    let b=b.iter().position(|&n|n!=b'0').map_or(&b[b.len()..],|i|&b[i..]);
+    a.len().cmp(&b.len()).then_with(||a.cmp(b))
+}
+/// Natural case-insensitive names: PS2 before PS10, without integer overflow.
+fn natural_cmp(a:&str,b:&str)->std::cmp::Ordering {
+    let (a,b)=(a.to_lowercase(),b.to_lowercase());
+    let (a,b)=(a.as_bytes(),b.as_bytes());
+    let (mut i,mut j)=(0,0);
+    while i<a.len()&&j<b.len() {
+        if a[i].is_ascii_digit()&&b[j].is_ascii_digit() {
+            let (start_i,start_j)=(i,j);
+            while i<a.len()&&a[i].is_ascii_digit(){i+=1;}
+            while j<b.len()&&b[j].is_ascii_digit(){j+=1;}
+            let cmp=numeric_cmp(&a[start_i..i],&b[start_j..j]);
+            if !cmp.is_eq(){return cmp;}
+        }else{
+            let cmp=a[i].cmp(&b[j]);
+            if !cmp.is_eq(){return cmp;}
+            i+=1;j+=1;
+        }
+    }
+    (a.len()-i).cmp(&(b.len()-j))
+}
+/// Move complete rows and their associated selection/cache with the same index map.
+pub fn reorder<T>(items:&mut [T],order:&[usize]){
+    assert_eq!(items.len(),order.len());
+    let mut at=(0..items.len()).collect::<Vec<_>>();
+    let mut position=at.clone();
+    for (new,&old) in order.iter().enumerate(){
+        let current=position[old];
+        items.swap(new,current);
+        let displaced=at[new];
+        at.swap(new,current);
+        position[old]=new;
+        position[displaced]=current;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Row {
@@ -233,6 +303,24 @@ fn ascii_case_word(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, 'İ' | 'ı' | 'ſ' | 'K')
 }
 impl State {
+    /// Keep explicit empty sheet slots anchored while sorting real raster slots.
+    /// Returns new-index -> old-index for updating temporary UI selection.
+    pub fn sort_rows(&mut self,mode:SortMode)->Vec<usize>{
+        let mut order=(0..self.rows.len()).collect::<Vec<_>>();
+        let mut loaded=order.iter().copied().filter(|&i|self.rows[i].raster.is_some()).collect::<Vec<_>>();
+        loaded.sort_by(|&a,&b|{
+            let (a,b)=(&self.rows[a],&self.rows[b]);
+            let name_a=a.raster.as_ref().and_then(|p|p.file_name()).map_or_else(String::new,|s|s.to_string_lossy().into_owned());
+            let name_b=b.raster.as_ref().and_then(|p|p.file_name()).map_or_else(String::new,|s|s.to_string_lossy().into_owned());
+            mode.compare(&a.number,&a.variant,&name_a,&b.number,&b.variant,&name_b)
+        });
+        let mut sorted=loaded.into_iter();
+        for (i,row) in self.rows.iter().enumerate(){
+            if row.raster.is_some(){order[i]=sorted.next().unwrap();}
+        }
+        reorder(&mut self.rows,&order);
+        order
+    }
     pub fn sync(&mut self, rasters: &[GeoTiffInfo]) -> Result<(), String> {
         let paths = rasters
             .iter()
