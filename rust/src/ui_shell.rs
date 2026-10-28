@@ -236,7 +236,6 @@ impl SleufBaseApp {
             "clear" => self.request_project_action(ProjectAction::ClearLayers, ctx),
             "excel" => self.save_excel(),
             "jobs" => {
-                self.browser_ui.show_login = false;
                 self.open_kickthemap_workspace();
             }
             "login" => {

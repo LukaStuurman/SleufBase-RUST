@@ -1,8 +1,9 @@
 (async function (fields) {
-  if (location.origin !== 'https://www.my.kickthemap.com') throw new Error('Unexpected KickTheMap page origin');
+  if (!['https://www.my.kickthemap.com', 'https://my.kickthemap.com'].includes(location.origin)) throw new Error('Unexpected KickTheMap page origin');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 14000);
   const limit = 256 * 1024;
+  const success = value => value === true || (typeof value === 'number' && value !== 0) || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
   class LimitError extends Error {}
   async function read(response) {
     if (Number(response.headers.get('content-length') || 0) > limit) {
@@ -55,7 +56,7 @@
         const result = await read(response);
         const data = result?.data;
         const url = typeof data === 'string' ? data : (data?.url || data?.downloadUrl || data?.download_url || result?.url);
-        if (result?.status === true && typeof url === 'string' && url.length > 0) return url;
+        if (success(result?.status) && typeof url === 'string' && url.length > 0) return url;
       } catch (error) {
         if (controller.signal.aborted || error instanceof LimitError) throw error;
       }

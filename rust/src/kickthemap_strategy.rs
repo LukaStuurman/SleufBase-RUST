@@ -12,7 +12,7 @@ pub struct Strategy {pub version:u32,pub request_mode:Encoding,pub request_metho
 fn endpoint(raw:&str)->Result<String,String>{
     let raw=crate::python_values::trim(raw);
     let path=if raw.starts_with("https://") {let url=reqwest::Url::parse(raw).map_err(|e|e.to_string())?;
-        if url.origin()!=reqwest::Url::parse(ORIGIN).unwrap().origin()||!url.username().is_empty()||url.password().is_some()||url.query().is_some()||url.fragment().is_some(){return Err("Downloadaanvraag verwijst niet naar de vaste KickTheMap-site".into());}url.path().to_owned()
+        if !crate::kickthemap_browser::is_kickthemap_origin(&url)||!url.username().is_empty()||url.password().is_some()||url.query().is_some()||url.fragment().is_some(){return Err("Downloadaanvraag verwijst niet naar de vaste KickTheMap-site".into());}url.path().to_owned()
     }else{raw.to_owned()};
     if !path.starts_with('/')||path.starts_with("//")||path.contains(['?','#','\\','\r','\n'])||path.len()>1024{return Err("Onveilige KickTheMap-downloadendpoint".into());}Ok(path)
 }
@@ -46,7 +46,7 @@ impl Strategy {
         Ok(self.fields.iter().map(|(k,v)|{let mut out=v.clone();for(key,value)in [("job_id",get("projectId")),("storage_prefix",prefix),("export_name",export),("safe_stem",stem),("title",title)]{out=out.replace(&format!("{{{key}}}"),value);} (k.clone(),out)}).collect())
     }
     pub(super) fn signed_url(&self,text:&str)->Result<reqwest::Url,String>{
-        if let Some(path)=&self.response_url_path{let payload:Value=serde_json::from_str(text).map_err(|e|e.to_string())?;if payload["status"]!=true{return Err("KickTheMap heeft de herstel-download geweigerd".into());}
+        if let Some(path)=&self.response_url_path{let payload:Value=serde_json::from_str(text).map_err(|e|e.to_string())?;if !as_bool(payload.get("status")){return Err("KickTheMap heeft de herstel-download geweigerd".into());}
             let value=path.split('.').try_fold(&payload,|value,key|value.get(key));
             if let Some(value)=value.filter(|v|!v.is_null()){return validate_signed_url(value.as_str().ok_or("Vastgelegd URL-pad bevat geen tekst")?);}}
         extract_signed_url(text)

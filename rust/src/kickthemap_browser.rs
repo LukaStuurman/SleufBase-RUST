@@ -3,7 +3,7 @@
 //! limited to the locally launched browser, never attached to existing tabs.
 //! Credentials and session cookies are never saved to SleufBase project files.
 use serde_json::{Value,json};
-use std::{fs, path::{Path,PathBuf},process::Command, time::{Duration,Instant}};
+use std::{fs, path::Path,process::Command, time::{Duration,Instant}};
 #[cfg(test)]
 use tungstenite::Message;
 
@@ -27,6 +27,9 @@ pub struct BrowserCookie {
     pub domain:String,
     pub path:String,
     pub secure:bool,
+}
+pub(crate) fn is_kickthemap_origin(url:&reqwest::Url)->bool{
+    url.scheme()=="https"&&url.username().is_empty()&&url.password().is_none()&&url.port_or_known_default()==Some(443)&&matches!(url.host_str(),Some("www.my.kickthemap.com"|"my.kickthemap.com"))
 }
 fn allowed_domain(raw:&str)->bool {
     let domain=raw.trim_start_matches('.').to_ascii_lowercase();
@@ -144,7 +147,11 @@ impl Browser {
     /// Navigate the owned embedded view to the selected KickTheMap job.
     /// Identity comes from a current, authenticated jobs response, never from a
     /// stale cache or a guessed job URL.
+    pub fn set_visible(&self,visible:bool)->Result<(),String>{
+        fs::write(self._profile.path().join("window-visible"),if visible{b"1"}else{b"0"}).map_err(|_|"Het ingebouwde venster kon niet worden getoond of verborgen".into())
+    }
     pub fn open_job(&self,job_id:u64)->Result<(),String>{
+        self.set_visible(true)?;
         let payload=self.browser_job_payload()?;
         let url=job_view_url(&payload,job_id)?;
         let target=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
@@ -163,36 +170,9 @@ impl Browser {
 /// Build only an original KickTheMap viewJob path from one verified live job.
 fn job_view_url(payload:&str,job_id:u64)->Result<reqwest::Url,String>{
     let raw:Value=serde_json::from_str(payload).map_err(|_|"Ongeldige live joblijst".to_owned())?;
-    let arrays=[
-        raw.as_array(),
-        raw.get("data").and_then(Value::as_array),
-        raw.get("jobs").and_then(Value::as_array),
-        raw.get("projects").and_then(Value::as_array),
-        raw.get("data").and_then(|v|v.get("jobs")).and_then(Value::as_array),
-        raw.get("data").and_then(|v|v.get("projects")).and_then(Value::as_array),
-        raw.get("data").and_then(|v|v.get("data")).and_then(Value::as_array),
-    ];
-    let job=arrays.into_iter().flatten().flatten().find(|j|{
-        j.get("Id").or_else(||j.get("id")).and_then(|v|{
-            v.as_u64().or_else(||v.as_str().and_then(|s|s.parse::<u64>().ok()))
-        })==Some(job_id)
-    }).ok_or("Job niet gevonden in de huidige KickTheMap-sessie")?;
-    let text=|key:&str|->String{
-        match job.get(key){
-            Some(Value::String(s))=>s.trim().to_owned(),
-            Some(Value::Number(n))=>n.to_string(),
-            _=>String::new(),
-        }
-    };
-    let owner= if !text("user_id").is_empty(){text("user_id")}
-        else if !text("project_mail").is_empty(){text("project_mail")}
-        else {text("email")};
-    let date= if !text("project_date").is_empty(){text("project_date")}
-        else{text("created_at")};
-    if owner.is_empty()||date.is_empty()||owner.len()>254||date.len()>100
-       ||owner.chars().any(char::is_control)||date.chars().any(char::is_control){
-        return Err("Job heeft geen betrouwbare browseridentiteit".into());
-    }
+    let entries=crate::kickthemap_live::jobs_list(&raw).ok_or("Onbekend live joblijstformaat")?;
+    let job=entries.iter().find(|j|crate::kickthemap_live::parse_positive_id(j.get("Id").or_else(||j.get("id")))==Some(job_id)).ok_or("Job niet gevonden in de huidige KickTheMap-sessie")?;
+    let(owner,date)=crate::kickthemap_identity::view_parts(job)?;
     let mut url=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
     url.path_segments_mut().map_err(|_|"KickTheMap-URL heeft geen pad")?
         .push("viewJob").push(&format!("{owner}_{date}"));
@@ -221,6 +201,13 @@ impl BrowserChannel {
         if content.len()>MAX_CDP_RESPONSE{return Err("KickTheMap browser-resultaat te groot".into());}
         Ok(content.to_owned())
     }
+    pub(crate) fn storage_config_payload(&self,cancel:&std::sync::atomic::AtomicBool)->Result<String,String>{
+        let target=self.job_tab(cancel)?;
+        let expression=format!("{}()",include_str!("kickthemap_storage_config.js"));
+        let response=self.command("Runtime.evaluate",json!({"expression":expression,"awaitPromise":true,"returnByValue":true}),Some(&target),cancel)?;
+        if response.get("exceptionDetails").is_some(){return Err("KickTheMap-opslagconfiguratie kon niet binnen de ingelogde sessie worden opgehaald".into());}
+        response["result"]["value"].as_str().filter(|s|s.len()<=65536).map(str::to_owned).ok_or("Ongeldig opslagantwoord uit de ingelogde sessie".into())
+    }
     fn command(&self,method:&str,params:Value,target:Option<&str>,cancel:&std::sync::atomic::AtomicBool)->Result<Value,String>{
         let ws=target.unwrap_or(&self.websocket);
         cdp::command(self.port,ws,method,params,cancel,cdp::Limits{duration:Duration::from_secs(15),response_bytes:512*1024})
@@ -231,7 +218,7 @@ impl BrowserChannel {
         let page=list.iter().find(|p|{
             p["type"]=="page" && p["url"].as_str().is_some_and(|s|
                 reqwest::Url::parse(s).ok().is_some_and(|u|
-                    u.scheme()=="https" && matches!(u.host_str(),Some("www.my.kickthemap.com"|"my.kickthemap.com")) && u.port_or_known_default()==Some(443)))
+                    is_kickthemap_origin(&u)))
         }).ok_or("Er is geen KickTheMap-tabblad actief in het eigen Browser-venster")?;
         let id=page["targetId"].as_str().filter(|id|!id.is_empty()&&id.len()<=128&&id.bytes().all(|c|c.is_ascii_alphanumeric()||b"-_".contains(&c)))
             .ok_or("Ongeldige Browser-tabidentiteit")?;
@@ -272,6 +259,10 @@ impl BrowserChannel {
             "fileName":filename,
             "exportName":export_name
         });
+        self.signed_download_fields_with_cancel(fields,cancel)
+    }
+    pub(crate) fn signed_download_fields_with_cancel(&self,fields:Value,cancel:&std::sync::atomic::AtomicBool)->Result<reqwest::Url,String>{
+        crate::input::check(cancel)?;
         let expression=format!("{}({})",include_str!("kickthemap_signed_url.js"),fields);
         let target=self.job_tab(cancel)?;
         let response=self.command("Runtime.evaluate",
@@ -363,8 +354,22 @@ mod embedded_tests {
             if result["result"]["value"]=="SleufBase local browser fixture"{break;}
             assert!(Instant::now()<deadline,"local fixture did not load");std::thread::sleep(Duration::from_millis(50));
         }
+        browser.set_visible(false).unwrap();
+        let until=Instant::now()+Duration::from_secs(3);
+        while fs::read(browser._profile.path().join("window-visible-ack")).ok().as_deref()!=Some(b"0"){
+            assert!(Instant::now()<until,"owned hidden window did not acknowledge visibility command");std::thread::sleep(Duration::from_millis(50));
+        }
         // Browser owns a kill-on-close process tree; dropping it closes the
         // hidden fixture and its WebView2 subprocesses before profile removal.
         drop(browser);
+    }
+}
+
+#[cfg(test)] mod navigation_regressions{
+    use super::*;
+    #[test]fn prefix_only_jobs_open_like_original_sleufbase(){
+        let url=job_view_url(r#"{"data":[{"Id":42,"Prefix":"name_with_underscore@example.test_2026-10-24_13-14-15","created_at":"2026-10-25T08:00:00Z","user_id":123}]}"#,42).unwrap();
+        assert_eq!(url.path(),"/viewJob/123_2026-10-24_13-14-15");
+        let url=job_view_url(r#"{"jobs":[{"Id":" 42 ","s3_root_dir":"owner@example.test_2026-10-24_13-14-15"}]}"#,42).unwrap();assert!(url.path().ends_with("owner@example.test_2026-10-24_13-14-15"));
     }
 }

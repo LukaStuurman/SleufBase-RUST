@@ -37,6 +37,9 @@ mod native {
         context: WebContext,
         error: Option<String>,
         fixture: bool,
+        profile: std::path::PathBuf,
+        visible: bool,
+        last_visibility: Option<bool>,
         deadline: Option<Instant>,
     }
     impl ApplicationHandler for App {
@@ -80,17 +83,52 @@ mod native {
             }
         }
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-            if let Some(deadline) = self.deadline {
-                if Instant::now() >= deadline {
-                    event_loop.exit();
-                } else {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            // Only this app's private profile receives visibility commands.
+            // Keeping the authenticated view hidden preserves the download
+            // capability without leaving a website window in the jobs workflow.
+            use std::io::Read;
+            let mut command = [0_u8; 2];
+            let visible = std::fs::File::open(self.profile.join("window-visible"))
+                .and_then(|mut file| file.read(&mut command))
+                .ok()
+                .and_then(|len| match &command[..len] {
+                    b"0" => Some(false),
+                    b"1" => Some(true),
+                    _ => None,
+                });
+            if self.last_visibility != visible {
+                if let (Some(visible), Some(window)) = (visible, self.window.as_ref()) {
+                    if self.visible != visible {
+                        window.set_visible(visible);
+                        if visible {
+                            window.focus_window();
+                        }
+                        self.visible = visible;
+                    }
+                    if std::fs::write(
+                        self.profile.join("window-visible-ack"),
+                        if visible { b"1" } else { b"0" },
+                    )
+                    .is_ok()
+                    {
+                        self.last_visibility = Some(visible);
+                    }
                 }
+            }
+            let next = Instant::now() + Duration::from_millis(250);
+            if self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                event_loop.exit();
             } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    self.deadline.map_or(next, |deadline| deadline.min(next)),
+                ));
             }
         }
     }
+
     pub(super) fn run(profile: &Path, fixture: bool) -> Result<(), String> {
         if !profile.is_dir() {
             return Err("Tijdelijke browsermap ontbreekt".into());
@@ -106,6 +144,9 @@ mod native {
             context: WebContext::new(Some(profile.to_owned())),
             error: None,
             fixture,
+            profile: profile.to_owned(),
+            visible: !fixture,
+            last_visibility: None,
             deadline: fixture.then(|| Instant::now() + Duration::from_secs(20)),
         };
         event_loop.run_app(&mut app).map_err(|e| e.to_string())?;

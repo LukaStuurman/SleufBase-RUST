@@ -1,6 +1,6 @@
 (config=>{
  const key='__sleufbaseNativeDownloadCapture';
- if(location.origin!=='https://www.my.kickthemap.com')throw Error('Wrong origin');
+ if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw Error('Wrong origin');
  if(window[key]?.cleanup)window[key].cleanup();
  const state={nonce:config.nonce,jobId:String(config.jobId),captured:null,expires:Date.now()+120000};
  const alive=()=>window[key]===state&&Date.now()<state.expires;

@@ -152,3 +152,7 @@ pub mod template_server;
 mod template_fetch;
 
 pub mod template_scale;
+
+mod kickthemap_identity;
+
+mod kickthemap_s3;

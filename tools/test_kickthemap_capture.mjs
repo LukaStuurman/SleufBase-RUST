@@ -44,3 +44,5 @@ function harness(response=()=>new Response(JSON.stringify({status:true,data:{url
 }
 console.log('Native capture JS: 9 fetch/XHR/GET/body-budget/nonblocking/identity/cleanup scenarios passed');
 await import('./test_kickthemap_signed_url.mjs');
+
+await import('./test_kickthemap_storage.mjs');

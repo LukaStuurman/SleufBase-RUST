@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "SleufBase-Rust-portable-preview"
 LOGOS = ("apk.png", "bgm.png", "brabant_water.png", "enexis.png", "hanab.jpg", "hurkmans.png", "techbase_full.png", "wml.jpg")
-NOTICES = ("Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt")
+NOTICES = ("Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt")
 
 def digest(path: Path) -> str:
     with path.open("rb") as file:

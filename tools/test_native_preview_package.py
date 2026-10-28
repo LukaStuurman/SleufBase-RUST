@@ -46,7 +46,7 @@ class PackageTests(unittest.TestCase):
         first = self.package("first")
         second = self.package("second")
         self.assertEqual(first.read_bytes(), second.read_bytes())
-        self.assertEqual(len(verify(first, first.with_suffix(".sha256"))["files"]), 14)
+        self.assertEqual(len(verify(first, first.with_suffix(".sha256"))["files"]), 15)
         with zipfile.ZipFile(first) as archive:
             self.assertEqual(archive.read("sleufbase-rust.exe"), self.binary.read_bytes())
             self.assertEqual(archive.read("assets/template_logos/techbase_full.png"), (ROOT / "assets/template_logos/techbase_full.png").read_bytes())

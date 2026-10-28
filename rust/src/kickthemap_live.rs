@@ -90,7 +90,7 @@ fn field_text(obj: &Value, names: &[&str]) -> String {
     }
     String::new()
 }
-fn parse_positive_id(value: Option<&Value>) -> Option<u64> {
+pub(crate) fn parse_positive_id(value: Option<&Value>) -> Option<u64> {
     match value? {
         Value::Number(n) => n.as_u64().filter(|n| *n > 0),
         Value::String(s) => s.trim().parse::<u64>().ok().filter(|n| *n > 0),
@@ -142,7 +142,7 @@ fn coordinates(obj: &Value) -> String {
     let value = field_text(obj, &["coordinates", "coord", "location", "gps", "latlng"]);
     if value.is_empty() { "-".into() } else { value }
 }
-fn jobs_list(value: &Value) -> Option<&Vec<Value>> {
+pub(crate) fn jobs_list(value: &Value) -> Option<&Vec<Value>> {
     if let Some(items) = value.as_array() {return Some(items);}
     if value.get("status") == Some(&Value::Bool(false)) {return None;}
     for key in ["data", "projects", "jobs", "results"] {
@@ -223,7 +223,8 @@ pub struct KickTheMapLiveClient {
     download_strategy:Option<strategy::Strategy>,
     repair_in_progress:bool,
     snapshot_owner:crate::jobs_cache::SnapshotOwner,
-    download_prefixes:HashMap<u64,String>,
+    download_prefixes:HashMap<u64,crate::kickthemap_s3::Identity>,
+    storage_config:Option<crate::kickthemap_s3::Credentials>,
     known_jobs_nonempty:bool,
 }
 
@@ -245,17 +246,18 @@ impl KickTheMapLiveClient {
         match result{Ok(jobs)=>{self.known_jobs_nonempty=!jobs.is_empty();Ok(jobs)},Err(e)=>{self.download_prefixes=previous;Err(e)}}
     }
     fn remote_file_name(&self,job:&Job,kind:RemoteFileKind)->Result<String,String>{
-        if kind==RemoteFileKind::GeoTiff&&job.prefix.trim().is_empty(){self.download_prefixes.get(&job.job_id).map(|prefix|format!("{prefix}.tiff")).ok_or_else(||"KickTheMap-job mist zowel prefix als volledige downloadidentiteit".into())}else{kind.remote_name(job)}
+        if kind==RemoteFileKind::GeoTiff&&job.prefix.trim().is_empty(){self.download_prefixes.get(&job.job_id).map(|identity|format!("{}.tiff",identity.prefix)).ok_or_else(||"KickTheMap-job mist zowel prefix als volledige downloadidentiteit".into())}else{kind.remote_name(job)}
     }
     fn remember_download_identities(&mut self,payload:&str){
         let Ok(raw)=serde_json::from_str::<Value>(payload)else{return};let Some(entries)=jobs_list(&raw)else{return};
         let mut prefixes=HashMap::new();
         for obj in entries{
             let Some(id)=parse_positive_id(obj.get("Id").or_else(||obj.get("id")))else{continue};
-            let raw_prefix=field_text(obj,&["Prefix","s3_root_dir"]);if !raw_prefix.is_empty(){continue;}
-            let email=["project_mail","email","mail","user_email","customer_email"].iter().map(|key|field_text(obj,&[*key])).find(|value|value.contains('@')).unwrap_or_else(||self.account_email.clone());
-            let date=field_text(obj,&["project_date","created_at"]);
-            if !email.is_empty()&&!date.is_empty(){let date=date.replace(['T',' '],"_").replace(':',"-").chars().take(19).collect::<String>();let prefix=format!("{email}_{date}");if prefix.len()<=4096{prefixes.entry(id).or_insert(prefix);}}
+            let raw_prefix=crate::kickthemap_identity::prefix(obj);
+            let(owner,date)=crate::kickthemap_identity::project(obj,&self.account_email);
+            let prefix=if !raw_prefix.is_empty(){raw_prefix}else if !owner.is_empty()&&!date.is_empty(){format!("{owner}_{date}")}else{continue};
+            if prefix.len()<=4096{prefixes.entry(id).or_insert(crate::kickthemap_s3::Identity{prefix,owner});}
+
         }
         self.download_prefixes=prefixes;
     }
@@ -314,6 +316,18 @@ impl KickTheMapLiveClient {
             let text=response_text(response.error_for_status().map_err(|e|e.to_string())?,512*1024)?;
             return strategy.signed_url(&text);
         }Err("KickTheMap-sessie verlopen".into())
+    }
+    fn storage_download_url(&mut self,job:&Job,kind:RemoteFileKind,filename:&str,cancel:&std::sync::atomic::AtomicBool,browser:Option<&crate::kickthemap_browser::BrowserChannel>)->Result<reqwest::Url,String>{
+        crate::input::check(cancel)?;
+        let key=self.download_prefixes.get(&job.job_id).ok_or("Vernieuw eerst de joblijst om de opslagidentiteit te bevestigen")?.key(kind)?;
+        if self.storage_config.is_none(){
+            let direct=(||{let response=self.client.post(format!("{}/main/adata",self.api_origin)).header("X-CSRF-TOKEN",&self.csrf).send().map_err(|_|"Opslagconfiguratie kon niet worden opgehaald".to_owned())?.error_for_status().map_err(|e|format!("Opslagconfiguratie HTTP {}",e.status().map(|s|s.as_u16()).unwrap_or(0)))?;response_text(response,65536)})();
+            crate::input::check(cancel)?;
+            let payload=direct.or_else(|error|match browser{Some(browser)=>browser.storage_config_payload(cancel),None=>Err(error)})?;
+            self.storage_config=Some(crate::kickthemap_s3::Credentials::decode(&payload)?);
+        }
+        crate::input::check(cancel)?;
+        self.storage_config.as_ref().unwrap().signed_url(&key,filename)
     }
     pub fn download_strategy(&self)->Option<&strategy::Strategy>{self.download_strategy.as_ref()}
     fn download_strategy_path(&self,root:&std::path::Path)->std::path::PathBuf{
@@ -395,7 +409,7 @@ impl KickTheMapLiveClient {
         }
         let csrf = html_token(&homepage,"meta","csrf-token")
             .ok_or("KickTheMap sessie bevat geen CSRF-token")?;
-        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
 
     /// Adopt cookies only from the Edge profile launched by this Rust process.
@@ -432,12 +446,12 @@ impl KickTheMapLiveClient {
                 cookie.name,cookie.value,domain,cookie.path),&base);
             accepted+=1;
         }
-        if accepted==0{return Err("Edge bevat nog geen geldige KickTheMap-sessiecookies".into());}
+        if accepted==0{return Err("Het ingebouwde venster bevat nog geen geldige KickTheMap-sessiecookies".into());}
         let client=Client::builder()
             .cookie_provider(jar)
             .redirect(redirect::Policy::none())
             .timeout(Duration::from_secs(25))
-            .user_agent("SleufBase-Rust/0.1 (interactive Edge session)")
+            .user_agent("SleufBase-Rust/0.1 (interactive WebView2 session)")
             .build().map_err(|e|e.to_string())?;
         let csrf=if let Some(token)=browser_csrf {token.to_owned()} else {
         let home=client.get(format!("{ORIGIN}/")).send()
@@ -450,7 +464,7 @@ impl KickTheMapLiveClient {
         html_token(&page,"meta","csrf-token")
             .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?
         };
-        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
     /// Compatibility entry point: the editable account hint is not identity proof.
     /// Browser sessions always receive an independent snapshot owner.
@@ -598,7 +612,7 @@ mod tests {
             write!(socket,"HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
         });
         let client=Client::builder().redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
-        (KickTheMapLiveClient{client,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+        (KickTheMapLiveClient{client,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
     }
     #[test]
     fn owned_browser_bootstrap_uses_browser_csrf_and_verified_jobs_without_http(){
@@ -727,7 +741,7 @@ pub fn validate_signed_url(raw:&str)->Result<reqwest::Url,String> {
 fn extract_signed_url(content:&str)->Result<reqwest::Url,String> {
     let payload:Value=serde_json::from_str(content)
         .map_err(|_|"KickTheMap gaf geen downloadlink-JSON terug".to_owned())?;
-    if payload.get("status")!=Some(&Value::Bool(true)) {
+    if !as_bool(payload.get("status")) {
         return Err("KickTheMap meldt dat het bestand niet beschikbaar is".into());
     }
     let data=payload.get("data");
@@ -738,6 +752,57 @@ fn extract_signed_url(content:&str)->Result<reqwest::Url,String> {
         .or_else(||payload.get("url").and_then(Value::as_str))
         .ok_or("KickTheMap-downloadantwoord bevat geen URL")?;
     validate_signed_url(candidate)
+}
+
+fn download_to_temp(signed:reqwest::Url,root:&std::path::Path,kind:RemoteFileKind,cancel:&std::sync::atomic::AtomicBool)->Result<tempfile::NamedTempFile,String>{
+    use std::io::{Read,Write};
+    let check=||crate::input::check(cancel);
+        let download_client=Client::builder()
+            .redirect(redirect::Policy::custom(|attempt|{
+                match validate_signed_url(attempt.url().as_str()) {
+                    Ok(_) if attempt.previous().len()<4=>attempt.follow(),
+                    _=>attempt.stop(),
+                }
+            }))
+            .timeout(Duration::from_secs(180))
+            .user_agent("SleufBase-Rust/0.1")
+            .build().map_err(|e|e.to_string())?;
+        let mut response=download_client.get(signed).send()
+            .map_err(|e|format!("KickTheMap-download mislukt: {}",e.without_url()))?
+            .error_for_status().map_err(|e|format!("KickTheMap-download HTTP-fout: {}",e.without_url()))?;
+        let max_bytes=match kind{
+            RemoteFileKind::GeoTiff=>2_000_000_000u64,
+            RemoteFileKind::JobFeatures=>64*1024*1024u64
+        };
+        if response.content_length().is_some_and(|len|len>max_bytes) {
+            return Err("Downloadbestand is groter dan de toegestane limiet".into());
+        }
+        let mut temporary=tempfile::NamedTempFile::new_in(root).map_err(|e|e.to_string())?;
+        let mut downloaded=0u64;
+        let mut buffer=[0u8;128*1024];
+        loop {
+            check()?;
+            let n=response.read(&mut buffer)
+                .map_err(|e|format!("Download lezen mislukt: {e}"))?;
+            if n==0 {break;}
+            downloaded=downloaded.saturating_add(n as u64);
+            if downloaded>max_bytes {return Err("Download is te groot".into());}
+            temporary.write_all(&buffer[..n])
+                .map_err(|e|format!("Download schrijven mislukt: {e}"))?;
+        }
+        temporary.as_file_mut().flush().map_err(|e|e.to_string())?;
+        temporary.as_file_mut().sync_all().map_err(|e|e.to_string())?;
+        verify_download(temporary.path(),kind)?;
+    Ok(temporary)
+}
+
+fn resolve_download_link(http:Result<Option<reqwest::Url>,String>,cancel:&std::sync::atomic::AtomicBool,allow_fallback:bool,browser:impl FnOnce()->Result<reqwest::Url,String>)->Result<reqwest::Url,String>{
+    crate::input::check(cancel)?;
+    match http{
+        Ok(Some(url))=>Ok(url),
+        failure if !allow_fallback=>Err(match failure{Err(error)=>error,_=>"Het herstelverzoek gaf geen bruikbare downloadlink".into()}),
+        failure=>browser().map_err(|fallback|format!("Downloadlink niet beschikbaar. Rechtstreekse aanvraag: {}. Ingebouwde sessie: {fallback}",match failure{Err(e)=>e,Ok(_)=>"geen bruikbare link ontvangen".into()})),
+    }
 }
 
 fn verify_download(path:&std::path::Path,kind:RemoteFileKind)->Result<(),String>{
@@ -787,7 +852,7 @@ impl KickTheMapLiveClient {
         cancel:&std::sync::atomic::AtomicBool,
         browser:Option<&crate::kickthemap_browser::BrowserChannel>,
     )->Result<std::path::PathBuf,String> {
-        use std::{io::{Read,Write},sync::atomic::Ordering};
+        use std::{io::Write,sync::atomic::Ordering};
         let check=||if cancel.load(Ordering::Relaxed) {
             Err("KickTheMap-download geannuleerd".to_owned())
         } else {Ok(())};
@@ -827,51 +892,25 @@ impl KickTheMapLiveClient {
             ("fileName",remote),
             ("exportName",export_name)
         ];
-        let signed=self.request_download_url_with_title(&fields,cancel,&job.title)?;
-        let signed=match signed {
-            Some(url)=>url,
-            None=>{
-                check()?;
-                let browser=browser.ok_or("KickTheMap gaf geen bruikbare downloadlink terug; meld je aan via het privé Edge-venster voor de browserfallback")?;
-                browser.signed_download_url_with_cancel(job,kind,cancel)?
+        let http=self.request_download_url_with_title(&fields,cancel,&job.title);
+        let mut storage_used=false;
+        let signed=resolve_download_link(http,cancel,!self.repair_in_progress,||{
+            let via_browser=(||{
+                let browser=browser.ok_or("Geen actieve ingebouwde sessie".to_owned())?;
+                let fields=fields.iter().map(|(k,v)|((*k).to_owned(),Value::String(v.clone()))).collect::<serde_json::Map<_,_>>();
+                browser.signed_download_fields_with_cancel(Value::Object(fields),cancel)
+            })();
+            via_browser.or_else(|error|{crate::input::check(cancel)?;storage_used=true;self.storage_download_url(job,kind,&fields[3].1,cancel,browser).map_err(|storage|format!("{error}. Oorspronkelijke opslagroute: {storage}"))})
+        })?;
+        let temporary=match download_to_temp(signed,root,kind,cancel){
+            Ok(file)=>file,
+            Err(error)=>{
+                crate::input::check(cancel)?;
+                if storage_used||self.repair_in_progress{return Err(error);}
+                let signed=self.storage_download_url(job,kind,&fields[3].1,cancel,browser).map_err(|storage|format!("{error}. Oorspronkelijke opslagroute: {storage}"))?;
+                download_to_temp(signed,root,kind,cancel)?
             }
         };
-        let download_client=Client::builder()
-            .redirect(redirect::Policy::custom(|attempt|{
-                match validate_signed_url(attempt.url().as_str()) {
-                    Ok(_) if attempt.previous().len()<4=>attempt.follow(),
-                    _=>attempt.stop(),
-                }
-            }))
-            .timeout(Duration::from_secs(180))
-            .user_agent("SleufBase-Rust/0.1")
-            .build().map_err(|e|e.to_string())?;
-        let mut response=download_client.get(signed).send()
-            .map_err(|e|format!("KickTheMap-download mislukt: {e}"))?
-            .error_for_status().map_err(|e|format!("KickTheMap-download HTTP-fout: {e}"))?;
-        let max_bytes=match kind{
-            RemoteFileKind::GeoTiff=>2_000_000_000u64,
-            RemoteFileKind::JobFeatures=>64*1024*1024u64
-        };
-        if response.content_length().is_some_and(|len|len>max_bytes) {
-            return Err("Downloadbestand is groter dan de toegestane limiet".into());
-        }
-        let mut temporary=tempfile::NamedTempFile::new_in(root).map_err(|e|e.to_string())?;
-        let mut downloaded=0u64;
-        let mut buffer=[0u8;128*1024];
-        loop {
-            check()?;
-            let n=response.read(&mut buffer)
-                .map_err(|e|format!("Download lezen mislukt: {e}"))?;
-            if n==0 {break;}
-            downloaded=downloaded.saturating_add(n as u64);
-            if downloaded>max_bytes {return Err("Download is te groot".into());}
-            temporary.write_all(&buffer[..n])
-                .map_err(|e|format!("Download schrijven mislukt: {e}"))?;
-        }
-        temporary.as_file_mut().flush().map_err(|e|e.to_string())?;
-        temporary.as_file_mut().sync_all().map_err(|e|e.to_string())?;
-        verify_download(temporary.path(),kind)?;
         // Every downloaded JSON/TIFF file gets a sidecar so the independently
         // running Rust app can identify its original job even when multiple
         // jobs are downloaded in a single directory. Both files are staged,
@@ -1042,5 +1081,42 @@ mod existing_account_cache_tests{
         std::fs::write(&path,b"broken").unwrap();assert!(client.load_download_strategy(root.path()).is_err());assert_eq!(client.download_strategy,Some(strategy));
         client.snapshot_owner=crate::jobs_cache::SnapshotOwner::authenticated_login("b@example.test");client.download_strategy=None;assert!(!client.load_download_strategy(root.path()).unwrap());assert!(client.download_strategy.is_none());
         client.snapshot_owner=crate::jobs_cache::SnapshotOwner::browser_session().unwrap();assert!(!client.load_download_strategy(root.path()).unwrap());server.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod job_workflow_regressions{
+    use super::*;
+    use std::sync::atomic::{AtomicBool,Ordering};
+    #[test]
+    fn http_auth_failure_still_reaches_authenticated_fallback(){
+        let(mut client,requests,server)=super::tests::scripted(vec![(403,"blocked"),(403,"blocked")]);
+        let cancel=AtomicBool::new(false);let http=client.request_download_url(&[("projectId","42".into())],&cancel);assert!(http.is_err());
+        let mut called=false;let url=resolve_download_link(http,&cancel,true,||{called=true;Ok(reqwest::Url::parse("https://s3.amazonaws.com/owned.tiff").unwrap())}).unwrap();
+        assert!(called);assert_eq!(url.path(),"/owned.tiff");server.join().unwrap();assert_eq!(requests.try_iter().count(),2);
+    }
+    #[test]
+    fn successful_link_status_matches_original_boolean_and_numeric_responses(){
+        for status in [serde_json::json!(true),serde_json::json!(1),serde_json::json!(" true ")]{assert!(extract_signed_url(&serde_json::json!({"status":status,"data":{"url":"https://s3.amazonaws.com/fixture"}}).to_string()).is_ok());}
+        assert!(extract_signed_url(r#"{"status":false,"data":{"url":"https://s3.amazonaws.com/fixture"}}"#).is_err());
+    }
+    #[test]
+    fn testing_a_repair_strategy_never_succeeds_via_an_unrelated_fallback(){
+        let cancel=AtomicBool::new(false);
+        assert!(resolve_download_link(Err("candidate failed".into()),&cancel,false,||panic!("must validate the candidate itself")).unwrap_err().contains("candidate failed"));
+    }
+    #[test]
+    fn cancellation_never_falls_back_into_another_request(){
+        let cancel=AtomicBool::new(true);let error=resolve_download_link(Err("blocked".into()),&cancel,true,||panic!("must not send another request")).unwrap_err();assert!(error.contains("geannuleerd"));cancel.store(false,Ordering::Relaxed);
+    }
+    #[test]
+    fn original_storage_route_uses_current_verified_job_and_never_a_caller_prefix(){
+        let fixture:Value=serde_json::from_str(include_str!("../tests/fixtures/kickthemap/storage-control.json")).unwrap();let payload: &'static str=Box::leak(fixture["payload"].to_string().into_boxed_str());
+        let(mut client,requests,server)=super::tests::scripted(vec![(200,r#"{"data":[{"Id":42,"Prefix":"owner@example.test_2026-10-24_13-14-15"}]}"#),(200,payload)]);
+        let mut jobs=client.fetch_jobs().unwrap();jobs[0].prefix="unverified-other-job".into();let cancel=AtomicBool::new(false);
+        let url=client.storage_download_url(&jobs[0],RemoteFileKind::GeoTiff,"PS42.tiff",&cancel,None).unwrap();assert!(url.path().contains("owner%40example.test_2026-10-24_13-14-15"));assert!(!url.path().contains("unverified-other-job"));
+        server.join().unwrap();let requests=requests.try_iter().collect::<Vec<_>>();assert_eq!(requests.len(),2);assert!(requests[1].starts_with("POST /main/adata "));
+        jobs[0].job_id=999;assert!(client.storage_download_url(&jobs[0],RemoteFileKind::GeoTiff,"PS.tiff",&cancel,None).is_err());
+        client.fetch_jobs_from_browser(||Ok("{\"data\":[]}".into())).unwrap();jobs[0].job_id=42;assert!(client.storage_download_url(&jobs[0],RemoteFileKind::GeoTiff,"PS.tiff",&cancel,None).is_err());
     }
 }
