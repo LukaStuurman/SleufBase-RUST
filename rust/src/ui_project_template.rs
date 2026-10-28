@@ -198,6 +198,7 @@ impl SleufBaseApp {
                             if ui.small_button("Opnieuw sorteren").clicked(){
                                 // After editing a PS-label, apply the current sort again.
                                 let mode=requested_sort.unwrap_or(SortMode::NumberAsc);
+                                requested_sort=Some(mode);
                                 dialog.sort_mode=Some(mode);
                                 let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);
                                 template_order::reorder(&mut dialog.automatic,&order);
