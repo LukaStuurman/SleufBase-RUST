@@ -407,6 +407,29 @@ mod preference_tests {
     }
     fn jobs()->Vec<Dataset>{vec![Dataset{job_id:42,title:"PS42".into(),source_path:"PS42.json".into(),features:Vec::new()}]}
     #[test]
+    fn new_dialog_defaults_to_ps_numeric_order_but_saved_layout_is_untouched(){
+        let jobs=vec![
+            Dataset{job_id:10,title:"PS10".into(),source_path:"PS10.json".into(),features:Vec::new()},
+            Dataset{job_id:2,title:"PS2".into(),source_path:"PS2.json".into(),features:Vec::new()},
+            Dataset{job_id:1,title:"PS1".into(),source_path:"PS1.json".into(),features:Vec::new()},
+        ];
+        let app=SleufBaseApp{datasets:jobs.clone(),..Default::default()};
+        let dialog=Dialog::new(&app,&settings());
+        assert_eq!(dialog.sort_mode,Some(SortMode::NumberAsc));
+        assert_eq!(dialog.options.choices.iter().map(|c|c.title.as_str()).collect::<Vec<_>>(),
+                   ["PS1","PS2","PS10"]);
+        assert_eq!(dialog.options.choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
+                   [Some("PS1"),Some("PS2"),Some("PS10")]);
+        // A saved layout is intentional, even if it isn't numeric.
+        let saved=Options{choices:template_project::suggest(&jobs,&[],&[]),..Default::default()};
+        let mut app=app;
+        app.template_preferences=Some(sleufbase_rust::template_prefs::TemplatePreferences::capture(&saved,&jobs,&[],&[]));
+        let restored=Dialog::new(&app,&settings());
+        assert_eq!(restored.sort_mode,None);
+        assert_eq!(restored.options.choices.iter().map(|c|c.title.as_str()).collect::<Vec<_>>(),
+                   ["PS10","PS2","PS1"]);
+    }
+    #[test]
     fn project_dialog_applies_global_export_preferences_to_new_choices(){
         let jobs=jobs();let settings=settings();
         let options=Options{choices:template_project::suggest(&jobs,&[],&[]),..Default::default()};
