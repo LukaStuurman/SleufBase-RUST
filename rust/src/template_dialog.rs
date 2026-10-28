@@ -3,7 +3,7 @@
 use eframe::egui;
 use sleufbase_rust::{
     geotiff::GeoTiffInfo,
-    template_order::{self, Row, State},
+    template_order::{self, Row, SortMode, State},
     Dataset,
 };
 pub(crate) struct Dialog {
@@ -15,6 +15,7 @@ pub(crate) struct Dialog {
     number: String,
     variant: String,
     scale: String,
+    sort_mode: Option<SortMode>,
 }
 pub(crate) fn logos(ui:&mut egui::Ui, logos:&mut sleufbase_rust::template_branding::Logos) {
     ui.collapsing("Logo's op de bladen",|ui| {
@@ -58,7 +59,9 @@ pub(crate) fn font_folders(ui: &mut egui::Ui, folders: &mut Vec<std::path::PathB
 }
 impl Dialog {
     pub fn new(mut state: State, rasters: &[GeoTiffInfo], generation: u64) -> Self {
+        let fresh=state.rows.is_empty();
         let error = state.sync(rasters).err().unwrap_or_default();
+        if fresh && error.is_empty() {state.sort_rows(SortMode::NumberAsc);}
         let mut selected = vec![false; state.rows.len()];
         if let Some(s) = selected.first_mut() {
             *s = true;
@@ -72,6 +75,7 @@ impl Dialog {
             number: String::new(),
             variant: String::new(),
             scale: String::new(),
+            sort_mode: fresh.then_some(SortMode::NumberAsc),
         };
         d.sync_controls();
         d
@@ -204,8 +208,7 @@ pub(crate) fn show(
         d.anchor = 0;
         d.sync_controls();
     }
-    let labels = Some(d.state.preview_labels().0);
-    let mut open = true;
+     let mut open = true;
     let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut result = None;
     let contents = |ui: &mut egui::Ui| {
@@ -238,7 +241,36 @@ pub(crate) fn show(
 
         ui.separator();
         ui.heading("2. Proefsleuven en volgorde");
-        ui.label("Kies de volgorde en het PS-nummer. Ctrl/Shift selecteert meerdere regels; dubbele PS-nummers mogen.");
+        ui.label("Standaard sorteert de export op PS-nummer (PS1, PS2, PS10). Ctrl/Shift selecteert meerdere regels; handmatig verplaatsen blijft mogelijk.");
+        let mut requested_sort=d.sort_mode;
+        ui.horizontal_wrapped(|ui|{
+            ui.label("Sorteren op");
+            egui::ComboBox::from_id_salt("raster-template-sort")
+                .selected_text(requested_sort.map_or("Handmatig / opgeslagen",SortMode::label))
+                .show_ui(ui,|ui|{
+                    for mode in SortMode::ALL {
+                        ui.selectable_value(&mut requested_sort,Some(mode),mode.label());
+                    }
+                });
+            if ui.small_button("Opnieuw sorteren").clicked(){
+                requested_sort=Some(requested_sort.unwrap_or(SortMode::NumberAsc));
+                // Force the same order again after manually changing PS numbers.
+                let order=d.state.sort_rows(requested_sort.unwrap());
+                template_order::reorder(&mut d.selected,&order);
+                d.anchor=d.selected.iter().position(|s|*s).unwrap_or(0);
+                d.sync_controls();
+            }
+        });
+        if requested_sort!=d.sort_mode {
+            d.sort_mode=requested_sort;
+            if let Some(mode)=requested_sort{
+                let order=d.state.sort_rows(mode);
+                template_order::reorder(&mut d.selected,&order);
+                d.anchor=d.selected.iter().position(|s|*s).unwrap_or(0);
+                d.sync_controls();
+            }
+        }
+        let labels=Some(d.state.preview_labels().0);
 
         egui::ScrollArea::vertical()
             .id_salt("template-order")
@@ -283,11 +315,13 @@ pub(crate) fn show(
         ui.horizontal_wrapped(|ui| {
             if ui.button("Omhoog").clicked() {
                 d.state.move_selected(&mut d.selected, false);
+                d.sort_mode=None;
                 d.sync_controls();
             }
 
             if ui.button("Omlaag").clicked() {
                 d.state.move_selected(&mut d.selected, true);
+                d.sort_mode=None;
                 d.sync_controls();
             }
 

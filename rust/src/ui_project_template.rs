@@ -1,6 +1,7 @@
 //! End-user GUI for building template exports directly from project sources.
 use super::*;
 use sleufbase_rust::template_project::{self, BackgroundKind, Options, Source};
+use sleufbase_rust::template_order::{self, SortMode};
 
 fn configure_options(mut options:Options,settings:&MigratedSettings,saved:Option<&sleufbase_rust::template_prefs::TemplatePreferences>,jobs:&[Dataset],rasters:&[GeoTiffInfo],trenches:&[VirtualTrench])->Options{
     let preferences=&settings.export_preferences;
@@ -31,6 +32,7 @@ pub(super) struct Dialog {
     pub error: String,
     pub automatic: Vec<sleufbase_rust::template_match::Suggestion>,
     pub editor:sleufbase_rust::template_editor::Editor,
+    sort_mode: Option<SortMode>,
     jobs:Vec<(u64,PathBuf)>,
     rasters:Vec<(PathBuf,Option<u64>,Option<u64>)>,
     trenches:Vec<(u64,String)>,
@@ -45,7 +47,10 @@ impl Dialog {
         };
         // Saved project choices override the user's general export defaults.
         let mut options=configure_options(options,settings,app.template_preferences.as_ref(),&app.datasets,&app.geotiffs,&app.virtual_trenches);
-        let editor=sleufbase_rust::template_editor::Editor::new(&mut options.choices,&app.geotiffs,&app.virtual_trenches);
+        let fresh=app.template_preferences.is_none();
+        let mut editor=sleufbase_rust::template_editor::Editor::new(&mut options.choices,&app.geotiffs,&app.virtual_trenches);
+        // Existing/imported layouts retain their hand-picked sheet order.
+        if fresh {editor.sort_choices(&mut options.choices,SortMode::NumberAsc);}
         let automatic=options.choices.iter().map(|choice| match choice.source {
             Source::Job(i) => sleufbase_rust::template_match::for_job(&app.datasets[i], &app.geotiffs),
             Source::Virtual(i) => sleufbase_rust::template_match::for_trench(&app.virtual_trenches[i], &app.geotiffs),
@@ -53,6 +58,7 @@ impl Dialog {
             Source::Empty(_)=>sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing},
         }).collect();
         Self { options, output: None, error: String::new(), automatic, editor,
+            sort_mode: fresh.then_some(SortMode::NumberAsc),
             jobs:app.datasets.iter().map(|d|(d.job_id,d.source_path.clone())).collect(),
             rasters:app.geotiffs.iter().map(|r|(r.path.clone(),r.kickthemap_job_id,r.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64))).collect(),
             trenches:app.virtual_trenches.iter().map(|t|(t.job_id,t.label.clone())).collect(),
@@ -178,20 +184,46 @@ impl SleufBaseApp {
                         let empty=dialog.options.choices.iter().filter(|c|matches!(c.source,Source::Empty(_))).count();
                         ui.label(format!("Meenemen: {included} | Niet meenemen: {} | Lege vakken: {empty}",dialog.options.choices.len()-included-empty));
                         if included+empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
-                        ui.small("Selecteer regels met Ctrl/Shift om nummers, varianten, schalen of de volgorde samen te wijzigen.");
+                        ui.small("Standaard worden proefsleuven numeriek gesorteerd (PS1, PS2, PS10). Handmatig verplaatsen blijft mogelijk; lege vakken houden hun positie.");
+                        let mut requested_sort=dialog.sort_mode;
+                        ui.horizontal_wrapped(|ui|{
+                            ui.label("Sorteren op");
+                            egui::ComboBox::from_id_salt("project-template-sort")
+                                .selected_text(requested_sort.map_or("Handmatig / opgeslagen",SortMode::label))
+                                .show_ui(ui,|ui|{
+                                    for mode in SortMode::ALL {
+                                        ui.selectable_value(&mut requested_sort,Some(mode),mode.label());
+                                    }
+                                });
+                            if ui.small_button("Opnieuw sorteren").clicked(){
+                                // After editing a PS-label, apply the current sort again.
+                                let mode=requested_sort.unwrap_or(SortMode::NumberAsc);
+                                requested_sort=Some(mode);
+                                dialog.sort_mode=Some(mode);
+                                let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);
+                                template_order::reorder(&mut dialog.automatic,&order);
+                            }
+                        });
+                        if requested_sort!=dialog.sort_mode {
+                            dialog.sort_mode=requested_sort;
+                            if let Some(mode)=requested_sort {
+                                let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);
+                                template_order::reorder(&mut dialog.automatic,&order);
+                            }
+                        }
                         ui.horizontal_wrapped(|ui|{
                             if ui.small_button("Alle regels selecteren").clicked(){dialog.editor.select_all(&dialog.options.choices,true);}
                             if ui.small_button("Selectie wissen").clicked(){dialog.editor.select_all(&dialog.options.choices,false);}
                             if ui.small_button("Meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,true);}
                             if ui.small_button("Niet meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,false);}
-                            for(label,direction)in[("Omhoog",-1),("Omlaag",1)]{if ui.small_button(label).clicked(){for(a,b)in dialog.editor.move_selected(&mut dialog.options.choices,direction){dialog.automatic.swap(a,b);}}}
+                            for(label,direction)in[("Omhoog",-1),("Omlaag",1)]{if ui.small_button(label).clicked(){let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);if !swaps.is_empty(){dialog.sort_mode=None;}for(a,b)in swaps{dialog.automatic.swap(a,b);}}}
                             if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
                             if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
                         });
                         ui.horizontal_wrapped(|ui|{
                             ui.label("PS-nummer");ui.add(egui::TextEdit::singleline(&mut dialog.editor.number).desired_width(75.));
                             ui.label("Variant");egui::ComboBox::from_id_salt("mixed-template-variant").selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant}).show_ui(ui,|ui|{ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");for c in 'B'..='Z'{ui.selectable_value(&mut dialog.editor.variant,c.to_string(),format!("Variant {c}"));}});
-                            if ui.small_button("Nummer/variant toepassen").clicked(){dialog.error=dialog.editor.apply_label(&mut dialog.options.choices).err().unwrap_or_default();}
+                            if ui.small_button("Nummer/variant toepassen").clicked(){match dialog.editor.apply_label(&mut dialog.options.choices){Ok(())=>{dialog.error.clear();if let Some(mode)=dialog.sort_mode{let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);template_order::reorder(&mut dialog.automatic,&order);}},Err(e)=>dialog.error=e}}
                             ui.label("Profielschaal");ui.add(egui::TextEdit::singleline(&mut dialog.editor.scale).desired_width(75.));
                             if ui.small_button("Schaal toepassen").clicked(){dialog.error=dialog.editor.apply_scale(&mut dialog.options.choices).err().unwrap_or_default();}
                         });
@@ -374,6 +406,29 @@ mod preference_tests {
         p.template_cross_section_diameter_text="diam".into();settings
     }
     fn jobs()->Vec<Dataset>{vec![Dataset{job_id:42,title:"PS42".into(),source_path:"PS42.json".into(),features:Vec::new()}]}
+    #[test]
+    fn new_dialog_defaults_to_ps_numeric_order_but_saved_layout_is_untouched(){
+        let jobs=vec![
+            Dataset{job_id:10,title:"PS10".into(),source_path:"PS10.json".into(),features:Vec::new()},
+            Dataset{job_id:2,title:"PS2".into(),source_path:"PS2.json".into(),features:Vec::new()},
+            Dataset{job_id:1,title:"PS1".into(),source_path:"PS1.json".into(),features:Vec::new()},
+        ];
+        let app=SleufBaseApp{datasets:jobs.clone(),..Default::default()};
+        let dialog=Dialog::new(&app,&settings());
+        assert_eq!(dialog.sort_mode,Some(SortMode::NumberAsc));
+        assert_eq!(dialog.options.choices.iter().map(|c|c.title.as_str()).collect::<Vec<_>>(),
+                   ["PS1","PS2","PS10"]);
+        assert_eq!(dialog.options.choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
+                   [Some("PS1"),Some("PS2"),Some("PS10")]);
+        // A saved layout is intentional, even if it isn't numeric.
+        let saved=Options{choices:template_project::suggest(&jobs,&[],&[]),..Default::default()};
+        let mut app=app;
+        app.template_preferences=Some(sleufbase_rust::template_prefs::TemplatePreferences::capture(&saved,&jobs,&[],&[]));
+        let restored=Dialog::new(&app,&settings());
+        assert_eq!(restored.sort_mode,None);
+        assert_eq!(restored.options.choices.iter().map(|c|c.title.as_str()).collect::<Vec<_>>(),
+                   ["PS10","PS2","PS1"]);
+    }
     #[test]
     fn project_dialog_applies_global_export_preferences_to_new_choices(){
         let jobs=jobs();let settings=settings();

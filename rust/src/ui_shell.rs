@@ -582,6 +582,31 @@ impl SleufBaseApp {
                 .max_height(list_height)
                 .show(ui, |ui| {
                     ui.set_min_size(egui::vec2(ui.available_width(), list_height));
+                    // JobFeatures objects share this panel with DXF/KLIC overlays.
+                    // A checkbox hides only the map layer; the source job stays
+                    // loaded for profiles, exports and subsequent sessions.
+                    for (index,job) in self.datasets.iter().enumerate() {
+                        ui.push_id(("job-object-overlay", &job.source_path), |ui| {
+                            ui.horizontal(|ui| {
+                                let mut visible=!self.project_view.hidden_object_layers.contains(&job.source_path);
+                                if ui.checkbox(&mut visible,"").on_hover_text("Toon objectpunten en objectlijnen op de kaart").changed() {
+                                    self.project_view.hidden_object_layers.retain(|p|p!=&job.source_path);
+                                    if !visible {self.project_view.hidden_object_layers.push(job.source_path.clone());}
+                                    self.dirty=true;
+                                }
+                                let response=ui.selectable_label(
+                                    self.selected==Some(index)&&self.project_view.selected_dxf.is_none(),
+                                    format!("Job: {} ({} objecten)",job.title,job.features.len())
+                                ).on_hover_text(format!("KickTheMap-objecten uit {}",job.source_path.display()));
+                                if response.clicked(){
+                                    self.selected=Some(index);
+                                    self.project_view.selected_dxf=None;
+                                    self.dxf_selection=None;
+                                    self.dirty=true;
+                                }
+                            });
+                        });
+                    }
                     for overlay in &mut self.overlays {
                         ui.horizontal(|ui| {
                             self.dirty |= ui.checkbox(&mut overlay.visible, "").changed();
@@ -607,7 +632,8 @@ impl SleufBaseApp {
                         });
                     }
                 });
-            if ui.button("Verwijder geselecteerde KLIC").clicked() {
+            if ui.add_enabled(self.project_view.selected_dxf.is_some(),
+                egui::Button::new("Verwijder geselecteerde KLIC")).clicked() {
                 self.remove_shell_overlay();
             }
         });

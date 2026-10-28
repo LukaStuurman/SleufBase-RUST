@@ -259,6 +259,33 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
 }
 
 #[test]
+fn loaded_job_objects_are_listed_in_klic_overlays_without_duplicate_dxf_files(){
+    let jobs=["PS10","PS2"];
+    let mut app=SleufBaseApp::default();
+    for (index,title) in jobs.iter().enumerate(){
+        let mut ds=sleufbase_rust::parse_job_features(
+            include_str!("../tests/fixtures/jobFeatures.json"),(index+1) as u64,title
+        ).unwrap();
+        ds.source_path=PathBuf::from(format!("{title}_jobFeatures.json"));
+        app.datasets.push(ds);
+    }
+    app.selected=Some(0);
+    let (labels,_)=capture(&mut app,[1500,930]);
+    for title in jobs {
+        assert!(labels.iter().any(|(text,_)|text.starts_with(&format!("Job: {title} ("))));
+    }
+    assert!(app.overlays.is_empty(),"job objects must not be duplicated as DXF files");
+    assert_eq!(app.project_view.opacity_percent,100.);
+    let hidden=app.datasets[0].source_path.clone();
+    app.project_view.hidden_object_layers.push(hidden.clone());
+    let (labels,_)=capture(&mut app,[1500,930]);
+    assert!(labels.iter().any(|(text,_)|text.starts_with("Job: PS10 (")));
+    assert_eq!(app.navigation.hidden_object_layers,vec![hidden.clone()]);
+    assert_eq!(app.snapshot().view.unwrap().hidden_object_layers,vec![hidden]);
+    assert_eq!(app.datasets.len(),2);
+}
+
+#[test]
 fn removal_keeps_raster_indices_and_virtual_selection_consistent() {
     let mut app = SleufBaseApp::default();
     app.virtual_trenches.push(
@@ -737,7 +764,7 @@ fn jobs_workspace_keeps_native_download_actions_visible_at_small_and_normal_size
         let mut app=SleufBaseApp{live_session:Some(session),live_jobs_owner:Some(owner),..Default::default()};app.browser_ui.open=true;app.browser_ui.selected.insert(42);
         app.live_jobs=vec![sleufbase_rust::jobs_cache::Job{job_id:42,title:"PS42".into(),address:"Voorbeeldstraat 1".into(),municipality:"Voorbeeldplaats".into(),coordinates:String::new(),client_date:"2026-10-28".into(),status:9,downloadable:true,prefix:"fixture@example.test_2026-10-28_12-00-00".into()}];
         let(labels,image)=capture(&mut app,size);
-        for text in ["Laad geselecteerde jobs","GeoTIFF downloaden + laden","Objecten downloaden + laden"]{let rect=labels.iter().find(|(t,_)|t==text).expect(text).1;assert!(rect.min.x>=0.&&rect.min.y>=0.&&rect.max.x<=size[0] as f32&&rect.max.y<=size[1] as f32,"{size:?} {text}: {rect:?}");}
+        for text in ["Laad geselecteerde jobs","GeoTIFF downloaden + laden","Objectpunten downloaden + laden"]{let rect=labels.iter().find(|(t,_)|t==text).expect(text).1;assert!(rect.min.x>=0.&&rect.min.y>=0.&&rect.max.x<=size[0] as f32&&rect.max.y<=size[1] as f32,"{size:?} {text}: {rect:?}");}
         assert!(!app.live_operation_busy());assert_eq!(app.browser_ui.launch_requests,0);
         if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR"){let dir=PathBuf::from(dir);std::fs::create_dir_all(&dir).unwrap();image.save(dir.join(format!("jobs-{}x{}.png",size[0],size[1]))).unwrap();}
         app.live_busy=true;app.browser_ui.batch_mode=true;app.browser_ui.status="Bestanden worden gecontroleerd en geladen. ".repeat(20);

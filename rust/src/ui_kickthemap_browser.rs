@@ -426,7 +426,7 @@ impl SleufBaseApp {
                         let can=live&&!busy&&!browser.batch_mode&&
                             !browser.selected.is_empty()&&browser.capturing.is_none();
                         if ui.add_enabled(can,egui::Button::new(egui::RichText::new("Laad geselecteerde jobs").color(Color32::WHITE)).fill(ORANGE)).clicked(){action=Some("both");}
-                        if ui.add_enabled(can,egui::Button::new("Objecten downloaden + laden")).clicked(){
+                        if ui.add_enabled(can,egui::Button::new("Objectpunten downloaden + laden")).clicked(){
                             action=Some("objects");
                         }
                         if ui.add_enabled(can,egui::Button::new("GeoTIFF downloaden + laden")).clicked(){
@@ -451,7 +451,7 @@ impl SleufBaseApp {
                             egui::ScrollArea::vertical().max_height(180.).show(ui,|ui|{for message in browser.failures.iter().rev().take(20){ui.label(message);}});
                         });
                     }
-                    if ctx.screen_rect().height()>=500.{ui.small("Dubbelklik op een job om de objecten en GeoTIFF in SleufBase te laden.");}
+                    if ctx.screen_rect().height()>=500.{ui.small("Objectpunten laden maakt ze zichtbaar onder KLIC Overlays. Dubbelklik voor objectpunten én GeoTIFF.");}
                     if !browser.status.is_empty(){egui::ScrollArea::vertical().id_salt("jobs-status").max_height(64.).show(ui,|ui|{ui.label(&browser.status);});}
                 });
                 let body_height=ui.available_height().max(40.);

@@ -1030,7 +1030,12 @@ fn canvas(
     painter.rect_filled(rect,18.0,Color32::WHITE);
 
     // Backgrounds are samples of the camera, never an input to fitting it.
-    let mut bounds=Bounds::from_datasets(datasets);
+    let mut bounds=None;
+    for dataset in datasets.iter().filter(|ds|
+        navigation.as_ref().is_none_or(|nav|!nav.hidden_object_layers.contains(&ds.source_path))
+    ) {
+        bounds=union_bounds(bounds,Bounds::from_datasets(std::slice::from_ref(dataset)));
+    }
     for raster in rasters {
         bounds=union_bounds(bounds,Some(raster.bounds));
     }
@@ -1243,7 +1248,9 @@ fn canvas(
             }}
         }
     }
-    for dataset in datasets {
+    for dataset in datasets.iter().filter(|ds|
+        navigation.as_ref().is_none_or(|nav|!nav.hidden_object_layers.contains(&ds.source_path))
+    ) {
         for feature in &dataset.features {
             let color=sleufbase_rust::matching_rule(&feature.source_name,rules)
                 .map_or(Color32::GRAY,|r|aci_color(i32::from(r.color_aci)));

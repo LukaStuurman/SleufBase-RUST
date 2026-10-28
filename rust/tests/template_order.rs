@@ -88,6 +88,53 @@ fn multi_selection_moves_whole_rows_without_reversing_blocks() {
     }
 }
 #[test]
+fn natural_numeric_and_name_sorting_preserves_blank_sheet_positions_and_row_data() {
+    use template_order::SortMode;
+    let source = [
+        ("PS10.tif", "10", "", "notes 10"),
+        ("PS2B.tif", "2", "B", "notes 2B"),
+        ("PS2.tif", "2", "", "notes 2"),
+        ("PS1.tif", "1", "", "notes 1"),
+        ("Unknown.tif", "invalid", "", "notes unknown"),
+    ];
+    let mut state=State {
+        rows:source.iter().map(|(file,n,v,c)|Row {
+            raster:Some(PathBuf::from(file)),number:(*n).into(),variant:(*v).into(),
+            comments:(*c).into(),..Default::default()
+        }).collect(),
+        ..Default::default()
+    };
+    state.rows.insert(2,Row::default());
+    let order=state.sort_rows(SortMode::NumberAsc);
+    assert_eq!(order,[4,3,2,1,0,5]);
+    assert_eq!(state.rows.iter().map(|r|r.number.as_str()).collect::<Vec<_>>(),
+               ["1","2","","2","10","invalid"]);
+    assert_eq!(state.rows[3].variant,"B");
+    assert_eq!(state.rows[3].comments,"notes 2B");
+    assert!(state.rows[2].raster.is_none());
+    state.sort_rows(SortMode::NumberDesc);
+    assert_eq!(state.rows.iter().map(|r|r.number.as_str()).collect::<Vec<_>>(),
+               ["10","2","","2","1","invalid"]);
+    assert_eq!(state.rows[1].variant,"B");
+    assert_eq!(state.rows[1].comments,"notes 2B");
+
+    let mut names=State {
+        rows:["Sheet10.tif","Sheet2.tif","Alpha.tif"].into_iter().enumerate()
+            .map(|(i,name)|Row{raster:Some(name.into()),number:(i+1).to_string(),..Default::default()})
+            .collect(), ..Default::default()
+    };
+    names.sort_rows(SortMode::NameAsc);
+    assert_eq!(names.rows.iter().map(|r|r.raster.as_ref().unwrap().as_path()).collect::<Vec<_>>(),
+               ["Alpha.tif","Sheet2.tif","Sheet10.tif"].map(Path::new));
+    names.sort_rows(SortMode::NameDesc);
+    assert_eq!(names.rows.iter().map(|r|r.raster.as_ref().unwrap().as_path()).collect::<Vec<_>>(),
+               ["Sheet10.tif","Sheet2.tif","Alpha.tif"].map(Path::new));
+
+    assert!(SortMode::NumberAsc.compare("999999999999999999999","", "A","1000000000000000000000","","B").is_lt());
+    assert!(SortMode::NumberDesc.compare("2","","A","invalid","","B").is_lt());
+}
+
+#[test]
 fn project_v5_roundtrips_order_metadata_and_reads_v1_through_v4_without_rewriting_sources() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project.json");

@@ -219,6 +219,37 @@ impl Editor {
         self.sync(choices);
         Ok(())
     }
+    /// Sort complete project slots; explicit empty slots keep their position.
+    /// The returned new-index -> old-index permutation also reorders GUI caches.
+    pub fn sort_choices(
+        &mut self,
+        choices: &mut [Choice],
+        mode: template_order::SortMode,
+    ) -> Vec<usize> {
+        let mut order=(0..choices.len()).collect::<Vec<_>>();
+        let mut loaded=order.iter().copied()
+            .filter(|&i| !matches!(choices[i].source,Source::Empty(_)))
+            .collect::<Vec<_>>();
+        loaded.sort_by(|&a,&b|{
+            let (left,right)=(&self.labels[a],&self.labels[b]);
+            mode.compare(
+                &left.number,&left.variant,&choices[a].title,
+                &right.number,&right.variant,&choices[b].title,
+            )
+        });
+        let mut sorted=loaded.into_iter();
+        for (i,choice) in choices.iter().enumerate(){
+            if !matches!(choice.source,Source::Empty(_)){
+                order[i]=sorted.next().unwrap();
+            }
+        }
+        template_order::reorder(choices,&order);
+        template_order::reorder(&mut self.labels,&order);
+        template_order::reorder(&mut self.selected,&order);
+        self.anchor=self.selected.iter().position(|s|*s).unwrap_or(0);
+        self.sync(choices);
+        order
+    }
     /// Return swaps so non-persisted UI preview caches can follow the same rows.
     pub fn move_selected(&mut self, choices: &mut [Choice], offset: i32) -> Vec<(usize, usize)> {
         let mut swaps = Vec::new();
@@ -348,6 +379,32 @@ mod tests {
             comments: format!("private metadata {i}"),
             photos: Vec::new(),
         }
+    }
+
+    #[test]
+    fn natural_sort_moves_complete_choices_and_preserves_blank_slots_and_selection() {
+        let mut choices=vec![choice(9),choice(1),choice(2),choice(0)];
+        choices[2].label=Some("PS2B".into());
+        choices[2].title="PS2B.tif".into();
+        choices[3].source=Source::Empty(1);
+        choices[3].label=None;
+        choices.swap(2,3);
+        // Input: PS10, PS2, empty, PS2B.
+        let mut editor=Editor::new(&mut choices,&[],&[]);
+        editor.selected=vec![true,false,false,false];
+        let order=editor.sort_choices(&mut choices,template_order::SortMode::NumberAsc);
+        assert_eq!(order,vec![1,3,2,0]);
+        // The empty slot stays at index 2.
+        assert_eq!(choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
+                   [Some("PS2"),Some("PS2B"),None,Some("PS10")]);
+        assert_eq!(choices[3].comments,"private metadata 9");
+        assert_eq!(choices[3].legacy_slot,Some(19));
+        assert_eq!(editor.selected,[false,false,false,true]);
+        let order=editor.sort_choices(&mut choices,template_order::SortMode::NumberDesc);
+        assert_eq!(order,vec![3,1,2,0]);
+        assert_eq!(choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
+                   [Some("PS10"),Some("PS2B"),None,Some("PS2")]);
+        assert_eq!(editor.selected,[true,false,false,false]);
     }
     #[test]
     fn matches_isolated_original_move_callbacks() {

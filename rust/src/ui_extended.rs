@@ -644,11 +644,10 @@ impl SleufBaseApp {
             });
     }
     pub(super) fn show_shell_canvas(&mut self, ui: &mut egui::Ui) {
-        let selected: &[Dataset] = self
-            .selected
-            .and_then(|i| self.datasets.get(i))
-            .map(std::slice::from_ref)
-            .unwrap_or(&[]);
+        // All loaded job objects are map layers, not just the highlighted job.
+        // Visibility is keyed to the original JobFeatures file, never the
+        // unstable index of the selected row or a duplicate temporary DXF.
+        self.navigation.hidden_object_layers.clone_from(&self.project_view.hidden_object_layers);
         self.navigation.pointer_tool = self.raster_rotation.active()
             || self.virtual_map.captures()
             || self.comment_tools.captures()
@@ -659,7 +658,7 @@ impl SleufBaseApp {
         let canvas_rect = ui.available_rect_before_wrap();
         let view = canvas(
             ui,
-            selected,
+            &self.datasets,
             &self.geotiffs,
             &self.raster_textures,
             &self.overlays,

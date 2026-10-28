@@ -90,6 +90,8 @@ pub(super) struct Focus {
 pub(super) struct Navigation {
     pub raster_crops:Vec<Option<raster_viewport_ui::Crop>>,
     pub raster_opacity:Option<f32>,
+    /// User-hidden KickTheMap object overlays; ignored by standalone canvas tests.
+    pub hidden_object_layers:Vec<PathBuf>,
     pub show_background:Option<bool>,
     pub pointer_tool:bool,
     pub camera_changed:bool,

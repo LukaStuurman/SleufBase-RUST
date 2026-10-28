@@ -2,6 +2,30 @@ use serde_json::{json,Value};
 use sleufbase_rust::{legacy_project::{import_value,ProjectUiState},project::{NativeProject,read_project,save_project,FORMAT_VERSION},project_view::{Camera,ProjectView,TiffSelection}};
 fn fixture()->Value{serde_json::from_str(include_str!("fixtures/python-v1.klicproject")).unwrap()}
 #[test]
+fn new_projects_start_with_fully_visible_tiffs_and_job_layers_persist(){
+    let new_view=ProjectView::default();
+    assert_eq!(new_view.opacity_percent,100.);
+    assert!(new_view.hidden_object_layers.is_empty());
+    let mut view=new_view.clone();
+    let source=std::path::PathBuf::from("jobs/PS12_jobFeatures.json");
+    view.hidden_object_layers.push(source.clone());
+    view.opacity_percent=35.;
+    let mut project=NativeProject::default();
+    project.view=Some(view.clone());
+    let dir=tempfile::tempdir().unwrap();
+    let path=dir.path().join("with-hidden-object-layer.json");
+    save_project(&path,&project).unwrap();
+    let loaded=read_project(&path).unwrap();
+    assert_eq!(loaded.view.as_ref().unwrap(),&view);
+    // Old native project views without this optional field remain readable.
+    let mut old=serde_json::to_value(&new_view).unwrap();
+    old.as_object_mut().unwrap().remove("hidden_object_layers");
+    let decoded:ProjectView=serde_json::from_value(old).unwrap();
+    assert_eq!(decoded.opacity_percent,100.);
+    assert!(decoded.hidden_object_layers.is_empty());
+    assert!(loaded.view.unwrap().hidden_object_layers.contains(&source));
+}
+#[test]
 fn imported_camera_and_original_selection_are_independent_of_export_constraints(){
     let dir=tempfile::tempdir().unwrap();let mut raw=fixture();raw["tiffs"].as_array_mut().unwrap().swap(0,1);raw["ui"]["selected_tiff_index"]=json!(1);
     raw["ui"]["opacity_percent"]=json!(32.);raw["ui"]["use_background"]=json!(false);raw["ui"]["background_source"]=json!("OpenStreetMap");
