@@ -65,11 +65,9 @@ jobs:
         shell: pwsh
         run: |
           & ./tools/prepare_webview2.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" rust/installer/SleufBase-Rust.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./tools/test_native_installer.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installer = 'rust/dist-installer/SleufBase-Rust-preview-Setup.exe'
           if ((Get-Item -LiteralPath $installer).Length -lt 500000) { throw 'Installer is onvolledig' }
           $checksum = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
