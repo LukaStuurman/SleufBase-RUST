@@ -15,6 +15,16 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Test WebView2 prerequisite contracts
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 -y --no-progress --allow-downgrade
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" tools/test_webview2_prerequisite.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $fixture = (Resolve-Path rust/dist-installer/prerequisite-contract.exe).Path
+          $process = Start-Process -FilePath $fixture -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw 'WebView2 prerequisite contracts failed' }
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -54,8 +64,6 @@ jobs:
       - name: Compile separate preview installer
         shell: pwsh
         run: |
-          choco install innosetup --version=6.7.1 -y --no-progress --allow-downgrade
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./tools/prepare_webview2.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" rust/installer/SleufBase-Rust.iss

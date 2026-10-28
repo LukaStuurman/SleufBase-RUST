@@ -21,9 +21,4 @@ for ($iteration = 1; $iteration -le 2; $iteration++) {
 $uninstaller = Join-Path $installDirectory 'unins000.exe'
 $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru -WindowStyle Hidden
 if ($process.ExitCode -ne 0 -or (Test-Path -LiteralPath (Join-Path $installDirectory 'sleufbase-rust.exe'))) { throw 'Uninstall did not remove the app' }
-& "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "$workspace/tools/test_webview2_prerequisite.iss"
-if ($LASTEXITCODE -ne 0) { throw 'Could not compile prerequisite fixture' }
-$fixture = Join-Path $workspace 'rust/dist-installer/prerequisite-contract.exe'
-$process = Start-Process -FilePath $fixture -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru -WindowStyle Hidden
-if ($process.ExitCode -ne 0) { throw 'WebView2 prerequisite contracts failed' }
-Write-Output 'Installer: install, upgrade, 14 payload hashes, CLI startup, uninstall and prerequisite contracts passed'
+Write-Output 'Installer: install, upgrade, 14 payload hashes, CLI startup and uninstall passed'
