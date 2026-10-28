@@ -556,6 +556,8 @@ mod tests {
         app.migrated_settings.template_auto_export_discipline_excel = false;
         let without_excel = temp.path().join("disabled-report.dxf");
         app.finish_template_export(without_excel.clone(), app.template_state.clone().unwrap());
+        // Each independent export gets its own worker-completion budget.
+        let deadline = Instant::now() + Duration::from_secs(45);
         while app.export_intent.is_some() {
             app.poll_export_jobs(&ctx);
             assert!(Instant::now() < deadline);
