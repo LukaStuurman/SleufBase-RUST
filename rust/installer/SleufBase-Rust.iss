@@ -36,6 +36,7 @@ Name: "dutch"; MessagesFile: "compiler:Languages\Dutch.isl"
 Name: "desktopicon"; Description: "Bureaubladsnelkoppeling maken"; GroupDescription: "Extra snelkoppelingen:"; Flags: unchecked
 
 [Files]
+Source: "..\dist\prerequisites\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Flags: dontcopy noencryption nocompression
 Source: "..\dist\portable-build\SleufBase-Rust-portable-preview\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -44,3 +45,6 @@ Name: "{autodesktop}\SleufBase Rust preview"; Filename: "{app}\{#MyAppExeName}";
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "SleufBase Rust preview starten"; Flags: nowait postinstall skipifsilent
+
+[Code]
+#include "webview2.iss"

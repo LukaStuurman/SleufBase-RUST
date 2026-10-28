@@ -58,6 +58,18 @@ impl Dialog {
             trenches:app.virtual_trenches.iter().map(|t|(t.job_id,t.label.clone())).collect(),
         }
     }
+    fn readiness(&self)->Result<(),String>{
+        if !self.options.template.as_os_str().is_empty()&&!self.options.template.is_file(){return Err("Het eigen DXF-sjabloon ontbreekt. Kies het opnieuw of gebruik het ingebouwde sjabloon.".into());}
+        let output=self.output.as_ref().ok_or("Kies eerst een nieuwe uitvoer-DXF.")?;
+        if output.extension().is_none_or(|ext|!ext.to_string_lossy().eq_ignore_ascii_case("dxf")){return Err("De uitvoernaam moet eindigen op .dxf.".into());}
+        if output.exists(){return Err("Deze uitvoer bestaat al. Kies een nieuwe naam; bestaande bestanden blijven behouden.".into());}
+        let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
+        if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee.".into());}
+        if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
+        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de PS-nummers van de geselecteerde vakken.".into());}
+        if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
+        Ok(())
+    }
     fn sources_match(&self,app:&SleufBaseApp)->bool {
         self.jobs.len()==app.datasets.len() && self.rasters.len()==app.geotiffs.len()
             && self.trenches.len()==app.virtual_trenches.len()
@@ -330,12 +342,9 @@ impl SleufBaseApp {
                             ui.colored_label(DARK, &dialog.error);
                         }
                         ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
-                        let (_,invalid_labels)=dialog.editor.preview(&dialog.options.choices);
-                        let ready = invalid_labels.is_empty() && (dialog.options.template.as_os_str().is_empty()||dialog.options.template.is_file()) &&
-                            dialog.output.as_ref().is_some_and(|p|!p.exists()) &&
-                            dialog.options.choices.iter().any(|c|c.include&&!matches!(c.source,Source::Empty(_))) &&
-                            dialog.options.choices.iter().filter(|c|c.include)
-                                .all(|c|c.raster.is_some()||matches!(c.source,Source::Virtual(_)|Source::Empty(_)));
+                        let readiness=dialog.readiness();
+                        let ready=readiness.is_ok();
+                        if let Err(reason)=readiness{ui.small(reason);}
                         if ui.add_enabled(ready, egui::Button::new(egui::RichText::new("Volledige project-sjabloonexport starten").color(Color32::WHITE)).fill(ORANGE)).clicked() {
                             launch = dialog.output.clone();
                         }
@@ -345,9 +354,9 @@ impl SleufBaseApp {
         }
         if !open { self.project_template_dialog = None; }
         if let Some(output) = launch {
-            let options = std::mem::take(&mut self.project_template_dialog.as_mut().unwrap().options);
-            self.project_template_dialog = None;
+            let options = self.project_template_dialog.as_ref().unwrap().options.clone();
             self.start_project_template_export(options, output);
+            if let Some(dialog)=self.project_template_dialog.as_mut(){dialog.error=self.message.clone();}
         }
     }
 }
@@ -418,5 +427,36 @@ mod preference_tests {
         let dir=tempfile::tempdir().unwrap();app.start_project_template_export(options,dir.path().join("deferred.dxf"));
         assert!(app.template_job.is_none());assert_eq!(app.virtual_trenches.as_ptr(),allocation);
         assert!(app.message.contains("downloads"));
+    }
+}
+
+#[cfg(test)]
+mod flow_audit_tests {
+    use super::*;
+    fn app()->SleufBaseApp{
+        let mut app=SleufBaseApp::default();
+        app.virtual_trenches.push(VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());app
+    }
+    #[test]
+    fn ordinary_export_includes_virtual_trenches_alongside_loaded_tiffs(){
+        let mut app=app();let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());app.open_template_export();
+        let d=app.project_template_dialog.as_ref().expect("mixed project dialog");assert!(app.template_order_dialog.is_none());
+        assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Raster(0))));
+    }
+    #[test]
+    fn preflight_explains_invalid_output_and_busy_launch_keeps_the_reviewed_form(){
+        let dir=tempfile::tempdir().unwrap();let mut app=app();app.open_project_template_dialog();
+        let d=app.project_template_dialog.as_mut().unwrap();assert!(d.readiness().unwrap_err().contains("uitvoer-DXF"));
+        d.output=Some(dir.path().join("wrong.txt"));assert!(d.readiness().unwrap_err().contains(".dxf"));
+        d.output=Some(dir.path().join("correct.dxf"));assert!(d.readiness().is_ok());
+        std::fs::write(d.output.as_ref().unwrap(),b"existing drawing").unwrap();assert!(d.readiness().unwrap_err().contains("bestaat al"));
+        d.output=Some(dir.path().join("new.dxf"));d.options.project="Behouden keuze".into();app.live_busy=true;
+        let ctx=egui::Context::default();
+        let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
+        for _ in 0..4{frame(&mut app,vec![]);}
+        let out=frame(&mut app,vec![]);let pos=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="Volledige project-sjabloonexport starten"=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).unwrap();assert!(pos.y<420.);
+        for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+        let d=app.project_template_dialog.as_ref().expect("rejected launch must retain form");assert_eq!(d.options.project,"Behouden keuze");assert!(d.error.contains("downloads"));assert!(app.template_job.is_none());assert_eq!(app.virtual_trenches.len(),1);
     }
 }

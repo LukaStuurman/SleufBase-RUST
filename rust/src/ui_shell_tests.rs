@@ -700,7 +700,7 @@ fn polish_visual_review_captures_virtual_and_template_dialogs(){
         let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
         app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
         app.open_template_export();
-        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-order-{}x{}.png",size[0],size[1]))).unwrap();
+        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-mixed-{}x{}.png",size[0],size[1]))).unwrap();
     }
 }
 

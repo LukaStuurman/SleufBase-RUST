@@ -33,7 +33,7 @@ impl SleufBaseApp {
             return;
         }
         if self.template_state.is_none() && (self.template_preferences.as_ref().is_some_and(|p|p.raster_layout)
-            || (self.geotiffs.is_empty()&&!self.virtual_trenches.is_empty())){
+            || !self.virtual_trenches.is_empty()){
             self.open_project_template_dialog();return;
         }
         if self.geotiffs.is_empty() {
