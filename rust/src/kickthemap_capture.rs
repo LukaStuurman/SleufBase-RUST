@@ -46,7 +46,7 @@ impl BrowserChannel {
                     t["type"] == "page"
                         && t["url"].as_str().is_some_and(|s| {
                             reqwest::Url::parse(s).ok().is_some_and(|u| {
-                                u.origin() == reqwest::Url::parse(ORIGIN).unwrap().origin()
+                                super::is_kickthemap_origin(&u)
                             })
                         })
                 })

@@ -21,4 +21,4 @@ for ($iteration = 1; $iteration -le 2; $iteration++) {
 $uninstaller = Join-Path $installDirectory 'unins000.exe'
 $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru -WindowStyle Hidden
 if ($process.ExitCode -ne 0 -or (Test-Path -LiteralPath (Join-Path $installDirectory 'sleufbase-rust.exe'))) { throw 'Uninstall did not remove the app' }
-Write-Output 'Installer: install, upgrade, 14 payload hashes, CLI startup and uninstall passed'
+Write-Output 'Installer: install, upgrade, 15 payload hashes, CLI startup and uninstall passed'

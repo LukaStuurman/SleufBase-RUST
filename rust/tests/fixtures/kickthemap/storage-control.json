@@ -1,0 +1,11 @@
+{
+  "description": "Synthetic only. Encrypted with original Python methods; signed independently with botocore.",
+  "payload": {
+    "adata": "{\"s\": \"0102030405060708\", \"ct\": \"VGOI67gePYx7WLe5JsuIBKiO+/2VtPwo8cy+9LkL5QXVPiErsG3Wxya6OsEe1d/8abkQ1auw73pWt/MJsPp12beEMy2dZgCeRN4hlAtZpZjlRi/1HcbSdn8r3t5yYZmwUl2Jlj+yd44RIV09RywydX57B/LDasJ3hHSXaTbPcD764Nj5uzasc+tYBm/dzFk1dr6Cua29EMnPv+mArYklAAGkTkhm+lVyrt6N1zyX09MH6HpkjJJ/t4M7Q74FWGjvJSafip4tRdOeKw8bVPwGdoAkRfjmiDpwyOv+u3pRMAY=\"}",
+    "thg": "synthetic-fixture"
+  },
+  "key": "owner@example.test/project_2026-10-24_13-14-15/cloud/test café+42.tiff",
+  "filename": "Sleuf Ø 42.tiff",
+  "date": "20261024T131415Z",
+  "url": "https://example-bucket.s3.eu-west-1.amazonaws.com/owner%40example.test/project_2026-10-24_13-14-15/cloud/test%20caf%C3%A9%2B42.tiff?response-content-disposition=attachment%3B%20filename%3D%22Sleuf%20%C3%98%2042.tiff%22&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261024%2Feu-west-1%2Fs3%2Faws4_request&X-Amz-Date=20261024T131415Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Security-Token=synthetic-session%2Ftoken%2Bonly%3D&X-Amz-Signature=5df138335d6419600998ddf9a2ac100f9b371a8f939b3c5d2b0175e9a29987da"
+}

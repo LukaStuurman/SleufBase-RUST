@@ -728,3 +728,20 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
         }
     }
 }
+
+#[test]
+fn jobs_workspace_keeps_native_download_actions_visible_at_small_and_normal_sizes(){
+    for size in [[680,420],[1200,760]]{
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),path:"/".into(),secure:true};
+        let session=KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap();let owner=session.snapshot_owner().clone();
+        let mut app=SleufBaseApp{live_session:Some(session),live_jobs_owner:Some(owner),..Default::default()};app.browser_ui.open=true;app.browser_ui.selected.insert(42);
+        app.live_jobs=vec![sleufbase_rust::jobs_cache::Job{job_id:42,title:"PS42".into(),address:"Voorbeeldstraat 1".into(),municipality:"Voorbeeldplaats".into(),coordinates:String::new(),client_date:"2026-10-28".into(),status:9,downloadable:true,prefix:"fixture@example.test_2026-10-28_12-00-00".into()}];
+        let(labels,image)=capture(&mut app,size);
+        for text in ["Laad geselecteerde jobs","GeoTIFF downloaden + laden","Objecten downloaden + laden"]{let rect=labels.iter().find(|(t,_)|t==text).expect(text).1;assert!(rect.min.x>=0.&&rect.min.y>=0.&&rect.max.x<=size[0] as f32&&rect.max.y<=size[1] as f32,"{size:?} {text}: {rect:?}");}
+        assert!(!app.live_operation_busy());assert_eq!(app.browser_ui.launch_requests,0);
+        if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR"){let dir=PathBuf::from(dir);std::fs::create_dir_all(&dir).unwrap();image.save(dir.join(format!("jobs-{}x{}.png",size[0],size[1]))).unwrap();}
+        app.live_busy=true;app.browser_ui.batch_mode=true;app.browser_ui.status="Bestanden worden gecontroleerd en geladen. ".repeat(20);
+        let(labels,image)=capture(&mut app,size);let rect=labels.iter().find(|(text,_)|text=="Download annuleren").unwrap().1;assert!(rect.max.y<=size[1] as f32,"cancellation must stay visible: {rect:?}");
+        if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR"){image.save(PathBuf::from(dir).join(format!("jobs-busy-{}x{}.png",size[0],size[1]))).unwrap();}
+    }
+}

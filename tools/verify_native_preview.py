@@ -8,7 +8,7 @@ import re
 import struct
 import zipfile
 
-REQUIRED = {"sleufbase-rust.exe", "README.md", "Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt"}
+REQUIRED = {"sleufbase-rust.exe", "README.md", "Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt"}
 REQUIRED |= {"assets/template_logos/" + name for name in ("apk.png", "bgm.png", "brabant_water.png", "enexis.png", "hanab.jpg", "hurkmans.png", "techbase_full.png", "wml.jpg")}
 
 def verify(archive: Path, checksum: Path) -> dict:

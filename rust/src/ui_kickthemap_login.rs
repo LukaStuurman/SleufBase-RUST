@@ -30,6 +30,9 @@ impl SleufBaseApp {
                 ui.horizontal_wrapped(|ui|{
                     close=ui.button("Sluiten").clicked();
                     jobs=ui.add_enabled(!busy&&self.live_session.is_some(),egui::Button::new("Open jobs")).clicked();
+                    if ui.add_enabled(!busy&&self.browser_ui.browser.is_some(),egui::Button::new("Inlogvenster tonen")).clicked(){
+                        if let Some(browser)=self.browser_ui.browser.as_ref(){if let Err(error)=browser.set_visible(true){self.browser_ui.status=error;}}
+                    }
                     restart=ui.add_enabled(!busy&&self.browser_ui.browser.is_some(),egui::Button::new("Nieuw inlogvenster")).clicked();
                 });
                 ui.small("Dit venster gebruikt Microsoft WebView2 Runtime, de ingebouwde webweergave voor Windows.");

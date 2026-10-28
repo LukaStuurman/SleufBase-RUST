@@ -88,4 +88,9 @@ await scenario(async () => {
   const h = harness(async () => new Response(JSON.stringify({ status: false, data: { url: 'https://s3.amazonaws.com/file.tiff' } })));
   await assert.rejects(h.result, /no signed URL/); assert.equal(h.calls.length, 3); assert.equal(h.timers.size, 0);
 });
+
+
+await scenario(async () => {const h=harness(async()=>ok(),false,'https://my.kickthemap.com');assert.equal(await h.result,'https://s3.amazonaws.com/file.tiff');assert.equal(h.calls.length,1);assert.equal(h.timers.size,0);});
+
+await scenario(async () => {for(const status of [1,' true ']){const h=harness(async()=>new Response(JSON.stringify({status,data:{url:'https://s3.amazonaws.com/file.tiff'}})));assert.equal(await h.result,'https://s3.amazonaws.com/file.tiff');assert.equal(h.calls.length,1);assert.equal(h.timers.size,0);}});
 console.log(`Signed URL JS: ${count} response/form/stream-budget/abort/cleanup scenarios passed`);

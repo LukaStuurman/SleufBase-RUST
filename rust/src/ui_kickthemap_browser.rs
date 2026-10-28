@@ -49,7 +49,6 @@ pub(super) struct BrowserUi {
     only_selected:bool,
     sort_column:usize,
     sort_descending:bool,
-    pub(super) show_login:bool,
     map_open:bool,
     map_bounds:Option<Bounds>,
     map_texture:Option<(Bounds,egui::TextureHandle)>,
@@ -75,7 +74,7 @@ impl Default for BrowserUi {
             #[cfg(test)] launch_requests:0,
             selected:BTreeSet::new(),filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
-            sort_column:3,sort_descending:true,show_login:false,
+            sort_column:3,sort_descending:true,
             map_open:false,map_bounds:None,map_texture:None,map_loading:None,
             map_status:String::new(),opening_job:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
@@ -132,7 +131,7 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.launching.is_some()
+        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.launching.is_some()||self.browser_ui.opening_job.is_some()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
@@ -188,6 +187,7 @@ impl SleufBaseApp {
                     session.fetch_jobs_from_browser(||browser.browser_job_payload())
                         .map(|jobs|(session,jobs))
                 });
+            if result.is_ok(){let _=browser.set_visible(false);}
             let _=tx.send((browser,result));
         });
     }
@@ -201,6 +201,7 @@ impl SleufBaseApp {
                     Ok(())=>"Job geopend in het ingebouwde KickTheMap-venster".into(),
                     Err(e)=>format!("Job openen mislukt: {e}"),
                 };
+                self.message=self.browser_ui.status.clone();
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.browser_ui.opening_job=None;
@@ -278,7 +279,7 @@ impl SleufBaseApp {
                         self.live_jobs_owner=Some(session.snapshot_owner().clone());
                         self.live_session=Some(session);
                         self.live_jobs=jobs;
-
+                        self.browser_ui.open=true;self.shell.login_open=false;
                         self.save_live_cache();
                         self.browser_ui.status=format!(
                             "KickTheMap verbonden: {} live jobs. Selecteer jobs voor downloads.",
@@ -363,6 +364,7 @@ impl SleufBaseApp {
         );
     }
     fn open_selected_kickthemap_job(&mut self,id:u64){
+        if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let Some(browser)=self.browser_ui.browser.take() else {
             self.browser_ui.status="Open eerst het ingebouwde KickTheMap-venster en neem de sessie over.".into();
             return;
@@ -383,7 +385,7 @@ impl SleufBaseApp {
         let loaded=self.active_job_ids();
         let jobs=&self.live_jobs;
         let cache=self.jobs_cache.as_ref().map(|c|c.jobs.as_slice()).unwrap_or(&[]);
-        let live=self.live_session.is_some();
+        let live=self.live_session.is_some()||(self.live_busy&&self.live_jobs_owner.is_some());
         let busy=self.live_operation_busy();
         let source=if live {jobs.as_slice()} else {cache};
         let browser=&mut self.browser_ui;
@@ -395,68 +397,84 @@ impl SleufBaseApp {
                 &&job_matches_filters(j,&browser.filters)
         }).collect::<Vec<_>>();
         let column=browser.sort_column;
+        // Compute text keys once per job, not on every sort comparison.
+        let sort_keys=if matches!(column,4|6){Vec::new()}else{source.iter().map(|job|job_column_value(job,column).to_lowercase()).collect::<Vec<_>>()};
         indices.sort_by(|&a,&b|{
             let order=match column {
                 4=>source[a].status.cmp(&source[b].status),
                 6=>source[a].job_id.cmp(&source[b].job_id),
-                _=>job_column_value(&source[a],column).to_lowercase()
-                    .cmp(&job_column_value(&source[b],column).to_lowercase()),
+                _=>sort_keys[a].cmp(&sort_keys[b]),
             };
             (if browser.sort_descending {order.reverse()}else{order})
                 .then(source[a].job_id.cmp(&source[b].job_id))
         });
         let filtered_ids=indices.iter().map(|&i|source[i].job_id).collect::<Vec<_>>();
-        let selected_single=filtered_ids.iter().find(|id|browser.selected.contains(id)).copied()
-            .or_else(||browser.selected.iter().next().copied());
+        let selected_single=if browser.selected.len()==1{browser.selected.iter().next().copied()}else{None};
         egui::Window::new("SleufBase Jobs")
-            .open(&mut open).default_width(1280.).default_height(760.)
-            .min_width(980.).min_height(560.)
+            .open(&mut open).default_width(1180.).default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
+            .constrain_to(ctx.screen_rect().shrink(12.))
+            .min_width(340.).min_height(240.)
             .resizable(true).show(ctx,|ui|{
-                egui::ScrollArea::vertical().max_height(610.).show(ui,|ui|{
-                    if ui.small_button(if browser.show_login{"Aanmelding verbergen"}else{"Inloggen / browseraanmelding"}).clicked(){
-                        browser.show_login=!browser.show_login;
-                    }
-                    if browser.show_login || !live {
-                    ui.heading("Browseraanmelding");
-                    ui.label("SleufBase opent een ingebouwd inlogvenster. Log rechtstreeks in op KickTheMap en los reCAPTCHA zelf op; er wordt geen wachtwoord of bestaande browsersessie uitgelezen.");
-                    ui.horizontal(|ui|{
-                        if ui.add_enabled(browser.browser.is_none() &&
-                            browser.launching.is_none()&&browser.capturing.is_none(),
-                            egui::Button::new("Open ingebouwd inlogvenster")).clicked() {
-                            action=Some("launch");
-                        }
-                        if ui.add_enabled(browser.browser.is_some()&&browser.capturing.is_none()&&!busy,
-                            egui::Button::new("Sessie overnemen")).clicked(){
-                            action=Some("capture");
-                        }
-                        if ui.add_enabled(browser.browser.is_some()&&browser.capturing.is_none()&&!busy,
-                            egui::Button::new("Inlogvenster sluiten")).clicked(){action=Some("close");}
-                        if ui.add_enabled(live&&!busy,
-                            egui::Button::new("Vernieuw live jobs")).clicked(){action=Some("refresh");}
-                    });
-                    if browser.launching.is_some()||browser.capturing.is_some() {ui.spinner();}
-                    }
-                    if !browser.status.is_empty(){ui.small(&browser.status);}
+                settings_ui::control_style(ui);
+                ui.set_max_width(ui.available_width());ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                egui::TopBottomPanel::bottom("kickthemap-download-actions").frame(egui::Frame::NONE).show_inside(ui,|ui|{
+                    ui.small(format!("{} van {} jobs zichtbaar; {} geselecteerd{}",
+                        indices.len(),source.len(),browser.selected.len(),
+                        if live{""}else{" (offline cache)"}));
                     ui.separator();
-                    ui.heading(format!("Jobs: {} zichtbaar / {} {}",
-                        indices.len(),source.len(),
-                        if live {"live"} else {"offline cache — niet live"}));
-                    ui.horizontal(|ui|{
-                        if ui.button(if browser.map_open{"Terug naar overzicht"}else{"Kaart"}).clicked(){
-                            browser.map_open=!browser.map_open;
-                            if browser.map_open {browser.map_bounds=None;}
+                    ui.horizontal_wrapped(|ui|{
+                        let can=live&&!busy&&!browser.batch_mode&&
+                            !browser.selected.is_empty()&&browser.capturing.is_none();
+                        if ui.add_enabled(can,egui::Button::new(egui::RichText::new("Laad geselecteerde jobs").color(Color32::WHITE)).fill(ORANGE)).clicked(){action=Some("both");}
+                        if ui.add_enabled(can,egui::Button::new("Objecten downloaden + laden")).clicked(){
+                            action=Some("objects");
                         }
+                        if ui.add_enabled(can,egui::Button::new("GeoTIFF downloaden + laden")).clicked(){
+                            action=Some("tiffs");
+                        }
+                    });
+                    ui.menu_button("Meer opties en probleemoplossing",|ui|{
+                        if ui.add_enabled(live&&!busy&&browser.browser.is_some()&&browser.opening_job.is_none()&&browser.selected.len()==1,
+                            egui::Button::new("Jobdetails op website")).clicked(){action=Some("open-job");}
+                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
+                        egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
+                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1&&browser.browser.is_some(),
+                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){action=Some("repair-browser");}
+                    ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
+                    });
+                    if busy||browser.batch_mode{ui.horizontal_wrapped(|ui|{
+                        ui.spinner();if browser.batch_mode{ui.label(format!("{} klaar, {} in wachtrij",browser.completed,browser.queue.len()));}
+                        if ui.button("Download annuleren").clicked(){action=Some("cancel");}
+                    });}
+                    if !browser.failures.is_empty(){
+                        ui.menu_button(format!("Downloadfouten: {}",browser.failures.len()),|ui|{
+                            egui::ScrollArea::vertical().max_height(180.).show(ui,|ui|{for message in browser.failures.iter().rev().take(20){ui.label(message);}});
+                        });
+                    }
+                    if ctx.screen_rect().height()>=500.{ui.small("Dubbelklik op een job om de objecten en GeoTIFF in SleufBase te laden.");}
+                    if !browser.status.is_empty(){egui::ScrollArea::vertical().id_salt("jobs-status").max_height(64.).show(ui,|ui|{ui.label(&browser.status);});}
+                });
+                let body_height=ui.available_height().max(40.);
+                egui::ScrollArea::vertical().id_salt("jobs-body").max_height(body_height).auto_shrink([false,false]).show(ui,|ui|{
+                    let compact=ctx.screen_rect().height()<550.;
+                    ui.horizontal_wrapped(|ui|{
+                        ui.strong(format!("Jobs: {} / {} {}",indices.len(),source.len(),if live{"live"}else{"offline"}));
+                        if ui.add_enabled(!busy,egui::Button::new(if live{"Account / aanmelding"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
                         if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
-                        ui.checkbox(&mut browser.only_loaded,"Geladen Jobs");
-                        ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");
-                        ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
-                        if ui.small_button("Selecteer zichtbare").clicked(){
-                            browser.selected.extend(filtered_ids.iter().copied());
-                        }
-                        if ui.small_button("Deselecteer zichtbare").clicked(){
-                            for id in &filtered_ids{browser.selected.remove(id);}
-                        }
-                        if ui.small_button("Wis selectie").clicked(){browser.selected.clear();}
+                        ui.menu_button("Filter / selectie",|ui|{
+                            ui.set_max_width((ctx.screen_rect().width()-50.).min(320.));
+                            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-100.).max(100.)).show(ui,|ui|{
+                            if ui.button(if browser.map_open{"Jobs als lijst"}else{"Jobs op kaart"}).clicked(){browser.map_open=!browser.map_open;if browser.map_open{browser.map_bounds=None;}ui.close_menu();}
+                            ui.checkbox(&mut browser.only_loaded,"Geladen jobs");ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.button("Selecteer zichtbare").clicked(){browser.selected.extend(filtered_ids.iter().copied());}
+                                if ui.button("Deselecteer zichtbare").clicked(){for id in &filtered_ids{browser.selected.remove(id);}}
+                                if ui.button("Wis selectie").clicked(){browser.selected.clear();}
+                            });
+                            ui.separator();
+                            for (column,(name,_)) in JOB_COLUMNS.iter().enumerate(){ui.label(*name);ui.add(egui::TextEdit::singleline(&mut browser.filters[column]).desired_width(230.).hint_text("Filter..."));}
+                            });
+                        });
                     });
                     if browser.map_open {
                         show_jobs_map(ui,source,&indices,browser,&mut action);
@@ -479,13 +497,15 @@ impl SleufBaseApp {
                                 }
                             }
                         });
+                        if !compact{
                         ui.horizontal(|ui|{
                             ui.add_sized([26.,25.],egui::Label::new(""));
                             for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
                                 ui.add_sized([*width,25.],egui::TextEdit::singleline(&mut browser.filters[column]).hint_text("Filter..."));
                             }
-                        });
-                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(310.)
+                        });                        }
+
+                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height((body_height-if compact{85.}else{120.}).clamp(40.,410.))
                             .show_rows(ui,28.,indices.len(),|ui,rows|{
                                 for position in rows{
                                     let job=&source[indices[position]];
@@ -497,56 +517,22 @@ impl SleufBaseApp {
                                         }
                                         for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
                                             let value=job_column_value(job,column);
-                                            ui.add_sized([*width,24.],egui::Label::new(value.clone()).truncate())
-                                                .on_hover_text(value);
+                                            if column==0{
+                                                let response=ui.add_sized([*width,24.],egui::Button::new(&value).selected(selected).truncate()).on_hover_text(format!("{value}\nDubbelklik om objecten en GeoTIFF in SleufBase te laden"));
+                                                if response.clicked(){let multi=ui.input(|i|i.modifiers.ctrl||i.modifiers.command);if multi&&selected{browser.selected.remove(&job.job_id);}else{if !multi{browser.selected.clear();}browser.selected.insert(job.job_id);}}
+                                                if response.double_clicked()&&live&&!busy&&!browser.batch_mode{browser.selected.clear();browser.selected.insert(job.job_id);action=Some("both");}
+                                            }else{ui.add_sized([*width,24.],egui::Label::new(value.clone()).truncate()).on_hover_text(value);}
                                         }
                                     });
                                 }
                             });
                     });
                     }
-                    ui.small(format!("{} van {} jobs zichtbaar; {} geselecteerd{}",
-                        indices.len(),source.len(),browser.selected.len(),
-                        if live{""}else{" (offline cache)"}));
-                    ui.separator();
-                    ui.heading(format!("Downloads — {} geselecteerd",browser.selected.len()));
-                    if ui.add_enabled(live&&browser.browser.is_some()&&browser.opening_job.is_none()&&selected_single.is_some(),
-                        egui::Button::new("Open job")).clicked(){action=Some("open-job");}
-                    ui.horizontal(|ui|{
-                        let can=live&&!busy&&!browser.batch_mode&&
-                            !browser.selected.is_empty()&&browser.capturing.is_none();
-                        if ui.add_enabled(can,egui::Button::new("Objecten downloaden + laden")).clicked(){
-                            action=Some("objects");
-                        }
-                        if ui.add_enabled(can,egui::Button::new("GeoTIFF downloaden + laden")).clicked(){
-                            action=Some("tiffs");
-                        }
-                        if ui.add_enabled(can,egui::Button::new("Beide bestanden per job")).clicked(){
-                            action=Some("both");
-                        }
-                    });
-                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
-                        egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
-                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1&&browser.browser.is_some(),
-                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){action=Some("repair-browser");}
-                    ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
-                    if busy&&!browser.batch_mode&&ui.button("Download annuleren").clicked(){action=Some("cancel");}
-                    if browser.batch_mode||busy {ui.spinner();}
-                    if browser.batch_mode {
-                        ui.label(format!("{} verwerkt, {} in wachtrij",
-                            browser.completed,browser.queue.len()));
-                        if ui.button("Annuleer batch").clicked(){action=Some("cancel");}
-                    }
-                    if !browser.failures.is_empty(){
-                        ui.collapsing(format!("Downloadfouten: {}",browser.failures.len()),|ui|{
-                            for message in browser.failures.iter().rev().take(20){ui.label(message);}
-                        });
-                    }
-                    ui.small("Bestaande downloads worden nooit overschreven. JobFeatures en GeoTIFF krijgen een identificerende sidecar; de bestanden worden pas na validatie in het actieve Rust-project geladen.");
                 });
             });
         self.browser_ui.open=open;
         match action {
+            Some("login-dialog")=>self.open_kickthemap_login(),
             Some("launch")=>self.launch_kickthemap_browser(),
             Some("open-job")=>{
                 if let Some(id)=self.browser_ui.open_target.take().or(selected_single){
@@ -782,5 +768,37 @@ mod tests {
         assert!(app.browser_ui.downloaded_tiffs.is_empty());
         assert!(app.browser_ui.cancel.load(Ordering::Relaxed));
         assert!(app.file_intent.is_none());
+    }
+}
+
+#[cfg(test)]
+mod workflow_ui_tests{
+    use super::*;
+    fn app()->SleufBaseApp{
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),path:"/".into(),secure:true};
+        let session=KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap();let owner=session.snapshot_owner().clone();
+        let mut app=SleufBaseApp{live_session:Some(session),live_jobs_owner:Some(owner),..Default::default()};app.browser_ui.open=true;
+        app.live_jobs=vec![Job{job_id:42,title:"PS42".into(),address:"Teststraat 1".into(),municipality:"Testplaats".into(),coordinates:String::new(),client_date:"2026-10-28".into(),status:9,downloadable:true,prefix:"fixture@example.test_2026-10-28_12-00-00".into()}];app
+    }
+    #[test]fn double_click_loads_job_files_in_native_app_without_opening_a_website(){
+        for size in [egui::vec2(680.,420.),egui::vec2(1200.,760.)]{
+        let mut app=app();let ctx=egui::Context::default();theme::install(&ctx);
+        let frame=|app:&mut SleufBaseApp,time,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),time:Some(time),events,..Default::default()},|ctx|app.show_kickthemap_workspace(ctx));
+        for i in 0..4{frame(&mut app,i as f64*0.1,vec![]);}
+        let out=frame(&mut app,0.5,vec![]);let pos=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="PS42"&&s.clip_rect.contains_rect(t.galley.rect.translate(t.pos.to_vec2()))=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).unwrap();
+        for(time,pressed)in[(1.,true),(1.02,false),(1.1,true),(1.12,false)]{frame(&mut app,time,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+        assert!(app.browser_ui.batch_mode);assert_eq!(app.browser_ui.queue.len(),2);assert!(app.browser_ui.opening_job.is_none());assert!(app.browser_ui.browser.is_none());assert_eq!(app.browser_ui.launch_requests,0);
+        }
+    }
+    #[test]fn in_flight_download_keeps_live_jobs_visible_instead_of_switching_to_offline_cache(){
+        let mut app=app();app.live_session=None;app.live_busy=true;let ctx=egui::Context::default();
+        let mut settled=None;for _ in 0..4{settled=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1200.,760.))),..Default::default()},|ctx|app.show_kickthemap_workspace(ctx)));}let out=settled.unwrap();
+        assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="PS42")));
+        assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text().contains("offline cache"))));
+        app.browser_ui.status="Langere downloadmelding met uitleg. ".repeat(30);
+        let button=|output:&egui::FullOutput|output.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="Laad geselecteerde jobs"=>Some(t.pos),_=>None}).unwrap();
+        let mut baseline=None;
+        for i in 0..16{let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1200.,760.))),events:vec![egui::Event::PointerMoved(egui::pos2(50.+i as f32*3.,50.+i as f32*2.))],..Default::default()},|ctx|app.show_kickthemap_workspace(ctx));let pos=button(&output);if i==4{baseline=Some(pos);}if i>4{assert!((pos-baseline.unwrap()).length()<1.,"hover must not grow the jobs window");}}
+
     }
 }

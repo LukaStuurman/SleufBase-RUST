@@ -2,7 +2,7 @@
 
 Deze map bevat de **native Rust-migratiepreview**, niet de huidige stabiele SleufBase-release.
 
-Laat de bijgeleverde `Pillow-LICENSE.txt`, `ezdxf-LICENSE.txt` `proj4rs-NOTICES.txt` en `wry-LICENSE.txt` bij de executable staan. De licenties zijn ook in de executable opvraagbaar met `--licenses`.
+Laat de bijgeleverde licentie- en noticebestanden bij de executable staan. De licenties zijn ook in de executable opvraagbaar met `--licenses`.
 
 Laat ook de map `assets/template_logos` naast de executable staan voor de
 standaard Techbase- en opdrachtgeverlogo's in de sjabloonexport. Eigen PNG- en
@@ -32,7 +32,7 @@ De CI levert naast de ZIP een SHA-256-controlebestand `SleufBase-Rust-portable-p
 
 Vergelijk de uitkomst met de SHA-256 in het bestand. Een controlehash bewijst de downloadintegriteit ten opzichte van dat bestand, maar vervangt geen codeondertekening.
 
-`build-info.json` vermeldt de bronrevisie, versie en SHA-256 van alle veertien
+`build-info.json` vermeldt de bronrevisie, versie en SHA-256 van alle vijftien
 benodigde bestanden. De build controleert de gehele ZIP, logo's en notices,
 ontbrekende/extra/dubbele namen en de Windows-x64-executable vóór publicatie.
 Een lokale ontwikkelbuild vermeldt expliciet `working-tree` als revisie.

@@ -113,7 +113,7 @@ fn main() -> eframe::Result<()> {
     let command=raw_args.first().is_some_and(|s|s.to_string_lossy().starts_with('-')||s=="help");
     if command {
         let args:Vec<String>=match raw_args.iter().map(|s|s.clone().into_string()).collect(){Ok(args)=>args,Err(_)=>{eprintln!("Fout: ongeldige tekst in opdrachtregel");std::process::exit(2);}};
-        if args[0]=="--licenses" {println!("Wry 0.57.0 — ingebouwde WebView2-weergave\n{}",include_str!("../third_party/wry-LICENSE.txt"));println!("Pillow 11.3.0 — affine rasterrotatie, bilineaire kaartresampling en alphacompositie\n{}\nezdxf 1.4.4 — SHP/SHX/LFF-protocol, fontmetingen en vector-tekstuitlijning (native Rust-port met correcties)\n{}\nproj4rs 0.2.1 — native GPS/RD-navigatie\n{}",include_str!("../third_party/Pillow-LICENSE.txt"),include_str!("../third_party/ezdxf-LICENSE.txt"),include_str!("../third_party/proj4rs-NOTICES.txt"));return Ok(());}
+        if args[0]=="--licenses" {println!("{}",include_str!("../third_party/RustCrypto-NOTICES.txt"));println!("Wry 0.57.0 — ingebouwde WebView2-weergave\n{}",include_str!("../third_party/wry-LICENSE.txt"));println!("Pillow 11.3.0 — affine rasterrotatie, bilineaire kaartresampling en alphacompositie\n{}\nezdxf 1.4.4 — SHP/SHX/LFF-protocol, fontmetingen en vector-tekstuitlijning (native Rust-port met correcties)\n{}\nproj4rs 0.2.1 — native GPS/RD-navigatie\n{}",include_str!("../third_party/Pillow-LICENSE.txt"),include_str!("../third_party/ezdxf-LICENSE.txt"),include_str!("../third_party/proj4rs-NOTICES.txt"));return Ok(());}
         if ["-h", "--help", "help"].contains(&args[0].as_str()) {
             print_help();
             return Ok(());
