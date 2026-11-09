@@ -868,7 +868,8 @@ mod simple_form_tests {
         let selected=app.migrated_settings.object_rules.iter().find(|r|r.keywords.iter().any(|k|k.eq_ignore_ascii_case("ls"))).unwrap().display_label().to_owned();
         let out=click(&mut app,&ctx,pos(&out,&selected));let out=click(&mut app,&ctx,pos(&out,"Waterleiding"));
         assert_eq!(app.trench_editor.as_ref().unwrap().object.source,"water");
-        let out=click(&mut app,&ctx,pos(&out,"Exacte positie of kaartpunt"));
+        let mut out=click(&mut app,&ctx,pos(&out,"Exacte positie of kaartpunt"));
+        for _ in 0..8{out=frame(&mut app,&ctx,vec![]);}
         click(&mut app,&ctx,pos(&out,"Eindpunt"));
         let form=&mut app.trench_editor.as_mut().unwrap().object;assert!(form.from_end);form.set_distance(10.,object_ui::parse_decimal("1,5").unwrap()).unwrap();
         assert_eq!(form.distance(10.),1.5);assert_eq!(form.chainage,8.5);assert!(form.set_distance(10.,11.).is_err());

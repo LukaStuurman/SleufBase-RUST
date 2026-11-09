@@ -152,7 +152,7 @@ impl Editor {
             let y = section.point(0., depth).y;
             painter.line_segment(
                 [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
-                Stroke::new(if depth == Some(0.) { 2. } else { 0.6 }, SURFACE),
+                Stroke::new(if depth == Some(0.) { 2.0_f32 } else { 0.6 }, SURFACE),
             );
             painter.text(
                 egui::pos2(plot.left() - 8., y),
@@ -222,7 +222,7 @@ impl Editor {
                 rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b))
                     .unwrap_or(CABLE),
             );
-            painter.circle_stroke(point, radius + 2., Stroke::new(2., ORANGE));
+            painter.circle_stroke(point, radius + 2., Stroke::new(2.0_f32, ORANGE));
             let diameter = if self.object.diameter > 0. {
                 format!("Ø {} mm", self.object.diameter)
             } else {

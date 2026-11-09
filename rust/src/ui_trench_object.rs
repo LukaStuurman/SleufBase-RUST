@@ -17,6 +17,32 @@ pub(super) fn show(
     let form = &mut editor.object;
     let length = (editor.end.x - editor.start.x).hypot(editor.end.y - editor.start.y);
     let mut pick = false;
+    ui.collapsing("Exacte positie of kaartpunt", |ui| {
+        pick = ui.button("Kies punt op de kaart").clicked();
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Of afstand vanaf");
+            ui.radio_value(&mut form.from_end, false, "Beginpunt");
+            ui.radio_value(&mut form.from_end, true, "Eindpunt");
+            let mut distance = form.distance(length);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut distance)
+                        .custom_parser(parse_decimal)
+                        .speed(0.05)
+                        .range(0.0..=length.max(0.))
+                        .suffix(" m"),
+                )
+                .changed()
+            {
+                let _ = form.set_distance(length, distance);
+            }
+        });
+        ui.small(format!(
+            "Positie: {:.2} m vanaf begin / {:.2} m vanaf eind",
+            form.chainage,
+            length - form.chainage
+        ));
+    });
     ui.group(|ui|{
         ui.strong("Type en afmetingen");
         let current=rules.iter().find(|r|r.keywords.iter().any(|k|k.eq_ignore_ascii_case(&form.source))).map(|r|r.display_label()).unwrap_or(&form.name).to_owned();
@@ -59,41 +85,15 @@ pub(super) fn show(
         let painter = ui.painter_at(rect);
         painter.line_segment(
             [rect.left_center(), rect.right_center()],
-            Stroke::new(1., INK),
+            Stroke::new(1.0_f32, INK),
         );
         let (sin, cos) = form.angle.to_radians().sin_cos();
         let direction = egui::vec2(sin as f32, -cos as f32) * 12.;
         painter.line_segment(
             [center - direction, center + direction],
-            Stroke::new(2., ORANGE),
+            Stroke::new(2.0_f32, ORANGE),
         );
         ui.small("Bovenaanzicht");
-    });
-    ui.collapsing("Exacte positie of kaartpunt", |ui| {
-        pick = ui.button("Kies punt op de kaart").clicked();
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Of afstand vanaf");
-            ui.radio_value(&mut form.from_end, false, "Beginpunt");
-            ui.radio_value(&mut form.from_end, true, "Eindpunt");
-            let mut distance = form.distance(length);
-            if ui
-                .add(
-                    egui::DragValue::new(&mut distance)
-                        .custom_parser(parse_decimal)
-                        .speed(0.05)
-                        .range(0.0..=length.max(0.))
-                        .suffix(" m"),
-                )
-                .changed()
-            {
-                let _ = form.set_distance(length, distance);
-            }
-        });
-        ui.small(format!(
-            "Positie: {:.2} m vanaf begin / {:.2} m vanaf eind",
-            form.chainage,
-            length - form.chainage
-        ));
     });
     ui.collapsing("Extra invoer en brongegevens", |ui| {
         ui.label("Naam");
