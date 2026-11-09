@@ -162,6 +162,31 @@ impl Editor {
                 INK,
             );
         }
+        // Choose a 1/2/5 interval with enough room for labels at this width.
+        let desired = (plot.width() / 90.).floor().max(2.) as f64;
+        let rough = length / desired;
+        let unit = 10_f64.powf(rough.log10().floor());
+        let step = [1., 2., 5., 10.]
+            .into_iter()
+            .map(|factor| factor * unit)
+            .find(|step| *step >= rough)
+            .unwrap_or(length);
+        let decimals = (-step.log10().floor()).clamp(0., 6.) as usize;
+        let grid = Color32::from_rgb(202, 185, 163);
+        for index in 1..=(length / step).floor().min(40.) as usize {
+            let meters = index as f64 * step;
+            let x = section.point(meters, Some(0.)).x;
+            painter.vline(x, plot.y_range(), Stroke::new(0.7_f32, grid));
+            if plot.right() - x > 54. && x - plot.left() > 38. {
+                painter.text(
+                    egui::pos2(x, plot.bottom() + 4.),
+                    egui::Align2::CENTER_TOP,
+                    format!("{meters:.decimals$}").replace('.', ","),
+                    font.clone(),
+                    INK,
+                );
+            }
+        }
         painter.text(
             plot.left_bottom() + egui::vec2(0., 4.),
             egui::Align2::LEFT_TOP,
@@ -172,19 +197,45 @@ impl Editor {
         painter.text(
             plot.right_bottom() + egui::vec2(0., 4.),
             egui::Align2::RIGHT_TOP,
-            format!("Eind · {length:.2} m"),
+            format!("Eind · {length:.2} m").replace('.', ","),
             font.clone(),
             INK,
         );
-        if stride > 1 {
-            painter.text(
-                rect.left_top() + egui::vec2(8., 4.),
-                egui::Align2::LEFT_TOP,
-                "Overzicht met steekproef. Alle punten staan in de objectenlijst.",
-                font.clone(),
-                INK,
-            );
-        }
+
+        let active = self.selected.is_some() || self.entry_changed();
+        let position = if active {
+            Some((self.object.chainage, active_depth))
+        } else {
+            response
+                .hover_pos()
+                .filter(|point| plot.contains(*point))
+                .map(|point| {
+                    let (along, depth) = section.coordinates(point);
+                    (along, Some(depth))
+                })
+        };
+        let readout = if let Some((along, depth)) = position {
+            let x = section.point(along, Some(0.)).x;
+            painter.vline(x, plot.y_range(), Stroke::new(1.5_f32, ORANGE));
+            let depth = depth
+                .map(|depth| format!("{depth:.2} m").replace('.', ","))
+                .unwrap_or_else(|| "onbekend".into());
+            format!(
+                "{} m vanaf begin   ·   Diepte {depth}",
+                format!("{along:.2}").replace('.', ",")
+            )
+        } else if stride > 1 {
+            "Afstand vanaf begin · alle objecten staan in de objectenlijst".into()
+        } else {
+            "Afstand vanaf beginpunt (m)".into()
+        };
+        painter.text(
+            rect.left_top() + egui::vec2(10., 6.),
+            egui::Align2::LEFT_TOP,
+            readout,
+            egui::FontId::proportional(12.),
+            INK,
+        );
 
         let origin = ui.input(|input| input.pointer.press_origin());
         let pointer = response.interact_pointer_pos();
@@ -212,7 +263,7 @@ impl Editor {
             }
         }
 
-        if self.selected.is_some() || self.entry_changed() {
+        if active {
             let point = section.point(self.object.chainage, active_depth);
             let radius = section.radius(self.object.diameter);
             let rgb = self.object.rgb;

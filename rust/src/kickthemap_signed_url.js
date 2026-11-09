@@ -36,7 +36,7 @@
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     for (const kind of ['multipart', 'form', 'json']) {
       controller.signal.throwIfAborted();
-      const headers = { Accept: 'application/json', 'X-CSRF-TOKEN': csrf };
+      const headers = { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, 'X-Requested-With': 'XMLHttpRequest' };
       let body;
       if (kind === 'multipart') {
         body = new FormData();

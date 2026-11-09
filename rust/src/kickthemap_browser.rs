@@ -307,13 +307,9 @@ impl BrowserChannel {
             RemoteFileKind::GeoTiff=>format!("{stem}.tiff"),
             RemoteFileKind::JobFeatures=>format!("{stem}_jobFeatures.json"),
         };
-        let fields=json!({
-            "projectId":job.job_id.to_string(),
-            "folder":"cloud",
-            "fileName":filename,
-            "exportName":export_name
-        });
-        self.signed_download_fields_with_cancel(fields,cancel)
+        let fields=kind.download_fields(job.job_id,filename,export_name);
+        let fields=fields.into_iter().map(|(key,value)|(key.into(),Value::String(value))).collect();
+        self.signed_download_fields_with_cancel(Value::Object(fields),cancel)
     }
     pub(crate) fn signed_download_fields_with_cancel(&self,fields:Value,cancel:&std::sync::atomic::AtomicBool)->Result<reqwest::Url,String>{
         crate::input::check(cancel)?;

@@ -44,6 +44,7 @@ pub(super) struct BrowserUi {
     login_status:Option<Receiver<&'static str>>,
     login_cancel:Arc<AtomicBool>,
     pub(super) selected:BTreeSet<u64>,
+    selection_anchor:Option<u64>,
     filters:[String;7],
     only_downloadable:bool,
     only_loaded:bool,
@@ -69,11 +70,44 @@ pub(super) struct BrowserUi {
     capture_status:Option<Receiver<String>>,
     pub(super) status:String,
 }
+impl BrowserUi {
+    fn select_row(&mut self, ordered:&[u64], position:usize, extend:bool) {
+        let id=ordered[position];
+        if extend {
+            if let Some(anchor)=self.selection_anchor
+                .filter(|id|self.selected.contains(id))
+                .and_then(|id|ordered.iter().position(|&candidate|candidate==id))
+            {
+                self.selected.extend(ordered[anchor.min(position)..=anchor.max(position)].iter().copied());
+                return;
+            }
+        }else{
+            self.selected.clear();
+        }
+        self.selected.insert(id);
+        self.selection_anchor=Some(id);
+    }
+}
+#[cfg(test)]
+#[test]
+fn ctrl_click_selects_the_inclusive_range_in_current_list_order(){
+    let mut browser=BrowserUi::default();
+    let ordered=[9,3,17,6,2];
+    browser.select_row(&ordered,3,false);
+    browser.select_row(&ordered,1,true);
+    assert_eq!(browser.selected,BTreeSet::from([3,6,17]));
+    browser.select_row(&ordered,4,true);
+    assert_eq!(browser.selected,BTreeSet::from([2,3,6,17]));
+    browser.select_row(&ordered,0,false);
+    assert_eq!(browser.selected,BTreeSet::from([9]));
+    browser.select_row(&ordered[1..],2,true);
+    assert_eq!(browser.selected,BTreeSet::from([6,9]));
+}
 impl Default for BrowserUi {
     fn default()->Self {
         Self {open:false,browser:None,capturing:None,login_status:None,login_cancel:Arc::default(),
             #[cfg(test)] launch_requests:0,
-            selected:BTreeSet::new(),filters:Default::default(),
+            selected:BTreeSet::new(),selection_anchor:None,filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,
             map_open:false,map_bounds:None,map_texture:None,map_loading:None,
@@ -533,11 +567,10 @@ impl SleufBaseApp {
                             egui::ScrollArea::vertical().max_height(180.).show(ui,|ui|{for message in browser.failures.iter().rev().take(20){ui.label(message);}});
                         });
                     }
-                    if ctx.screen_rect().height()>=500.{ui.small("Objectpunten laden maakt ze zichtbaar onder KLIC Overlays. Dubbelklik voor objectpunten én GeoTIFF.");}
+                    if ctx.screen_rect().height()>=500.{ui.small("Objectpunten laden maakt ze zichtbaar onder KLIC Overlays. Ctrl+klik selecteert een reeks. Dubbelklik laadt objectpunten en GeoTIFF.");}
                     if !browser.status.is_empty(){egui::ScrollArea::vertical().id_salt("jobs-status").max_height(64.).show(ui,|ui|{ui.label(&browser.status);});}
                 });
-                let body_height=ui.available_height().max(40.);
-                egui::ScrollArea::vertical().id_salt("jobs-body").max_height(body_height).auto_shrink([false,false]).show(ui,|ui|{
+                ui.scope(|ui|{
                     let compact=ctx.screen_rect().height()<550.;
                     ui.horizontal_wrapped(|ui|{
                         ui.strong(format!("Jobs: {} / {} {}",indices.len(),source.len(),if live{"live"}else{"offline"}));
@@ -588,23 +621,35 @@ impl SleufBaseApp {
                             }
                         });                        }
 
-                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height((body_height-if compact{85.}else{120.}).clamp(40.,410.))
+                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(ui.available_height().max(24.)).auto_shrink([false,false])
                             .show_rows(ui,28.,indices.len(),|ui,rows|{
                                 for position in rows{
                                     let job=&source[indices[position]];
                                     ui.horizontal(|ui|{
+                                        let extend=ui.input(|i|i.modifiers.ctrl||i.modifiers.command||i.modifiers.shift);
                                         let mut selected=browser.selected.contains(&job.job_id);
                                         if ui.add_sized([26.,24.],egui::Checkbox::without_text(&mut selected)).changed(){
-                                            if selected{browser.selected.insert(job.job_id);}
-                                            else{browser.selected.remove(&job.job_id);}
+                                            if extend {
+                                                browser.select_row(&filtered_ids,position,true);
+                                            }else if selected{
+                                                browser.selected.insert(job.job_id);
+                                                browser.selection_anchor=Some(job.job_id);
+                                            }else{
+                                                browser.selected.remove(&job.job_id);
+                                            }
                                         }
                                         for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
                                             let value=job_column_value(job,column);
-                                            if column==0{
-                                                let response=ui.add_sized([*width,24.],egui::Button::new(&value).selected(selected).truncate()).on_hover_text(format!("{value}\nDubbelklik om objecten en GeoTIFF in SleufBase te laden"));
-                                                if response.clicked(){let multi=ui.input(|i|i.modifiers.ctrl||i.modifiers.command);if multi&&selected{browser.selected.remove(&job.job_id);}else{if !multi{browser.selected.clear();}browser.selected.insert(job.job_id);}}
-                                                if response.double_clicked()&&live&&!busy&&!browser.batch_mode{browser.selected.clear();browser.selected.insert(job.job_id);action=Some("both");}
-                                            }else{ui.add_sized([*width,24.],egui::Label::new(value.clone()).truncate()).on_hover_text(value);}
+                                            let response=if column==0{
+                                                ui.add_sized([*width,24.],egui::Button::new(&value).selected(browser.selected.contains(&job.job_id)).truncate())
+                                            }else{
+                                                ui.add_sized([*width,24.],egui::Label::new(&value).truncate().sense(egui::Sense::click()))
+                                            }.on_hover_text(&value);
+                                            if response.clicked(){browser.select_row(&filtered_ids,position,extend);}
+                                            if response.double_clicked()&&!extend&&live&&!busy&&!browser.batch_mode{
+                                                browser.select_row(&filtered_ids,position,false);
+                                                action=Some("both");
+                                            }
                                         }
                                     });
                                 }
@@ -781,6 +826,47 @@ fn read_download_capture(path:&std::path::Path)->Result<String,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dragging_jobs_window_taller_reveals_more_rows(){
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{
+            name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),
+            path:"/".into(),secure:true,
+        };
+        let session=KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap();
+        let mut app=SleufBaseApp{live_session:Some(session),..Default::default()};
+        app.browser_ui.open=true;
+        app.live_jobs=(1..80).map(|job_id|Job{
+            job_id,title:format!("Resize fixture {job_id}"),address:String::new(),
+            municipality:String::new(),coordinates:String::new(),client_date:String::new(),
+            status:9,downloadable:true,prefix:String::new(),
+        }).collect();
+        let ctx=egui::Context::default();
+        theme::install(&ctx);
+        let render=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{
+            screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1500.,1150.))),
+            events,..Default::default()
+        },|ctx|app.show_kickthemap_workspace(ctx));
+        let visible=|output:&egui::FullOutput|output.shapes.iter().filter(|shape|matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.text().starts_with("Resize fixture ")
+                &&shape.clip_rect.contains(text.pos+text.galley.rect.center().to_vec2())
+        )).count();
+        let mut output=render(&mut app,vec![]);
+        for _ in 0..5{output=render(&mut app,vec![]);}
+        let before=visible(&output);
+        let rect=ctx.memory(|memory|memory.area_rect(egui::Id::new("SleufBase Jobs"))).unwrap();
+        let start=rect.center_bottom();
+        let end=start+egui::vec2(0.,145.);
+        let button=|pos,pressed|egui::Event::PointerButton{
+            pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+        };
+        render(&mut app,vec![egui::Event::PointerMoved(start)]);
+        render(&mut app,vec![button(start,true)]);
+        render(&mut app,vec![egui::Event::PointerMoved(end)]);
+        render(&mut app,vec![button(end,false)]);
+        for _ in 0..5{output=render(&mut app,vec![]);}
+        let after=visible(&output);
+        assert!(after>=before+3,"visible jobs before {before}, after {after}");
+    }
     #[test]
     fn jobs_grid_filters_all_original_columns_independently(){
         let job=Job{job_id:12345,title:"Sleuf Noord".into(),address:"Markt 5".into(),

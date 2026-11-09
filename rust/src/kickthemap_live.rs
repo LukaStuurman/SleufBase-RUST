@@ -274,7 +274,12 @@ impl KickTheMapLiveClient {
         for mode in ["multipart","form","json"]{
             for auth_attempt in 0..2{
                 crate::input::check(cancel)?;
-                let mut request=self.client.post(format!("{}/jobs/get-file-url",self.api_origin)).header("X-CSRF-TOKEN",self.csrf.as_str());
+                let mut request=self.client.post(format!("{}/jobs/get-file-url",self.api_origin))
+                    .header("X-CSRF-TOKEN",self.csrf.as_str())
+                    .header("X-Requested-With","XMLHttpRequest")
+                    .header(reqwest::header::ACCEPT,"application/json")
+                    .header(reqwest::header::ORIGIN,&self.api_origin)
+                    .header(reqwest::header::REFERER,format!("{}/",self.api_origin));
                 request=match mode{
                     "multipart"=>{let mut form=reqwest::blocking::multipart::Form::new();for (key,value) in fields{form=form.text((*key).to_owned(),value.clone());}request.multipart(form)},
                     "form"=>request.form(fields),
@@ -323,8 +328,13 @@ impl KickTheMapLiveClient {
         if self.storage_config.is_none(){
             let direct=(||{let response=self.client.post(format!("{}/main/adata",self.api_origin)).header("X-CSRF-TOKEN",&self.csrf).send().map_err(|_|"Opslagconfiguratie kon niet worden opgehaald".to_owned())?.error_for_status().map_err(|e|format!("Opslagconfiguratie HTTP {}",e.status().map(|s|s.as_u16()).unwrap_or(0)))?;response_text(response,65536)})();
             crate::input::check(cancel)?;
-            let payload=direct.or_else(|error|match browser{Some(browser)=>browser.storage_config_payload(cancel),None=>Err(error)})?;
-            self.storage_config=Some(crate::kickthemap_s3::Credentials::decode(&payload)?);
+            self.storage_config=Some(direct.and_then(|payload|crate::kickthemap_s3::Credentials::decode(&payload))
+                .or_else(|error|match browser{
+                    Some(browser)=>browser.storage_config_payload(cancel)
+                        .and_then(|payload|crate::kickthemap_s3::Credentials::decode(&payload))
+                        .map_err(|browser_error|format!("{error}; browser: {browser_error}")),
+                    None=>Err(error),
+                })?);
         }
         crate::input::check(cancel)?;
         self.storage_config.as_ref().unwrap().signed_url(&key,filename)
@@ -628,6 +638,22 @@ mod tests {
         assert!(session.download_prefixes.contains_key(&42));
     }
     #[test]
+    fn website_download_request_uses_job_id_for_both_file_types(){
+        for (kind,remote) in [(RemoteFileKind::GeoTiff,"fixture.tiff"),(RemoteFileKind::JobFeatures,"jobFeatures.json")]{
+            let reply=r#"{"status":true,"data":{"url":"https://s3.amazonaws.com/fixture/file"}}"#;
+            let (mut client,requests,server)=scripted(vec![(200,reply)]);
+            let fields=kind.download_fields(42,remote.into(),"export".into());
+            assert!(client.request_download_url(&fields,&crate::input::NEVER_CANCEL).unwrap().is_some());
+            server.join().unwrap();
+            let request=requests.try_recv().unwrap();
+            assert!(request.starts_with("POST /jobs/get-file-url "));
+            assert!(request.contains("name=\"job_id\""));
+            assert!(request.contains(remote));
+            assert!(!request.contains("projectId"));
+            assert!(request.to_ascii_lowercase().contains("x-requested-with: xmlhttprequest"));
+        }
+    }
+    #[test]
     fn download_link_refreshes_csrf_and_retries_same_request_mode(){
         let (mut client,requests,server)=scripted(vec![(419,"expired"),(200,"<meta name='csrf-token' content='download-fresh'>"),(200,r#"{"status":true,"data":{"url":"https://s3.amazonaws.com/test/file"}}"#)]);
         let fields=[("projectId","42".into()),("folder","ortho".into())];
@@ -699,8 +725,13 @@ impl RemoteFileKind {
     fn extension(self)->&'static str {
         match self {Self::GeoTiff=>"tiff",Self::JobFeatures=>"json"}
     }
-    fn folder(self)->&'static str {
-        match self {Self::GeoTiff=>"cloud",Self::JobFeatures=>"cloud"}
+    pub(crate) fn download_fields(self,job_id:u64,remote:String,export:String)->[(&'static str,String);4] {
+        [
+            ("job_id",job_id.to_string()),
+            ("folder",match self { Self::GeoTiff|Self::JobFeatures=>"cloud" }.into()),
+            ("fileName",remote),
+            ("exportName",export),
+        ]
     }
 }
 fn job_sidecar_path(path:&std::path::Path)->Result<std::path::PathBuf,String>{
@@ -886,12 +917,7 @@ impl KickTheMapLiveClient {
             return Ok(destination);
         }
         std::fs::create_dir_all(root).map_err(|e|e.to_string())?;
-        let fields=[
-            ("projectId",job.job_id.to_string()),
-            ("folder",kind.folder().to_string()),
-            ("fileName",remote),
-            ("exportName",export_name)
-        ];
+        let fields=kind.download_fields(job.job_id,remote,export_name);
         let http=self.request_download_url_with_title(&fields,cancel,&job.title);
         let mut storage_used=false;
         let signed=resolve_download_link(http,cancel,!self.repair_in_progress,||{
