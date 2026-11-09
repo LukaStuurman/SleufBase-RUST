@@ -573,6 +573,7 @@ impl SleufBaseApp {
 
     fn show_shell_overlays(&mut self, ui: &mut egui::Ui, height: f32) {
         theme::title(ui, "KLIC Overlays");
+        let mut remove_job=None;
         theme::card(18, 14, 14).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let list_height = (height - 90.).max(24.);
@@ -598,6 +599,12 @@ impl SleufBaseApp {
                                     self.selected==Some(index)&&self.project_view.selected_dxf.is_none(),
                                     format!("Job: {} ({} objecten)",job.title,job.features.len())
                                 ).on_hover_text(format!("KickTheMap-objecten uit {}",job.source_path.display()));
+                                response.context_menu(|ui|{
+                                    if ui.button("Verwijder objectlaag uit project").clicked(){
+                                        remove_job=Some(index);
+                                        ui.close_menu();
+                                    }
+                                });
                                 if response.clicked(){
                                     self.selected=Some(index);
                                     self.project_view.selected_dxf=None;
@@ -632,11 +639,16 @@ impl SleufBaseApp {
                         });
                     }
                 });
-            if ui.add_enabled(self.project_view.selected_dxf.is_some(),
+            if self.project_view.selected_dxf.is_none() && self.selected.is_some_and(|i|i<self.datasets.len()){
+                if ui.button("Verwijder geselecteerde objectlaag").clicked(){
+                    remove_job=self.selected;
+                }
+            }else if ui.add_enabled(self.project_view.selected_dxf.is_some(),
                 egui::Button::new("Verwijder geselecteerde KLIC")).clicked() {
                 self.remove_shell_overlay();
             }
         });
+        if let Some(index)=remove_job{self.remove_job_overlay(index);}
     }
 
     pub(super) fn handle_layer_shortcuts(&mut self, ctx: &egui::Context) {
@@ -664,6 +676,25 @@ impl SleufBaseApp {
             ctx.memory_mut(|m| m.surrender_focus(id));
             self.shell.focused_layer = None;
         }
+    }
+
+    pub(super) fn remove_job_overlay(&mut self,index:usize){
+        if self.project_sources_owned()||self.file_intent.is_some(){
+            self.message="Rond eerst de lopende projectbewerking af.".into();
+            return;
+        }
+        if index>=self.datasets.len(){return;}
+        let removed=self.datasets.remove(index);
+        if !self.datasets.iter().any(|dataset|dataset.source_path==removed.source_path){
+            self.project_view.hidden_object_layers.retain(|path|path!=&removed.source_path);
+        }
+        self.selected=self.selected.and_then(|selected|match selected.cmp(&index){
+            std::cmp::Ordering::Less=>Some(selected),
+            std::cmp::Ordering::Equal=>None,
+            std::cmp::Ordering::Greater=>Some(selected-1),
+        });
+        self.dirty=true;
+        self.message=format!("Objectlaag {} uit het project verwijderd.",removed.title);
     }
 
     fn remove_shell_overlay(&mut self) {

@@ -42,7 +42,7 @@ crc32fast = "1"
 [target.'cfg(windows)'.dependencies]
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 winit = "0.30"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
