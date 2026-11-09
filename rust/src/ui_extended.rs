@@ -83,9 +83,15 @@ impl SleufBaseApp {
                     self.load_geotiffs(files, ctx);
                 }
             }
-            if ui.button("Virtuele proefsleuf").clicked() {
-                self.show_trench_dialog = true;
+            if ui.button("Proefsleuf tekenen").clicked() {
+                self.start_virtual_creation();
             }
+            ui.menu_button("Meer sleufopties", |ui| {
+                if ui.button("Proefsleuf via RD-coördinaten").clicked() {
+                    self.show_trench_dialog = true;
+                    ui.close_menu();
+                }
+            });
             if ui.button("Opmerking plaatsen").clicked() {
                 self.start_comment_mode(comments_ui::Mode::Place);
             }

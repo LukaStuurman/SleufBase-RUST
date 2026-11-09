@@ -10,6 +10,8 @@ use egui::Vec2;
 mod ahn_fill;
 #[path="ui_trench_object.rs"]
 mod object_ui;
+#[path="ui_trench_section.rs"]
+mod section;
 
 #[derive(Clone,PartialEq)]
 struct ObjectForm {
@@ -55,6 +57,13 @@ impl Default for ObjectForm {
     }
 }
 fn object_quantity(object:&TrenchPoint)->u32{object.metadata.get("quantity").and_then(serde_json::Value::as_u64).and_then(|n|u32::try_from(n).ok()).unwrap_or_else(||object.attributes[2].split(|c:char|!c.is_ascii_digit()).find_map(|v|v.parse::<u32>().ok()).filter(|n|*n>=1&&*n<=1000).unwrap_or_else(||if object.attributes[2].to_lowercase().contains("dubbel"){2}else{1}))}
+fn object_diameter(object:&TrenchPoint)->f64{
+    sleufbase_rust::profile::diameter_mm(&sleufbase_rust::Feature{
+        object_name:String::new(),source_name:String::new(),
+        geometry:sleufbase_rust::Geometry::Point(object.position),
+        attributes:object.attributes.clone(),
+    }).filter(|d|d.is_finite()&&*d>=0.).unwrap_or(0.)
+}
 impl ObjectForm {
     fn from_object(trench:&VirtualTrench,object:&TrenchPoint)->Self {
         let (chainage,offset)=edit::coordinates(trench,object.position);
@@ -64,7 +73,7 @@ impl ObjectForm {
             attributes:object.attributes.clone(),chainage,offset,
             elevation:object.position.z.unwrap_or(0.),
             has_elevation:object.position.z.is_some(),
-            from_end:false,diameter:sleufbase_rust::profile::diameter_mm(&sleufbase_rust::Feature{object_name:String::new(),source_name:String::new(),geometry:sleufbase_rust::Geometry::Point(object.position),attributes:object.attributes.clone()}).unwrap_or(0.),
+            from_end:false,diameter:object_diameter(object),
             quantity:object_quantity(object),
             angle:object.metadata.get("crossing_angle_degrees").and_then(serde_json::Value::as_f64).unwrap_or(0.),
             rgb:sleufbase_rust::virtual_raster::display_rgb(&object.metadata),use_depth:object.metadata.get("surface_mode").and_then(serde_json::Value::as_str)==Some("start")&&object.metadata.get("sleufbase_depth_meters").and_then(serde_json::Value::as_f64).is_some_and(|v|v.is_finite()&&v>=0.),
@@ -111,6 +120,7 @@ pub(super) struct Editor {
     end:Vertex,
     width:f64,
     selected:Option<usize>,
+    section_drag:Option<section::Drag>,
     jump_to_objects:Option<bool>,
     objects_tab:bool,
     pub(super) picking_object:bool,
@@ -139,7 +149,7 @@ impl Editor {
             index,original:source.clone(),draft:source.clone(),
             label:source.label.clone(),start:source.start,
             end:source.end,width:source.width_meters,
-            selected:None,jump_to_objects:Some(true),objects_tab:true,picking_object:false,entry_started:false,object:ObjectForm::default(),
+            selected:None,section_drag:None,jump_to_objects:Some(true),objects_tab:true,picking_object:false,entry_started:false,object:ObjectForm::default(),
             confirm_delete:false,error:String::new(),paste:String::new(),notice:String::new(),shift_x:0.,shift_y:0.,
             dekband_start:0.,dekband_end:source.length(),
             dekband_name:"Dekband".into(),dekband_rgb:[17,24,39],
@@ -155,7 +165,7 @@ impl Editor {
     fn add_or_replace(&mut self)->Result<(),String> {
         let mut next=self.build()?;
         let mut object=self.object.to_object(&next)?;
-        if let Some(old)=self.selected.and_then(|i|next.objects.get(i)){
+        if let Some(old)=self.selected.and_then(|i|self.draft.objects.get(i)){
             let typed=object.metadata.take();
             object.metadata=old.metadata.clone();
             if !object.metadata.is_object(){object.metadata=serde_json::json!({});}
@@ -169,12 +179,44 @@ impl Editor {
                 }
             }
         }
-        edit::replace_object(&mut next,self.selected,object)?;
-        // The axis still belongs to the form, but the edited objects are
-        // stored as RD world coordinates and will survive later translations.
+        // Keep the draft's indices stable while selecting other markers.
+        // The normal build/save path sorts objects on the current axis.
+        next.objects.clone_from(&self.draft.objects);
+        if let Some(index)=self.selected {
+            next.objects[index]=object;
+        }else{
+            next.objects.push(object);
+        }
+        edit::check(&next)?;
         self.draft=next;
         self.selected=None;
         self.object=ObjectForm::default();self.entry_started=false;
+        Ok(())
+    }
+    fn entry_changed(&self)->bool {
+        if let Some(index)=self.selected {
+            let mut original=ObjectForm::from_object(&self.draft,&self.draft.objects[index]);
+            original.from_end=self.object.from_end;
+            self.object!=original
+        }else{
+            self.entry_started||self.object.has_pending_entry()
+        }
+    }
+    fn select_object(&mut self,index:usize)->bool {
+        if self.selected==Some(index){return true;}
+        if self.entry_changed(){
+            if let Err(error)=self.add_or_replace(){self.error=error;return false;}
+        }
+        self.selected=Some(index);
+        self.object=ObjectForm::from_object(&self.draft,&self.draft.objects[index]);
+        self.entry_started=false;
+        self.error.clear();
+        true
+    }
+    fn sync_axis(&mut self)->Result<(),String>{
+        if self.draft.start!=self.start||self.draft.end!=self.end{
+            self.draft=self.build()?;
+        }
         Ok(())
     }
     pub(super) fn pick_object_position(&mut self,world:[f64;2])->Result<(),String>{
@@ -305,7 +347,7 @@ impl SleufBaseApp {
         let mut close_requested=false;
         let mut open=true;
         let mut action=None;
-        egui::Window::new("Virtuele proefsleuf").id(egui::Id::new("virtual-trench-editor"))
+        egui::Window::new("Proefsleuf bewerken").id(egui::Id::new("virtual-trench-editor"))
             .open(&mut open).default_width(730.)
             .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
             .constrain_to(ctx.screen_rect().shrink(12.))
@@ -314,9 +356,25 @@ impl SleufBaseApp {
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                 ui.horizontal_wrapped(|ui|{
-                    if ui.selectable_label(!editor.objects_tab,"1. Sleufgegevens").clicked(){editor.jump_to_objects=Some(false);}
-                    if ui.selectable_label(editor.objects_tab,"2. Kabel/leiding invoeren").clicked(){editor.jump_to_objects=Some(true);}
-                    ui.small("3. Opslaan in project");
+                    if ui.selectable_label(editor.objects_tab,"Doorsnede").clicked()&&!editor.objects_tab{
+                        match editor.sync_axis(){
+                            Ok(())=>editor.jump_to_objects=Some(true),
+                            Err(error)=>editor.error=error,
+                        }
+                    }
+                    if ui.selectable_label(!editor.objects_tab,"Sleufgegevens").clicked()&&editor.objects_tab{
+                        let result=if editor.entry_changed(){editor.add_or_replace()}else{Ok(())};
+                        match result{
+                            Ok(())=>{
+                                editor.selected=None;
+                                editor.object=ObjectForm::default();
+                                editor.section_drag=None;
+                                editor.jump_to_objects=Some(false);
+                            }
+                            Err(error)=>editor.error=error,
+                        }
+                    }
+                    ui.small(&editor.label);
                 });
                 let scroll=egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
                     .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]);
@@ -465,11 +523,17 @@ impl SleufBaseApp {
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
                     }else{
+                    editor.show_section(ui);
                     ui.heading(if editor.selected.is_some(){"Kabel of leiding bewerken"}else{"Nieuwe kabel of leiding"});
                     pick_requested=object_ui::show(&mut editor,ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
-                    if ui.button("Leeg invoerformulier").clicked(){editor.selected=None;editor.object=ObjectForm::default();editor.entry_started=false;}
-                    ui.strong(format!("Toegevoegd aan deze sleuf ({})",editor.draft.objects.len()));
-                    if editor.draft.objects.is_empty(){ui.small("Kies een kaartpunt of afstand, vul de gegevens in en klik op Kabel/leiding toevoegen.");}
+                    if editor.selected.is_some()&&ui.button("Nieuwe kabel/leiding").clicked(){
+                        let result=if editor.entry_changed(){editor.add_or_replace()}else{Ok(())};
+                        match result{
+                            Ok(())=>{editor.selected=None;editor.object=ObjectForm::default();editor.entry_started=false;editor.error.clear();}
+                            Err(error)=>editor.error=error,
+                        }
+                    }
+                    ui.collapsing(format!("Objectenlijst ({})",editor.draft.objects.len()),|ui|{
                     let mut remove=None;
                     egui::ScrollArea::vertical().max_height(190.)
                         .show_rows(ui,64.,editor.draft.objects.len(),|ui,rows|{
@@ -481,8 +545,7 @@ impl SleufBaseApp {
                                         index+1,obj.object_name,if obj.attributes[1].is_empty(){"?"}else{&obj.attributes[1]},object_quantity(obj),c,o)).truncate());
                                     ui.horizontal(|ui|{
                                     if ui.small_button("Bewerk").clicked() {
-                                        editor.selected=Some(index);
-                                        editor.object=ObjectForm::from_object(&editor.draft,obj);
+                                        editor.select_object(index);
                                     }
                                     if ui.small_button("Verwijder").clicked(){remove=Some(index);}
                                     });
@@ -490,16 +553,26 @@ impl SleufBaseApp {
                             }
                         });
                     if let Some(index)=remove {
-                        if let Err(e)=edit::remove_object(&mut editor.draft,index){editor.error=e;}
-                        editor.selected=None;
-                        editor.object=ObjectForm::default();editor.entry_started=false;
+                        match edit::remove_object(&mut editor.draft,index) {
+                            Ok(()) if editor.selected==Some(index)=>{
+                                editor.selected=None;
+                                editor.object=ObjectForm::default();
+                                editor.entry_started=false;
+                            }
+                            Ok(())=>{
+                                editor.selected=editor.selected.map(|selected|selected-usize::from(index<selected));
+                            }
+                            Err(error)=>editor.error=error,
+                        }
                     }
+                    });
                     ui.collapsing("Excel: meerdere meetobjecten importeren / kopiëren",|ui|{
                         ui.small("Plak tab-gescheiden cellen uit Excel: Rol, Object, Bron, Kettingmaat, Dwarsafstand, optionele Z en 3 attributen. Komma als decimaalteken is toegestaan.");
                         ui.add(egui::TextEdit::multiline(&mut editor.paste)
                             .desired_rows(5).hint_text("LS\\tKabel\\tKickTheMap\\t2,5\\t-0,3\\t-1,2"));
                         if ui.button("Importeer geplakte Excel-regels").clicked() {
-                            match editor.build(){
+                            let result=if editor.entry_changed(){editor.add_or_replace()}else{editor.selected=None;Ok(())};
+                            match result.and_then(|_|editor.build()){
                                 Ok(mut next)=>match edit::import_tabular(&mut next,&editor.paste) {
                                     Ok(count)=>{
                                         editor.draft=next;
@@ -552,7 +625,7 @@ impl SleufBaseApp {
         if let Some(cmd)=action {
             match cmd {
                 Action::Save=>{
-                    let result=if editor.entry_started||editor.selected.is_some()||editor.object.has_pending_entry(){editor.add_or_replace().and_then(|_|editor.build())}else{editor.build()};
+                    let result=if editor.entry_changed(){editor.add_or_replace().and_then(|_|editor.build())}else{editor.build()};
                     match result {
                         Ok(next)=>{
                             self.virtual_trenches[editor.index]=next;
@@ -651,7 +724,7 @@ mod usability_tests {
     fn section_navigation_adds_an_object_then_saves_the_draft(){
         let ctx=egui::Context::default();theme::install(&ctx);let mut app=fixture();let size=Vec2::new(1200.,760.);
         for _ in 0..4 {frame(&mut app,&ctx,size,vec![]);}
-        for label in ["2. Kabel/leiding invoeren","Kabel/leiding toevoegen","Opslaan in project"]{
+        for label in ["Doorsnede","Kabel/leiding toevoegen","Opslaan in project"]{
             let mut out=frame(&mut app,&ctx,size,vec![]);
             for _ in 0..4 {out=frame(&mut app,&ctx,size,vec![]);}
             let pos=position(&out,label);assert!(pos.y<size.y);
@@ -750,11 +823,10 @@ mod simple_form_tests {
         let t=VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
         let ctx=egui::Context::default();theme::install(&ctx);let mut app=SleufBaseApp{virtual_trenches:vec![t],..Default::default()};app.open_virtual_editor(0);
         let mut out=frame(&mut app,&ctx,vec![]);for _ in 0..3{out=frame(&mut app,&ctx,vec![]);}
-        pos(&out,"Kies punt op de kaart");
-        assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Afwijking van haaks op de sleuf")));
         let selected=app.migrated_settings.object_rules.iter().find(|r|r.keywords.iter().any(|k|k.eq_ignore_ascii_case("ls"))).unwrap().display_label().to_owned();
         let out=click(&mut app,&ctx,pos(&out,&selected));let out=click(&mut app,&ctx,pos(&out,"Waterleiding"));
         assert_eq!(app.trench_editor.as_ref().unwrap().object.source,"water");
+        let out=click(&mut app,&ctx,pos(&out,"Exacte positie of kaartpunt"));
         click(&mut app,&ctx,pos(&out,"Eindpunt"));
         let form=&mut app.trench_editor.as_mut().unwrap().object;assert!(form.from_end);form.set_distance(10.,object_ui::parse_decimal("1,5").unwrap()).unwrap();
         assert_eq!(form.distance(10.),1.5);assert_eq!(form.chainage,8.5);assert!(form.set_distance(10.,11.).is_err());

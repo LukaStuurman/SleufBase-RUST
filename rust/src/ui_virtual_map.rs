@@ -1218,7 +1218,7 @@ impl SleufBaseApp {
                             self.virtual_map.selected = Some(i);
                             self.trench_markers.clear();
                             self.dirty = true;
-                            self.message="Virtuele proefsleuf geplaatst. Vul de metingen en hoogtes in de editor in.".into();
+                            self.message="Proefsleuf getekend. Voeg kabels en leidingen toe in de doorsnede.".into();
                             self.open_virtual_editor(i);
                             if let Some(editor)=&mut self.trench_editor{editor.start_automatic_ahn();}
                         }
