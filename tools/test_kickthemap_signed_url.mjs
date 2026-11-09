@@ -11,7 +11,7 @@ function harness(reply, fastTimer = false, origin = 'https://www.my.kickthemap.c
     setTimeout: (fn, ms) => { const timer = setTimeout(fn, fastTimer ? 10 : ms); timers.add(timer); return timer; },
     clearTimeout: timer => { timers.delete(timer); clearTimeout(timer); }
   };
-  const result = vm.runInNewContext(`${source}(${JSON.stringify({ projectId: '42', fileName: 'file42.tiff' })})`, context);
+  const result = vm.runInNewContext(`${source}(${JSON.stringify({ job_id: '42', fileName: 'file42.tiff' })})`, context);
   return { calls, timers, result };
 }
 const ok = (data = { url: 'https://s3.amazonaws.com/file.tiff' }) => new Response(JSON.stringify({ status: true, data }));
@@ -30,7 +30,7 @@ await scenario(async () => {
     assert.equal(await h.result, 'https://s3.amazonaws.com/file.tiff');
     assert.equal(h.calls.length, 1); assert.equal(h.calls[0].url, '/jobs/get-file-url');
     const { init } = h.calls[0]; assert.equal(init.method, 'POST'); assert.equal(init.credentials, 'same-origin');
-    assert.equal(init.body.get('projectId'), '42'); assert.equal(init.headers['X-CSRF-TOKEN'], 'test-csrf');
+    assert.equal(init.body.get('job_id'), '42'); assert.equal(init.headers['X-Requested-With'], 'XMLHttpRequest'); assert.equal(init.headers['X-CSRF-TOKEN'], 'test-csrf');
     assert.equal(h.timers.size, 0);
   }
 });
@@ -43,7 +43,7 @@ await scenario(async () => {
 await scenario(async () => {
   const h = harness(async (_, __, n) => n < 3 ? new Response('', { status: 415 }) : ok());
   await h.result; assert.equal(h.calls.length, 3); assert.equal(h.calls[2].init.headers['Content-Type'], 'application/json');
-  assert.equal(JSON.parse(h.calls[2].init.body).projectId, '42'); assert.equal(h.timers.size, 0);
+  assert.equal(JSON.parse(h.calls[2].init.body).job_id, '42'); assert.equal(h.timers.size, 0);
 });
 await scenario(async () => {
   const h = harness(async () => new Response('{}', { headers: { 'content-length': '262145' } }));

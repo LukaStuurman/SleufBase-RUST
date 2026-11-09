@@ -43,7 +43,7 @@ impl Strategy {
     pub(super) fn render(&self,fields:&[(&str,String)],title:&str)->Result<BTreeMap<String,String>,String>{
         self.validate()?;let get=|key|fields.iter().find(|(k,_)|*k==key).map(|(_,v)|v.as_str()).unwrap_or("");
         let prefix=get("fileName").strip_suffix(".tiff").unwrap_or(get("fileName"));let export=get("exportName");let stem=export.strip_suffix(".tiff").unwrap_or(export);
-        Ok(self.fields.iter().map(|(k,v)|{let mut out=v.clone();for(key,value)in [("job_id",get("projectId")),("storage_prefix",prefix),("export_name",export),("safe_stem",stem),("title",title)]{out=out.replace(&format!("{{{key}}}"),value);} (k.clone(),out)}).collect())
+        Ok(self.fields.iter().map(|(k,v)|{let mut out=v.clone();for(key,value)in [("job_id",fields.iter().find(|(key,_)|*key=="job_id").map(|(_,value)|value.as_str()).unwrap_or_else(||get("projectId"))),("storage_prefix",prefix),("export_name",export),("safe_stem",stem),("title",title)]{out=out.replace(&format!("{{{key}}}"),value);} (k.clone(),out)}).collect())
     }
     pub(super) fn signed_url(&self,text:&str)->Result<reqwest::Url,String>{
         if let Some(path)=&self.response_url_path{let payload:Value=serde_json::from_str(text).map_err(|e|e.to_string())?;if !as_bool(payload.get("status")){return Err("KickTheMap heeft de herstel-download geweigerd".into());}
