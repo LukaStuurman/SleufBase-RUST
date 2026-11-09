@@ -159,8 +159,16 @@ impl Browser {
         Ok(Value::Array(cookies))
     }
     pub fn restore_session(&self,cookies:&Value)->Result<(),String>{
-        let cookies=session_cookie_params(cookies);
+        let mut cookies=session_cookie_params(cookies);
         if cookies.is_empty(){return Err("Geen geldige sessiecookies gevonden".into());}
+        for cookie in &mut cookies{
+            if let Some(host)=cookie["domain"].as_str().filter(|domain|!domain.starts_with('.')){
+                // An omitted Domain attribute keeps this cookie host-only.
+                let url=format!("https://{host}/");
+                cookie.as_object_mut().unwrap().remove("domain");
+                cookie["url"]=json!(url);
+            }
+        }
         self.cdp("Storage.setCookies",json!({"cookies":cookies}))?;
         self.navigate_account("/")
     }
@@ -180,7 +188,7 @@ impl Browser {
     pub fn csrf_token(&self)->Result<String,String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
         let result=self.command("Runtime.evaluate",json!({
-            "expression":r#"(()=>{if(/^\/(signin|login)\/?$/.test(location.pathname))throw new Error('Meld je eerst aan');return document.querySelector('meta[name="csrf-token"]')?.content||'';})()"#,
+            "expression":r#"(()=>{if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw new Error('Ongeldige website');if(/^\/(signin|login)\/?$/.test(location.pathname))throw new Error('Meld je eerst aan');return document.querySelector('meta[name="csrf-token"]')?.content||'';})()"#,
             "returnByValue":true
         }),Some(&ws))?;
         if result.get("exceptionDetails").is_some(){return Err("Meld je eerst volledig aan in het geopende Browser-venster".into());}
@@ -237,7 +245,7 @@ impl Browser {
 impl BrowserChannel {
     pub fn browser_job_payload(&self)->Result<String,String>{
         let ws=self.job_tab(&crate::input::NEVER_CANCEL)?;
-        let script=r#"(async()=>{let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
+        let script=r#"(async()=>{if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw new Error('Ongeldige website');let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
         let result=cdp::command(self.port,&ws,"Runtime.evaluate",
             json!({"expression":script,"awaitPromise":true,"returnByValue":true}),&crate::input::NEVER_CANCEL,
             cdp::Limits{duration:Duration::from_secs(25),response_bytes:MAX_CDP_RESPONSE})?;

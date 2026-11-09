@@ -101,6 +101,10 @@ fn connect_browser(
     status:&mpsc::Sender<&'static str>,
 )->Result<BrowserLogin,String>{
     use sleufbase_rust::kickthemap_session as stored;
+    let check_cancel=||{
+        if cancel.load(Ordering::Relaxed){Err("Aanmelden geannuleerd.".to_owned())}else{Ok(())}
+    };
+    check_cancel()?;
     let mut browser=Browser::launch()?;
     let saved=remember.then(stored::load).and_then(Result::ok).flatten();
     let mut restored=false;
@@ -108,7 +112,7 @@ fn connect_browser(
         // WebView2 can report a page target before its first URL is committed.
         let deadline=Instant::now()+Duration::from_secs(4);
         loop{
-            sleufbase_rust::input::check(cancel)?;
+            check_cancel()?;
             if browser.restore_session(&cookies).is_ok(){restored=true;break;}
             if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
             if Instant::now()>=deadline{break;}
@@ -125,7 +129,7 @@ fn connect_browser(
         Ok::<_,String>((session,jobs))
     };
     if !restored{
-        sleufbase_rust::input::check(cancel)?;
+        check_cancel()?;
         browser.set_visible(true)?;
         let _=status.send("Meld je aan bij KickTheMap. De joblijst opent automatisch.");
     }
@@ -133,12 +137,12 @@ fn connect_browser(
     let deadline=Instant::now()+Duration::from_secs(10*60);
     let mut job_errors=0;
     while Instant::now()<deadline {
-        sleufbase_rust::input::check(cancel)?;
+        check_cancel()?;
         if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
         if let Ok(csrf)=browser.csrf_token(){
             match try_session(&browser,&csrf){
                 Ok((session,jobs))=>{
-                    sleufbase_rust::input::check(cancel)?;
+                    check_cancel()?;
                     browser.set_visible(false)?;
                     let cookies=if remember{browser.session_cookies().ok()}else{None};
                     return Ok(BrowserLogin{browser,session,jobs,remember,cookies});
@@ -154,13 +158,13 @@ fn connect_browser(
         }
         if restored&&Instant::now()>=restore_until{
             browser.reset_signin()?;
-            sleufbase_rust::input::check(cancel)?;
+            check_cancel()?;
             browser.set_visible(true)?;
             let _=status.send("Meld je opnieuw aan bij KickTheMap. De joblijst opent automatisch.");
             restored=false;
         }
         for _ in 0..10{
-            sleufbase_rust::input::check(cancel)?;
+            check_cancel()?;
             std::thread::sleep(Duration::from_millis(150));
         }
     }
