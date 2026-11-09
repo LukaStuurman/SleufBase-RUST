@@ -540,9 +540,10 @@ impl SleufBaseApp {
                             for index in rows {
                                 let obj=&editor.draft.objects[index];
                                 let (c,o)=edit::coordinates(&editor.draft,obj.position);
+                                let description=format!("{:>3}  {} · Ø{} mm · {}× · {:.2} m / {:+.2} m",
+                                    index+1,obj.object_name,if obj.attributes[1].is_empty(){"?"}else{&obj.attributes[1]},object_quantity(obj),c,o);
                                 ui.vertical(|ui|{
-                                    ui.add(egui::Label::new(format!("{:>3}  {} · Ø{} mm · {}× · {:.2} m / {:+.2} m",
-                                        index+1,obj.object_name,if obj.attributes[1].is_empty(){"?"}else{&obj.attributes[1]},object_quantity(obj),c,o)).truncate());
+                                    ui.add(egui::Label::new(description).truncate());
                                     ui.horizontal(|ui|{
                                     if ui.small_button("Bewerk").clicked() {
                                         editor.select_object(index);
@@ -732,6 +733,47 @@ mod usability_tests {
             if label=="Kabel/leiding toevoegen"{assert!(app.virtual_trenches[0].objects.is_empty());assert_eq!(app.trench_editor.as_ref().unwrap().draft.objects.len(),1);}
         }
         assert!(app.trench_editor.is_none());assert_eq!(app.virtual_trenches[0].objects.len(),1);
+    }
+    #[test]
+    fn canvas_place_and_drag_changes_only_the_draft_until_saved(){
+        let ctx=egui::Context::default();
+        theme::install(&ctx);
+        let mut app=fixture();
+        let size=egui::vec2(1200.,760.);
+        let canvas=|out:&egui::FullOutput|{
+            out.shapes.iter().find_map(|shape|match &shape.shape {
+                egui::Shape::Rect(r) if r.fill==Color32::from_rgb(239,230,218)=>Some(r.rect),
+                _=>None,
+            }).unwrap()
+        };
+        let press=|pos,pressed|egui::Event::PointerButton{
+            pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+        };
+        let mut out=frame(&mut app,&ctx,size,vec![]);
+        for _ in 0..4{out=frame(&mut app,&ctx,size,vec![]);}
+        let plot=canvas(&out);
+        let start=plot.left_top()+egui::vec2(plot.width()*0.25,plot.height()*0.25);
+        frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(start),press(start,true)]);
+        frame(&mut app,&ctx,size,vec![press(start,false)]);
+        let editor=app.trench_editor.as_ref().unwrap();
+        assert!(editor.entry_started);
+        assert!((editor.object.chainage-2.5).abs()<1e-5);
+        let end=plot.left_top()+egui::vec2(plot.width()*0.75,plot.height()*0.5);
+        frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(start),press(start,true)]);
+        frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(end)]);
+        frame(&mut app,&ctx,size,vec![press(end,false)]);
+        assert!(app.virtual_trenches[0].objects.is_empty());
+        let editor=app.trench_editor.as_ref().unwrap();
+        assert!((editor.object.chainage-7.5).abs()<1e-5);
+        assert!((editor.object.depth-0.75).abs()<1e-5);
+        let out=frame(&mut app,&ctx,size,vec![]);
+        let save=position(&out,"Opslaan in project");
+        frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(save),press(save,true)]);
+        frame(&mut app,&ctx,size,vec![press(save,false)]);
+        let objects=&app.virtual_trenches[0].objects;
+        assert_eq!(objects.len(),1);
+        assert!((objects[0].position.x-155007.5).abs()<1e-5);
+        assert!((objects[0].position.z.unwrap()-1.25).abs()<1e-5);
     }
     #[test]
     fn save_stays_visible_and_validation_preserves_project_at_multiple_sizes_and_dpi(){
