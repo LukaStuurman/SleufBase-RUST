@@ -165,8 +165,8 @@ pub(super) fn show(
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(108., 54.), egui::Sense::click_and_drag());
             let center = rect.center();
-            if (response.dragged_by(egui::PointerButton::Primary)
-                || response.clicked_by(egui::PointerButton::Primary))
+            if response.dragged_by(egui::PointerButton::Primary)
+                || response.clicked_by(egui::PointerButton::Primary)
             {
                 if let Some(angle) = response
                     .interact_pointer_pos()
