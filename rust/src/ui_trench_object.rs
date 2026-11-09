@@ -29,7 +29,7 @@ pub(super) fn show(
                 .suffix(" m"),
         );
         ui.separator();
-        ui.checkbox(&mut form.use_depth, "Diepte");
+        ui.checkbox(&mut form.use_depth, "Diepte invullen");
         ui.add_enabled(
             form.use_depth,
             egui::DragValue::new(&mut form.depth)

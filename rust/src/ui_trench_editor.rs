@@ -767,6 +767,7 @@ mod usability_tests {
         assert!((editor.object.chainage-7.5).abs()<1e-5);
         assert!((editor.object.depth-0.75).abs()<1e-5);
         let out=frame(&mut app,&ctx,size,vec![]);
+        position(&out,"7,50 m vanaf begin   ·   Diepte 0,75 m");
         let save=position(&out,"Opslaan in project");
         frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(save),press(save,true)]);
         frame(&mut app,&ctx,size,vec![press(save,false)]);
