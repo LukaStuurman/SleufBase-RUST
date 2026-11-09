@@ -17,8 +17,7 @@ pub(super) fn show(
     let form = &mut editor.object;
     let length = (editor.end.x - editor.start.x).hypot(editor.end.y - editor.start.y);
     let mut pick = false;
-    ui.group(|ui| {
-        ui.strong("Positie van de kabel/leiding");
+    ui.collapsing("Exacte positie of kaartpunt", |ui| {
         pick = ui.button("Kies punt op de kaart").clicked();
         ui.horizontal_wrapped(|ui| {
             ui.label("Of afstand vanaf");
@@ -60,7 +59,7 @@ pub(super) fn show(
             ui.label("Diameter");if ui.add(egui::DragValue::new(&mut form.diameter).custom_parser(parse_decimal).range(0.0..=10000.).speed(1.).suffix(" mm")).changed(){form.attributes[1]=if form.diameter>0.{form.diameter.to_string()}else{String::new()};}
             ui.label("Aantal");if ui.add(egui::DragValue::new(&mut form.quantity).custom_parser(|s|s.trim().parse::<u32>().ok().map(f64::from)).range(1..=1000)).changed(){form.update_quantity_attribute();}
         });
-        ui.small("Diameter 0 = nog onbekend. Aantal geeft het aantal kabels/leidingen in de bundel aan.");
+
         ui.horizontal_wrapped(|ui|{
             ui.label("Materiaal");egui::ComboBox::from_id_salt("cable-material").selected_text(if form.attributes[0].is_empty(){"Onbekend"}else{&form.attributes[0]}).show_ui(ui,|ui|{
                 ui.selectable_value(&mut form.attributes[0],String::new(),"Onbekend");
@@ -71,9 +70,30 @@ pub(super) fn show(
         });
         if form.use_depth{ui.small("Diepte onder het beginmaaiveld. Zonder maaiveldhoogte blijft de hoogte voorlopig onbekend.");}
     });
-    ui.collapsing("Schuine kruising (zelden nodig)",|ui|{
-        ui.label("Afwijking van haaks op de sleuf");ui.add(egui::DragValue::new(&mut form.angle).custom_parser(parse_decimal).range(-80.0..=80.).speed(1.).suffix("°"));
-        ui.small("0° = haaks. Positief helt richting het eindpunt. De hoek wordt ook in de kaart en rasterexport getekend.");
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Kruishoek");
+        ui.add(
+            egui::DragValue::new(&mut form.angle)
+                .custom_parser(parse_decimal)
+                .range(-80.0..=80.)
+                .speed(1.)
+                .suffix("°"),
+        )
+        .on_hover_text("0° = haaks. Positief wijst richting het eindpunt.");
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(48., 27.), egui::Sense::hover());
+        let center = rect.center();
+        let painter = ui.painter_at(rect);
+        painter.line_segment(
+            [rect.left_center(), rect.right_center()],
+            Stroke::new(1.0_f32, INK),
+        );
+        let (sin, cos) = form.angle.to_radians().sin_cos();
+        let direction = egui::vec2(sin as f32, -cos as f32) * 12.;
+        painter.line_segment(
+            [center - direction, center + direction],
+            Stroke::new(2.0_f32, ORANGE),
+        );
+        ui.small("Bovenaanzicht");
     });
     ui.collapsing("Extra invoer en brongegevens", |ui| {
         ui.label("Naam");
