@@ -54,7 +54,7 @@ mod native {
                             .with_title("SleufBase — Aanmelden bij KickTheMap")
                             .with_inner_size(winit::dpi::LogicalSize::new(1100., 800.))
                             .with_min_inner_size(winit::dpi::LogicalSize::new(640., 480.))
-                            .with_visible(!self.fixture),
+                            .with_visible(false),
                     )
                     .map_err(|e| e.to_string())?;
                 let builder = WebViewBuilder::new_with_web_context(&mut self.context)
@@ -150,7 +150,7 @@ mod native {
             error: None,
             fixture,
             profile: profile.to_owned(),
-            visible: !fixture,
+            visible: false,
             last_visibility: None,
             deadline: None,
         };

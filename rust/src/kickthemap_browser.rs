@@ -48,6 +48,27 @@ fn parse_cookie(value:&Value)->Option<BrowserCookie>{
     {return None;}
     Some(BrowserCookie{name,value:content,domain,path,secure})
 }
+// Only the cookies the existing in-memory adoption path trusts can be restored.
+fn session_cookie_params(payload:&Value)->Vec<Value>{
+    let Some(items)=payload.as_array().filter(|items|items.len()<=4096) else{return Vec::new()};
+    items.iter().filter_map(|item|{
+        // Partitioned cookies require their original top-level context.
+        if item.get("partitionKey").is_some(){return None;}
+        let cookie=parse_cookie(item)?;
+        let mut params=json!({
+            "name":cookie.name,"value":cookie.value,"domain":cookie.domain,
+            "path":cookie.path,"secure":true,"httpOnly":item["httpOnly"].as_bool().unwrap_or(false),
+        });
+        if let Some(expires)=item["expires"].as_f64().filter(|n|n.is_finite()&&*n>0.){
+            params["expires"]=json!(expires);
+        }
+        if let Some(site)=item["sameSite"].as_str().filter(|value|matches!(*value,"Strict"|"Lax"|"None")){
+            params["sameSite"]=json!(site);
+        }
+        Some(params)
+    }).collect()
+}
+
 pub fn parse_browser_cookies(payload:&Value)->Result<Vec<BrowserCookie>,String>{
     let items=payload.get("cookies").and_then(Value::as_array)
         .ok_or("Ingebouwde browser stuurde geen CDP-cookielijst terug")?;
@@ -127,6 +148,31 @@ impl Browser {
     }
     fn cdp(&self,method:&str,params:Value)->Result<Value,String>{
         self.command(method,params,None)
+    }
+    pub fn is_closed(&mut self)->bool {
+        !matches!(self.process.try_wait(),Ok(None))
+    }
+    pub fn session_cookies(&self)->Result<Value,String>{
+        let data=self.cdp("Storage.getCookies",json!({}))?;
+        let cookies=session_cookie_params(&data["cookies"]);
+        if cookies.is_empty(){return Err("Geen sessiecookies gevonden".into());}
+        Ok(Value::Array(cookies))
+    }
+    pub fn restore_session(&self,cookies:&Value)->Result<(),String>{
+        let cookies=session_cookie_params(cookies);
+        if cookies.is_empty(){return Err("Geen geldige sessiecookies gevonden".into());}
+        self.cdp("Storage.setCookies",json!({"cookies":cookies}))?;
+        self.navigate_account("/")
+    }
+    pub fn reset_signin(&self)->Result<(),String>{
+        self.cdp("Storage.clearCookies",json!({}))?;
+        self.navigate_account("/signin")
+    }
+    fn navigate_account(&self,path:&str)->Result<(),String>{
+        let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
+        let result=self.command("Page.navigate",json!({"url":format!("{ORIGIN}{path}")}),Some(&ws))?;
+        if result.get("errorText").is_some(){return Err("KickTheMap-pagina kon niet worden geopend".into());}
+        Ok(())
     }
     pub fn cookies(&self)->Result<Vec<BrowserCookie>,String>{
         parse_browser_cookies(&self.cdp("Storage.getCookies",json!({}))?)
@@ -299,6 +345,21 @@ mod tests {
             .unwrap().path().contains("12345_2026-10-26"));
         assert!(job_view_url(r#"{"data":[{"Id":42,"project_date":"now"}]}"#,42).is_err());
         assert!(job_view_url(r#"{"data":[{"Id":42,"user_id":"bob","project_date":"\\n"}]}"#,42).is_ok());
+    }
+    #[test]
+    fn restored_cookies_keep_security_and_expiry_and_exclude_unrelated_domains(){
+        let fixture=json!([
+            {"name":"session","value":"fixture","domain":".my.kickthemap.com","path":"/","secure":true,
+             "expires":2_000_000_000,"httpOnly":true,"sameSite":"Lax","session":false},
+            {"name":"other","value":"fixture","domain":"other.kickthemap.com","path":"/","secure":true},
+            {"name":"insecure","value":"fixture","domain":"my.kickthemap.com","path":"/","secure":false}
+        ]);
+        let cookies=session_cookie_params(&fixture);
+        assert_eq!(cookies.len(),1);
+        assert_eq!(cookies[0]["httpOnly"],true);
+        assert_eq!(cookies[0]["sameSite"],"Lax");
+        assert_eq!(cookies[0]["expires"].as_f64(),Some(2_000_000_000.));
+        assert_eq!(session_cookie_params(&Value::Array(cookies.clone())),cookies);
     }
     #[test]
     fn only_private_origin_cookies_are_adopted() {

@@ -231,16 +231,15 @@ impl SleufBaseApp {
                     ui.separator();
                 }
                 ui.heading("KickTheMap online");
-                if ui.button("Open KickTheMap browser & jobbeheer").clicked() {
+                if ui.button("Open KickTheMap-jobs").clicked() {
                     self.open_kickthemap_workspace();
                 }
-                ui.label("Meld je aan in het ingebouwde KickTheMap-venster; daar kun je reCAPTCHA afronden.");
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!self.live_operation_busy(), egui::Button::new("Inloggen"))
                         .clicked()
                     {
-                        self.login_kickthemap();
+                        self.open_kickthemap_login();
                     }
                     if ui
                         .add_enabled(
