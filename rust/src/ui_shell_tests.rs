@@ -660,7 +660,7 @@ fn login_menu_starts_embedded_browser_without_password_or_direct_http(){
 
     let out=click(&mut app,&ctx,label_position(&out,"Inloggen..."));
     assert!(app.shell.login_open);
-    label_position(&out,"Sessie overnemen");
+    label_position(&out,"Aangemeld blijven op dit apparaat");
     assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Wachtwoord")));
     let out=click(&mut app,&ctx,label_position(&out,"Inloggen"));
     assert_eq!(app.browser_ui.launch_requests,1);assert!(app.live_rx.is_none());
@@ -672,7 +672,7 @@ fn login_menu_starts_embedded_browser_without_password_or_direct_http(){
 fn login_form_renders_at_minimum_size_without_contacting_accounts(){
     let mut app=SleufBaseApp::default();app.open_kickthemap_login();
     let(labels,image)=capture(&mut app,[1200,760]);
-    for text in ["KickTheMap inloggen","Inloggen","Sessie overnemen","Sluiten"]{
+    for text in ["KickTheMap inloggen","Inloggen","Aangemeld blijven op dit apparaat","Sluiten"]{
         let(_,rect)=labels.iter().find(|(s,_)|s==text).unwrap();
         assert!(rect.min.x>=0.&&rect.max.x<=1200.&&rect.min.y>=0.&&rect.max.y<=760.);
     }
@@ -708,7 +708,7 @@ fn interactive_login_error_reaches_the_browser_controls_without_starting_a_brows
     let ctx=egui::Context::default();frame(&mut app,&ctx,vec![]);
     let out=frame(&mut app,&ctx,vec![]);
     label_position(&out,"Inloggen");
-    label_position(&out,"Sessie overnemen");
+    label_position(&out,"Aangemeld blijven op dit apparaat");
     assert!(app.browser_ui.browser.is_none());assert!(!app.live_operation_busy());
     assert!(!app.message.contains("nog in Rust"));
 }

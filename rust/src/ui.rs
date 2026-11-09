@@ -772,8 +772,7 @@ impl SleufBaseApp {
     fn login_kickthemap(&mut self) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
 
-        self.open_kickthemap_login();
-        self.launch_kickthemap_browser();
+        self.start_kickthemap_login(self.shell.login_remember);
     }
 
     fn refresh_live_jobs(&mut self) {
@@ -904,9 +903,8 @@ impl SleufBaseApp {
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
-                if err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED {
+                if err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED||err.contains("sessie verlopen") {
                     self.open_kickthemap_login();
-                    self.shell.login_submitted=true;
                     self.browser_ui.status=err.clone();
                 }
                 self.message=format!("KickTheMap live: {err}");
@@ -934,7 +932,14 @@ impl SleufBaseApp {
         self.browser_ui.selected.clear();
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
-        self.message="KickTheMap-sessie uit het geheugen verwijderd".into();
+        #[cfg(not(test))]
+        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok();
+        #[cfg(test)]
+        let forgotten=true;
+        self.shell.login_remember=false;
+        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale sessie is verwijderd."}
+            else{"Uitgelogd. De bewaarde sessie kon niet worden verwijderd."}.into();
+        self.message=self.browser_ui.status.clone();
     }
 
     fn open_cached_jobs(&mut self) {

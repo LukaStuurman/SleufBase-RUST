@@ -39,9 +39,10 @@ enum RepairSource{File(PathBuf),Browser(sleufbase_rust::kickthemap_browser::Brow
 pub(super) struct BrowserUi {
     pub(super) open:bool,
     pub(super) browser:Option<Browser>,
-    launching:Option<Receiver<Result<Browser,String>>>,
     #[cfg(test)] pub(super) launch_requests:usize,
-    pub(super) capturing:Option<Receiver<(Browser,Result<(KickTheMapLiveClient,Vec<Job>),String>)>>,
+    pub(super) capturing:Option<Receiver<Result<BrowserLogin,String>>>,
+    login_status:Option<Receiver<&'static str>>,
+    login_cancel:Arc<AtomicBool>,
     pub(super) selected:BTreeSet<u64>,
     filters:[String;7],
     only_downloadable:bool,
@@ -70,7 +71,7 @@ pub(super) struct BrowserUi {
 }
 impl Default for BrowserUi {
     fn default()->Self {
-        Self {open:false,browser:None,launching:None,capturing:None,
+        Self {open:false,browser:None,capturing:None,login_status:None,login_cancel:Arc::default(),
             #[cfg(test)] launch_requests:0,
             selected:BTreeSet::new(),filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
@@ -84,7 +85,116 @@ impl Default for BrowserUi {
             download_notice:None,capture_status:None,status:String::new()}
     }
 }
+pub(super) struct BrowserLogin {
+    browser:Browser,
+    session:KickTheMapLiveClient,
+    jobs:Vec<Job>,
+    remember:bool,
+    cookies:Option<serde_json::Value>,
+}
+
+#[cfg(not(test))]
+fn connect_browser(
+    remember:bool,
+    known_nonempty:bool,
+    cancel:&AtomicBool,
+    status:&mpsc::Sender<&'static str>,
+)->Result<BrowserLogin,String>{
+    use sleufbase_rust::kickthemap_session as stored;
+    let check_cancel=||{
+        if cancel.load(Ordering::Relaxed){Err("Aanmelden geannuleerd.".to_owned())}else{Ok(())}
+    };
+    check_cancel()?;
+    let mut browser=Browser::launch()?;
+    let saved=remember.then(stored::load).and_then(Result::ok).flatten();
+    let mut restored=false;
+    if let Some(cookies)=saved {
+        // WebView2 can report a page target before its first URL is committed.
+        let deadline=Instant::now()+Duration::from_secs(4);
+        loop{
+            check_cancel()?;
+            if browser.restore_session(&cookies).is_ok(){restored=true;break;}
+            if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
+            if Instant::now()>=deadline{break;}
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if !restored{browser.reset_signin()?;}
+    }
+    let try_session=|browser:&Browser,csrf:&str| {
+
+        let cookies=browser.cookies()?;
+        let mut session=KickTheMapLiveClient::from_authenticated_browser(&cookies,csrf)?;
+        if known_nonempty{session.require_empty_confirmation();}
+        let jobs=session.fetch_jobs_from_browser(||browser.browser_job_payload())?;
+        Ok::<_,String>((session,jobs))
+    };
+    if !restored{
+        check_cancel()?;
+        browser.set_visible(true)?;
+        let _=status.send("Meld je aan bij KickTheMap. De joblijst opent automatisch.");
+    }
+    let restore_until=Instant::now()+Duration::from_secs(10);
+    let deadline=Instant::now()+Duration::from_secs(10*60);
+    let mut job_errors=0;
+    while Instant::now()<deadline {
+        check_cancel()?;
+        if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
+        if let Ok(csrf)=browser.csrf_token(){
+            match try_session(&browser,&csrf){
+                Ok((session,jobs))=>{
+                    check_cancel()?;
+                    browser.set_visible(false)?;
+                    let cookies=if remember{browser.session_cookies().ok()}else{None};
+                    return Ok(BrowserLogin{browser,session,jobs,remember,cookies});
+                }
+                Err(error) if !restored=>{
+                    job_errors+=1;
+                    if job_errors>=3{return Err(format!("Jobs ophalen mislukt: {error}"));}
+                }
+                Err(_)=>{}
+            }
+        }else{
+            job_errors=0;
+        }
+        if restored&&Instant::now()>=restore_until{
+            browser.reset_signin()?;
+            check_cancel()?;
+            browser.set_visible(true)?;
+            let _=status.send("Meld je opnieuw aan bij KickTheMap. De joblijst opent automatisch.");
+            restored=false;
+        }
+        for _ in 0..10{
+            check_cancel()?;
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+    Err("Aanmelden heeft te lang geduurd. Probeer opnieuw.".into())
+}
+
 impl SleufBaseApp {
+    fn finish_kickthemap_login(&mut self,login:BrowserLogin){
+        use sleufbase_rust::kickthemap_session as stored;
+        let storage=if login.remember{
+            login.cookies.ok_or_else(||std::io::Error::other("Geen geldige sessiecookies"))
+                .and_then(stored::save)
+        }else{stored::forget()};
+        if self.live_jobs_owner.as_ref()!=Some(login.session.snapshot_owner()){
+            self.browser_ui.selected.clear();
+        }
+        self.live_jobs_owner=Some(login.session.snapshot_owner().clone());
+        self.live_session=Some(login.session);
+        self.live_jobs=login.jobs;
+        self.browser_ui.browser=Some(login.browser);
+        self.browser_ui.open=true;
+        self.shell.login_open=false;
+        self.save_live_cache();
+        self.browser_ui.status=format!("KickTheMap verbonden: {} live jobs.",self.live_jobs.len());
+        if storage.is_err(){
+            self.browser_ui.status.push_str(if login.remember{
+                " Sessie kon niet lokaal worden onthouden."
+            }else{" De eerdere bewaarde sessie kon niet worden verwijderd."});
+        }
+    }
     fn repair_kickthemap_download(&mut self,id:u64,path:PathBuf) {
         self.start_kickthemap_repair(id,RepairSource::File(path));
     }
@@ -131,11 +241,16 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.launching.is_some()||self.browser_ui.opening_job.is_some()
+        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.opening_job.is_some()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
-        if self.jobs_cache.is_some() {return;}
+        if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
+        if self.live_session.is_none()&&!self.live_operation_busy()&&sleufbase_rust::kickthemap_session::exists(){
+            self.start_kickthemap_login(true);
+        }
+    }
+    fn open_newest_jobs_cache(&mut self){
         let dir=kickthemap_cache_dir().join("jobs_cache");
         let mut newest=None::<(f64,JobsCache)>;
         if let Ok(entries)=std::fs::read_dir(dir) {
@@ -149,47 +264,39 @@ impl SleufBaseApp {
             }
         }
         if let Some((_,cache))=newest {
-            self.browser_ui.status=format!(
-                "Offline cache geopend: {} jobs. Log via het ingebouwde venster in voor de huidige gegevens.",
-                cache.jobs.len()
-            );
+            if !self.live_operation_busy(){
+                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
+            }
             self.jobs_cache=Some(cache);
         }
     }
-    pub(super) fn launch_kickthemap_browser(&mut self) {
-        if self.browser_ui.launching.is_some() || self.browser_ui.capturing.is_some() ||
-            self.browser_ui.browser.is_some() {return;}
-        let (tx,rx)=mpsc::channel();
-        self.browser_ui.launching=Some(rx);
-        self.browser_ui.status="Ingebouwd KickTheMap-inlogvenster openen…".into();
-        self.message=self.browser_ui.status.clone();
-        #[cfg(not(test))]
-        std::thread::spawn(move||{let _=tx.send(Browser::launch());});
-        #[cfg(test)] {self.browser_ui.launch_requests+=1;let _=tx.send(Err("Test: ingebouwd inlogvenster niet gestart".into()));}
-    }
-    pub(super) fn capture_kickthemap_browser(&mut self) {
+    pub(super) fn start_kickthemap_login(&mut self,remember:bool) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
-        let Some(browser)=self.browser_ui.browser.take() else {return};
-        // The browser's account is not yet known. This flag only requests a
-        // second empty response; no cached account/job data enters its session.
         let known_nonempty=!self.live_jobs.is_empty()||self.jobs_cache.as_ref().is_some_and(|c|!c.jobs.is_empty());
         let (tx,rx)=mpsc::channel();
+        let (status_tx,status_rx)=mpsc::channel();
         self.browser_ui.capturing=Some(rx);
-        self.browser_ui.status="Sessie van het ingebouwde inlogvenster controleren…".into();
+        self.browser_ui.login_status=Some(status_rx);
+        self.browser_ui.login_cancel=Arc::default();
+        self.browser_ui.status="Verbinding maken met KickTheMap…".into();
         self.message=self.browser_ui.status.clone();
-        std::thread::spawn(move|| {
-            // Validate through the authenticated tab first. An independent
-            // HTTP bootstrap may be rejected even when the embedded browser is signed in.
-            let result=browser.csrf_token().and_then(|csrf|browser.cookies()
-                .and_then(|cookies|KickTheMapLiveClient::from_authenticated_browser(&cookies,&csrf)))
-                .and_then(|mut session|{
-                    if known_nonempty{session.require_empty_confirmation();}
-                    session.fetch_jobs_from_browser(||browser.browser_job_payload())
-                        .map(|jobs|(session,jobs))
-                });
-            if result.is_ok(){let _=browser.set_visible(false);}
-            let _=tx.send((browser,result));
-        });
+        #[cfg(not(test))]
+        {
+            let cancel=Arc::clone(&self.browser_ui.login_cancel);
+            std::thread::spawn(move|| {
+                let _=tx.send(connect_browser(remember,known_nonempty,&cancel,&status_tx));
+            });
+        }
+        #[cfg(test)]
+        {
+            let _=(remember,known_nonempty,status_tx);
+            self.browser_ui.launch_requests+=1;
+            let _=tx.send(Err("Test: inlogvenster niet gestart".into()));
+        }
+    }
+    pub(super) fn cancel_kickthemap_login(&mut self) {
+        self.browser_ui.login_cancel.store(true,Ordering::Relaxed);
+        self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
         let opening=self.browser_ui.opening_job.as_ref().map(|rx|rx.try_recv());
@@ -250,53 +357,28 @@ impl SleufBaseApp {
             self.browser_ui.batch_mode=false;
             self.browser_ui.status="Project gewijzigd tijdens downloads; bestanden blijven op schijf, maar zijn niet in het nieuwe project ingeladen".into();
         }
-        let event=self.browser_ui.launching.as_ref().map(|rx|rx.try_recv());
-        let received=event.as_ref().is_some_and(|r|!matches!(r,Err(TryRecvError::Empty)));
-        match event {
-            Some(Ok(Ok(browser)))=>{
-                self.browser_ui.browser=Some(browser);
-                self.browser_ui.launching=None;
-                self.browser_ui.status="Het ingebouwde venster staat open. Meld je aan en klik daarna op Sessie overnemen.".into();
+        if let Some(status)=self.browser_ui.login_status.as_ref().and_then(|rx|rx.try_iter().last()){
+            if !self.browser_ui.login_cancel.load(Ordering::Relaxed){
+                self.browser_ui.status=status.into();
             }
-            Some(Ok(Err(err)))=>{
-                self.browser_ui.launching=None;
-                self.browser_ui.status=format!("Ingebouwd inlogvenster starten mislukt: {err}");
-            }
-            Some(Err(TryRecvError::Disconnected))=>{
-                self.browser_ui.launching=None;
-                self.browser_ui.status="Het ingebouwde inlogvenster is onverwacht gesloten".into();
-            }
-            _=>{}
         }
-        if received{self.message=self.browser_ui.status.clone();}
-        let event=self.browser_ui.capturing.as_ref().map(|rx|rx.try_recv());
-        match event {
-            Some(Ok((browser,result)))=>{
-                self.browser_ui.browser=Some(browser);
+        if let Some(event)=self.browser_ui.capturing.as_ref().map(Receiver::try_recv){
+            let result=match event {
+                Ok(result)=>Some(result),
+                Err(TryRecvError::Disconnected)=>Some(Err("Aanmelden onderbroken. Probeer opnieuw.".into())),
+                Err(TryRecvError::Empty)=>{ctx.request_repaint_after(Duration::from_millis(150));None}
+            };
+            if let Some(result)=result{
                 self.browser_ui.capturing=None;
-                match result {
-                    Ok((session,jobs))=>{
-                        self.live_jobs_owner=Some(session.snapshot_owner().clone());
-                        self.live_session=Some(session);
-                        self.live_jobs=jobs;
-                        self.browser_ui.open=true;self.shell.login_open=false;
-                        self.save_live_cache();
-                        self.browser_ui.status=format!(
-                            "KickTheMap verbonden: {} live jobs. Selecteer jobs voor downloads.",
-                            self.live_jobs.len()
-                        );
+                self.browser_ui.login_status=None;
+                if !self.browser_ui.login_cancel.load(Ordering::Relaxed){
+                    match result{
+                        Ok(login)=>self.finish_kickthemap_login(login),
+                        Err(error)=>self.browser_ui.status=error,
                     }
-                    Err(err)=>self.browser_ui.status=format!(
-                        "Browseraanmelding nog niet bruikbaar: {err}. Je kunt opnieuw proberen."
-                    ),
                 }
                 self.message=self.browser_ui.status.clone();
             }
-            Some(Err(TryRecvError::Disconnected))=>{
-                self.browser_ui.capturing=None;
-                self.browser_ui.status="Browserovername afgebroken; start desgewenst een nieuw venster".into();
-            }
-            _=>{}
         }
         // Prepare one kind at a time for FileLoader; otherwise starting TIFF
         // import would cancel an unfinished jobFeatures import.
@@ -459,7 +541,8 @@ impl SleufBaseApp {
                     let compact=ctx.screen_rect().height()<550.;
                     ui.horizontal_wrapped(|ui|{
                         ui.strong(format!("Jobs: {} / {} {}",indices.len(),source.len(),if live{"live"}else{"offline"}));
-                        if ui.add_enabled(!busy,egui::Button::new(if live{"Account / aanmelding"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
+                        if ui.add_enabled(!busy,egui::Button::new(if live{"Account"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
+                        if browser.capturing.is_some()&&ui.small_button("Aanmelden annuleren").clicked(){action=Some("cancel-login");}
                         if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
                         ui.menu_button("Filter / selectie",|ui|{
                             ui.set_max_width((ctx.screen_rect().width()-50.).min(320.));
@@ -533,17 +616,12 @@ impl SleufBaseApp {
         self.browser_ui.open=open;
         match action {
             Some("login-dialog")=>self.open_kickthemap_login(),
-            Some("launch")=>self.launch_kickthemap_browser(),
+            Some("cancel-login")=>self.cancel_kickthemap_login(),
             Some("open-job")=>{
                 if let Some(id)=self.browser_ui.open_target.take().or(selected_single){
                     self.open_selected_kickthemap_job(id);
                 }
             },
-            Some("capture")=>self.capture_kickthemap_browser(),
-            Some("close")=>{
-                self.browser_ui.browser=None;
-                self.browser_ui.status="Ingebouwd inlogvenster gesloten".into();
-            }
             Some("refresh")=>self.refresh_live_jobs(),
             Some("repair")=>{
                 if let Some(id)=self.browser_ui.selected.first().copied(){
