@@ -1,9 +1,9 @@
 [package]
 name = "sleufbase-rust"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
-description = "Native Rust migration of SleufBase (early preview)"
+description = "SleufBase for Windows"
 
 [dependencies]
 eframe = "0.31"

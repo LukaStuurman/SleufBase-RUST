@@ -244,10 +244,13 @@ impl Browser {
 }
 impl BrowserChannel {
     pub fn browser_job_payload(&self)->Result<String,String>{
-        let ws=self.job_tab(&crate::input::NEVER_CANCEL)?;
+        self.browser_job_payload_with_cancel(&crate::input::NEVER_CANCEL)
+    }
+    pub(crate) fn browser_job_payload_with_cancel(&self,cancel:&std::sync::atomic::AtomicBool)->Result<String,String>{
+        let ws=self.job_tab(cancel)?;
         let script=r#"(async()=>{if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw new Error('Ongeldige website');let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
         let result=cdp::command(self.port,&ws,"Runtime.evaluate",
-            json!({"expression":script,"awaitPromise":true,"returnByValue":true}),&crate::input::NEVER_CANCEL,
+            json!({"expression":script,"awaitPromise":true,"returnByValue":true}),cancel,
             cdp::Limits{duration:Duration::from_secs(25),response_bytes:MAX_CDP_RESPONSE})?;
         if result.get("exceptionDetails").is_some() {return Err("KickTheMap job-API kon niet in het browservenster worden opgevraagd".into());}
         let content=result["result"]["value"].as_str()

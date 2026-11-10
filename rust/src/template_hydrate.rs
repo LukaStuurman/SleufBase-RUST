@@ -88,7 +88,7 @@ pub fn hydrate_missing(
         .iter()
         .filter(|c| c.include && !matches!(c.source, Source::Empty(_) | Source::Virtual(_)))
     {
-        if !choice.profile && !force_refresh {
+        if !choice.profile {
             continue;
         }
         let Some(index) = choice.raster else {
@@ -153,6 +153,44 @@ pub fn hydrate_missing(
     }
     Ok(wanted.len())
 }
+/// Whether all selected KickTheMap profiles already have a local source.
+pub fn profiles_available(
+    opts:&Options,rasters:&[GeoTiffInfo],datasets:&[Dataset],cancel:&AtomicBool,
+)->Result<bool,String>{
+    for choice in opts.choices.iter().filter(|choice|choice.include&&choice.profile){
+        crate::input::check(cancel)?;
+        let Some(raster)=choice.raster.and_then(|i|rasters.get(i)) else{continue;};
+        let Some(id)=raster.kickthemap_job_id.filter(|id|*id>0) else{continue;};
+        let available=match choice.source{
+            Source::Job(i) if datasets.get(i).is_some_and(|dataset|dataset.job_id==id)
+                &&local_path(raster).is_some()=>resolve_raster(raster,datasets,cancel)?.is_some_and(|dataset|!dataset.features.is_empty()),
+            Source::Job(i)=>datasets.get(i).is_some_and(|dataset|!dataset.features.is_empty()),
+            Source::Raster(_)=>resolve_raster(raster,datasets,cancel)?.is_some_and(|dataset|!dataset.features.is_empty()),
+            _=>true,
+        };
+        if !available{return Ok(false);}
+    }
+    Ok(true)
+}
+
+/// A failed refresh may use complete local sources. Cancellation and missing
+/// profiles remain errors, so the requested drawing is never silently degraded.
+pub fn refresh_or_local(
+    opts:&Options,inputs:&mut Inputs,provider:&mut impl ProfileProvider,control:&Control,
+)->Result<bool,String>{
+    match hydrate_missing(opts,inputs,provider,true,control){
+        Ok(_)=>Ok(true),
+        Err(error)=>{
+            control.check()?;
+            if profiles_available(opts,&inputs.rasters,&inputs.datasets,control.flag())?{
+                Ok(false)
+            }else{
+                Err(format!("KickTheMap-profielbronnen niet beschikbaar: {error}. Laad de ontbrekende objectpunten of zet Profiel tekenen uit voor die vakken."))
+            }
+        }
+    }
+}
+
 /// Caller transfers the exact owner-verified live session into its worker.
 /// Each request gets a fresh output directory so existing valid files are never
 /// mistaken for the original force_refresh=True template snapshot.
@@ -160,23 +198,33 @@ pub struct Live<'a> {
     pub client: &'a mut crate::kickthemap_live::KickTheMapLiveClient,
     pub root: PathBuf,
     jobs: Option<HashMap<u64, crate::jobs_cache::Job>>,
+    browser:Option<crate::kickthemap_browser::BrowserChannel>,
 }
 impl<'a> Live<'a> {
     pub fn new(
         client: &'a mut crate::kickthemap_live::KickTheMapLiveClient,
         root: PathBuf,
+        browser:Option<crate::kickthemap_browser::BrowserChannel>,
     ) -> Self {
         Self {
             client,
             root,
             jobs: None,
+            browser,
         }
     }
 }
 impl ProfileProvider for Live<'_> {
     fn download(&mut self, job_id: u64, control: &Control) -> Result<HydratedFile, String> {
         if self.jobs.is_none() {
-            let jobs = self.client.fetch_jobs_with_cancel(control.flag())?;
+            let jobs = if let Some(browser)=&self.browser{
+                self.client.fetch_jobs_from_browser(||browser.browser_job_payload_with_cancel(control.flag()))
+                    .or_else(|browser_error|{
+                        control.check()?;
+                        self.client.fetch_jobs_with_cancel(control.flag())
+                            .map_err(|http_error|format!("KickTheMap-jobs ophalen: {browser_error}; {http_error}"))
+                    })?
+            }else{self.client.fetch_jobs_with_cancel(control.flag())?};
             self.jobs = Some(jobs.into_iter().map(|job| (job.job_id, job)).collect());
         }
         let job = self
@@ -190,11 +238,12 @@ impl ProfileProvider for Live<'_> {
             .prefix("template_profile_snapshot_")
             .tempdir_in(&self.root)
             .map_err(|e| e.to_string())?;
-        let path = self.client.download_job_with_cancel(
+        let path = self.client.download_job_with_browser(
             job,
             crate::kickthemap_live::RemoteFileKind::JobFeatures,
             directory.path(),
             control.flag(),
+            self.browser.as_ref(),
         )?;
         let _ = directory.keep();
         Ok(HydratedFile {
@@ -317,6 +366,26 @@ mod hydration_tests {
             .title,
             "Fresh title"
         );
+    }
+    #[test]
+    fn refresh_failure_reuses_complete_local_profiles_and_refuses_missing_ones(){
+        let dir=tempfile::tempdir().unwrap();
+        let mut inputs=Inputs{
+            rasters:vec![raster(dir.path(),Some(42))],
+            datasets:vec![crate::parse::parse_job_features(RAW,42,"Lokaal").unwrap()],
+            ..Default::default()
+        };
+        let mut opts=Options{choices:crate::template_project::suggest_rasters(&inputs.rasters,&[]),..Default::default()};
+        let mut provider=Provider{file:dir.path().join("unused"),calls:0,fail:true};
+        let control=Control::default();
+        assert!(!refresh_or_local(&opts,&mut inputs,&mut provider,&control).unwrap());
+        assert_eq!(provider.calls,1);
+        assert_eq!(resolve_raster(&inputs.rasters[0],&inputs.datasets,control.flag()).unwrap().unwrap().title,"Lokaal");
+        inputs.datasets.clear();
+        assert!(refresh_or_local(&opts,&mut inputs,&mut provider,&control).unwrap_err().contains("objectpunten"));
+        opts.choices[0].profile=false;
+        assert!(refresh_or_local(&opts,&mut inputs,&mut provider,&control).unwrap());
+        assert_eq!(provider.calls,2);
     }
     #[test]
     fn image_only_and_unpaired_job_choices_do_not_trigger_spurious_requests() {

@@ -14,7 +14,7 @@ pub(super) struct TemplateDialog {
 fn requires_live_snapshot(options:&sleufbase_rust::template_project::Options,rasters:&[GeoTiffInfo])->bool{
     use sleufbase_rust::{template_project::Source,template_server::Mode};
     options.server_mode==Mode::Fresh&&options.choices.iter().any(|choice|
-        choice.include&&matches!(choice.source,Source::Job(_)|Source::Raster(_))
+        choice.include&&choice.profile&&matches!(choice.source,Source::Job(_)|Source::Raster(_))
         &&choice.raster.and_then(|i|rasters.get(i)).is_some_and(|r|r.kickthemap_job_id.is_some_and(|id|id>0)))
 }
 
@@ -127,18 +127,28 @@ impl SleufBaseApp {
             return;
         }
         let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
+        use sleufbase_rust::template_project::hydrate;
         let needs_snapshot=requires_live_snapshot(&options,&self.geotiffs);
-        if needs_snapshot&&!self.live_session.as_ref().is_some_and(|session|
-            self.live_jobs_owner.as_ref()==Some(session.snapshot_owner())){
-            self.message="Log eerst in bij KickTheMap om de nieuwste profielbronnen op te halen, of kies expliciet offline export.".into();return;
+        let verified_session=self.live_session.as_ref().is_some_and(|session|
+            self.live_jobs_owner.as_ref()==Some(session.snapshot_owner()));
+        if needs_snapshot&&!verified_session{
+            match hydrate::profiles_available(&options,&self.geotiffs,&self.datasets,&std::sync::atomic::AtomicBool::new(false)){
+                Ok(true)=>{},
+                Ok(false)=>{
+                    self.message="Er ontbreken lokale objectpunten voor een profiel. Log in bij KickTheMap, laad de objectpunten of zet Profiel tekenen uit voor dat vak.".into();
+                    return;
+                }
+                Err(error)=>{self.message=format!("Lokale profielbron: {error}");return;}
+            }
         }
+        let browser=self.browser_ui.browser.as_ref().map(|browser|browser.channel());
         let saved=sleufbase_rust::template_prefs::TemplatePreferences::capture(
             &options,&self.datasets,&self.geotiffs,&self.virtual_trenches
         );
         // Move the large datasets instead of deep-cloning every feature and
         // geometry. They are returned by the worker on both success and error.
         let inputs = self.take_export_inputs();
-        let session=if needs_snapshot{
+        let session=if needs_snapshot&&verified_session{
             self.live_session.take()
         }else{None};
         let uses_session=session.is_some();
@@ -156,22 +166,24 @@ impl SleufBaseApp {
                 let (mut inputs,mut session) = worker_owned.lock().expect("project export ownership lock")
                     .take().expect("project inputs already owned by another worker");
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut notice=needs_snapshot.then_some("Lokale profielbronnen gebruikt.".to_owned());
                     if let Some(client)=session.as_mut(){
                         let _=tx.send(Event::Progress("Verse profielbronnen voor het sjabloon ophalen…".into()));
-                        let mut provider=sleufbase_rust::template_project::hydrate::Live::new(
-                            client,kickthemap_cache_dir().join("Rust"));
-                        sleufbase_rust::template_project::hydrate::hydrate_missing(
-                            &options,&mut inputs,&mut provider,true,&task_control)?;
+                        let mut provider=hydrate::Live::new(client,kickthemap_cache_dir().join("Rust"),browser);
+                        notice=(!hydrate::refresh_or_local(&options,&mut inputs,&mut provider,&task_control)?)
+                            .then_some("KickTheMap kon niet vernieuwen. Lokale profielbronnen gebruikt.".into());
                     }
                     let mut request = sleufbase_rust::template_project::build_from_inputs(
                         &options, &inputs, &rules, &task_control,
                     )?;
                     request.settings.discipline_excel=discipline_excel;
                     request.settings.protected_sources.extend(inputs.protected_paths.iter().cloned());
-                    template_export::export_with_progress(
+                    let mut exported=template_export::export_with_progress(
                         &task_output, &request, &task_control,
                         |message| { let _ = tx.send(Event::Progress(message.to_owned())); }
-                    )
+                    )?;
+                    exported.warnings.extend(notice);
+                    Ok(exported)
                 })).unwrap_or_else(|_|Err(
                     "Project-sjabloonexport is onverwacht gestopt; projectgegevens worden hersteld".into()
                 ));
@@ -350,14 +362,15 @@ mod tests {
         raster.kickthemap_job_id=Some(73);
         let mut app=SleufBaseApp{geotiffs:vec![raster],..Default::default()};
         let mut options=Options{template:root.join("../assets/cadastral_template.dxf"),choices:template_project::suggest_rasters(&app.geotiffs,&[]),..Default::default()};
-        options.choices[0].profile=false;assert!(requires_live_snapshot(&options,&app.geotiffs));
+        options.choices[0].profile=false;assert!(!requires_live_snapshot(&options,&app.geotiffs));
+        options.choices[0].profile=true;assert!(requires_live_snapshot(&options,&app.geotiffs));
         options.choices[0].include=false;assert!(!requires_live_snapshot(&options,&app.geotiffs));
         options.choices[0].include=true;options.choices[0].source=Source::Virtual(0);assert!(!requires_live_snapshot(&options,&app.geotiffs));
         options.choices[0].source=Source::Raster(0);options.server_mode=Mode::Offline;assert!(!requires_live_snapshot(&options,&app.geotiffs));
         options.server_mode=Mode::Fresh;let allocation=app.geotiffs.as_ptr();
         let dir=tempfile::tempdir().unwrap();app.start_project_template_export(options,dir.path().join("fresh.dxf"));
         assert!(app.template_job.is_none());assert_eq!(app.geotiffs.as_ptr(),allocation);assert_eq!(app.geotiffs.len(),1);
-        assert!(app.message.contains("Log eerst in"));assert!(!app.live_busy);
+        assert!(app.message.contains("ontbreken lokale objectpunten"));assert!(!app.live_busy);
     }
 
     #[test]

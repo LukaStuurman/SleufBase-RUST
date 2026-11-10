@@ -37,32 +37,24 @@ impl Editor {
                         variant: String::new(),
                     };
                 }
-                let label = c.label.as_deref().and_then(split_label);
+                if let Some(label)=c.label.as_deref().and_then(template_order::typed_label){
+                    let parsed=split_label(&label);
+                    c.label=Some(label);
+                    return parsed.unwrap_or_else(||Label{number:String::new(),variant:String::new()});
+                }
                 let metadata = match c.source {
                     Source::Virtual(n) => trenches.get(n).map(|t| &t.metadata),
                     _ => c.raster.and_then(|n| rasters.get(n)).map(|r| &r.metadata),
                 };
                 let path = std::path::Path::new(&c.title);
-                let number = label
-                    .as_ref()
-                    .map(|l| l.number.clone())
-                    .or_else(|| {
-                        metadata
-                            .and_then(|m| m.get("template_export_ps_number"))
-                            .and_then(|v| crate::python_values::string(Some(v)).ok())
-                            .and_then(|s| template_order::number(&s))
-                    })
+                let number = metadata
+                    .and_then(|m| m.get("template_export_ps_number"))
+                    .and_then(|v| crate::python_values::string(Some(v)).ok())
+                    .and_then(|s| template_order::number(&s))
                     .unwrap_or_else(|| template_order::default_number(path, i + 1));
-                let variant = label
-                    .map(|l| l.variant)
-                    .or_else(|| {
-                        metadata
-                            .and_then(|m| {
-                                m.get("template_export_variant_code")
-                                    .or_else(|| m.get("template_export_variant"))
-                            })
-                            .map(template_order::variant)
-                    })
+                let variant = metadata
+                    .and_then(|m| m.get("template_export_variant_code").or_else(||m.get("template_export_variant")))
+                    .map(template_order::variant)
                     .unwrap_or_else(|| template_order::default_variant(path));
                 c.label = Some(format!("PS{number}{variant}"));
                 Label { number, variant }
@@ -145,22 +137,28 @@ impl Editor {
         }
         self.sync(choices);
     }
+    pub fn update_typed_label(&mut self,choices:&[Choice],index:usize){
+        self.labels[index]=choices[index].label.as_deref().and_then(split_label)
+            .unwrap_or_else(||Label{number:String::new(),variant:String::new()});
+        self.sync(choices);
+    }
     pub fn preview(&self, choices: &[Choice]) -> (Vec<Option<String>>, Vec<usize>) {
-        let state = template_order::State {
-            rows: choices
-                .iter()
-                .zip(&self.labels)
-                .map(|(c, l)| template_order::Row {
-                    raster: (!matches!(c.source, Source::Empty(_))).then(|| "source".into()),
-                    included: c.include,
-                    number: l.number.clone(),
-                    variant: l.variant.clone(),
-                    ..Default::default()
-                })
-                .collect(),
-            ..Default::default()
-        };
-        state.preview_labels()
+        let mut variants=std::collections::HashMap::<String,usize>::new();
+        let mut invalid=Vec::new();
+        let labels=choices.iter().enumerate().map(|(i,choice)|{
+            if !choice.include||matches!(choice.source,Source::Empty(_)){return None;}
+            let Some(label)=choice.label.as_deref().and_then(template_order::typed_label) else{
+                invalid.push(i);
+                return None;
+            };
+            if let Some(n)=label.strip_suffix("AUTO").and_then(template_order::number){
+                let count=variants.entry(n.clone()).or_insert(1);
+                *count+=1;
+                return Some(format!("PS{n}{}",template_order::suffix(*count)));
+            }
+            Some(label)
+        }).collect();
+        (labels,invalid)
     }
     pub fn apply_label(&mut self, choices: &mut [Choice]) -> Result<(), String> {
         if !self.selected.iter().any(|s| *s) {
@@ -351,14 +349,14 @@ impl Editor {
     }
 }
 fn split_label(raw: &str) -> Option<Label> {
-    let raw = crate::python_values::uppercase(crate::python_values::trim(raw));
+    let raw = template_order::typed_label(raw)?;
     let raw = raw.strip_prefix("PS").unwrap_or(&raw).trim_start();
     let end = raw
         .char_indices()
         .find(|(_, c)| crate::object_layout::decimal(*c).is_none())
         .map_or(raw.len(), |(i, _)| i);
     let number = template_order::number(&raw[..end])?;
-    let variant = template_order::variant(&serde_json::Value::String(raw[end..].into()));
+    let variant = raw[end..].to_owned();
     Some(Label { number, variant })
 }
 
@@ -405,6 +403,21 @@ mod tests {
         assert_eq!(choices.iter().map(|c|c.label.as_deref()).collect::<Vec<_>>(),
                    [Some("PS10"),Some("PS2B"),None,Some("PS2")]);
         assert_eq!(editor.selected,[true,false,false,false]);
+    }
+    #[test]
+    fn typed_labels_keep_free_variants_through_sort_and_reopen(){
+        let mut choices=(0..4).map(choice).collect::<Vec<_>>();
+        let mut editor=Editor::new(&mut choices,&[],&[]);
+        for (i,label) in ["PS 25-2","25B","25EXTENT","Sleuf West / extra"].into_iter().enumerate(){
+            choices[i].label=Some(label.into());
+            editor.update_typed_label(&choices,i);
+        }
+        let expected=[Some("PS25-2"),Some("PS25B"),Some("PS25EXTENT"),Some("Sleuf West / extra")];
+        assert_eq!(editor.preview(&choices).0.iter().map(Option::as_deref).collect::<Vec<_>>(),expected);
+        let editor=Editor::new(&mut choices,&[],&[]);
+        assert_eq!(editor.preview(&choices).0.iter().map(Option::as_deref).collect::<Vec<_>>(),expected);
+        choices[0].label=Some(String::new());
+        assert_eq!(editor.preview(&choices).1,vec![0]);
     }
     #[test]
     fn matches_isolated_original_move_callbacks() {

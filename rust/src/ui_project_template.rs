@@ -26,6 +26,14 @@ fn configure_options(mut options:Options,settings:&MigratedSettings,saved:Option
     options
 }
 
+fn trench_raster(raster:&GeoTiffInfo)->bool{
+    static NAME:std::sync::LazyLock<regex::Regex>=std::sync::LazyLock::new(||
+        regex::Regex::new(r"(?i)(?:^|[^a-z0-9])(?:ps|proefsleuf)[ ._-]*[0-9]").unwrap());
+    raster.kickthemap_job_id.is_some_and(|id|id>0)
+        || raster.metadata.get("template_export_ps_number").is_some_and(|value|!value.is_null())
+        || raster.path.file_stem().is_some_and(|name|NAME.is_match(&name.to_string_lossy()))
+}
+
 pub(super) struct Dialog {
     pub options: Options,
     pub output: Option<PathBuf>,
@@ -47,6 +55,17 @@ impl Dialog {
         };
         // Saved project choices override the user's general export defaults.
         let mut options=configure_options(options,settings,app.template_preferences.as_ref(),&app.datasets,&app.geotiffs,&app.virtual_trenches);
+        // A raster-only project may use unlabelled TIFFs deliberately. When
+        // actual trench sources are present, keep unrelated images available
+        // as attachments without turning each one into a new export slot.
+        let has_trenches=!app.datasets.is_empty()||!app.virtual_trenches.is_empty()||app.geotiffs.iter().any(trench_raster);
+        if has_trenches{
+            options.choices.retain(|choice|match choice.source{
+                Source::Raster(index)=>trench_raster(&app.geotiffs[index])
+                    ||app.template_preferences.as_ref().is_some_and(|saved|saved.contains_raster_slot(&app.geotiffs[index])),
+                _=>true,
+            });
+        }
         let fresh=app.template_preferences.is_none();
         let mut editor=sleufbase_rust::template_editor::Editor::new(&mut options.choices,&app.geotiffs,&app.virtual_trenches);
         // Existing/imported layouts retain their hand-picked sheet order.
@@ -72,7 +91,7 @@ impl Dialog {
         let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
         if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee.".into());}
         if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
-        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de PS-nummers van de geselecteerde vakken.".into());}
+        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de proefsleuflabels van de geselecteerde vakken.".into());}
         if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
         Ok(())
     }
@@ -113,7 +132,7 @@ impl SleufBaseApp {
         let rasters = &self.geotiffs;
         let raster_previews = &self.raster_textures;
         if let Some(dialog) = &mut self.project_template_dialog {
-            let mut clicked_row=None;let mut sync_editor=false;
+            let mut clicked_row=None;let mut sync_editor=false;let mut edited_label=None;
             egui::Window::new("DXF-sjabloon exporteren")
                 .open(&mut open)
                 .default_width(730.)
@@ -220,6 +239,7 @@ impl SleufBaseApp {
                             if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
                             if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
                         });
+                        ui.collapsing("Meerdere vakken aanpassen", |ui| {
                         ui.horizontal_wrapped(|ui|{
                             ui.label("PS-nummer");ui.add(egui::TextEdit::singleline(&mut dialog.editor.number).desired_width(75.));
                             ui.label("Variant");egui::ComboBox::from_id_salt("mixed-template-variant").selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant}).show_ui(ui,|ui|{ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");for c in 'B'..='Z'{ui.selectable_value(&mut dialog.editor.variant,c.to_string(),format!("Variant {c}"));}});
@@ -227,25 +247,53 @@ impl SleufBaseApp {
                             ui.label("Profielschaal");ui.add(egui::TextEdit::singleline(&mut dialog.editor.scale).desired_width(75.));
                             if ui.small_button("Schaal toepassen").clicked(){dialog.error=dialog.editor.apply_scale(&mut dialog.options.choices).err().unwrap_or_default();}
                         });
-                        let(preview_labels,invalid_labels)=dialog.editor.preview(&dialog.options.choices);
-                        if !invalid_labels.is_empty(){ui.colored_label(DARK,"Vul geldige PS-nummers in voor de geselecteerde exportvakken.");}
+                        });
+                        let mut add_raster=None;
+                        ui.add_enabled_ui(dialog.options.choices.len()<20_000,|ui|ui.menu_button("Losse GeoTIFF als vak toevoegen",|ui|{
+                            egui::ScrollArea::vertical().max_height(230.).show(ui,|ui|{
+                                for (index,raster) in rasters.iter().enumerate(){
+                                    if dialog.options.choices.iter().any(|choice|choice.raster==Some(index)||choice.source==Source::Raster(index)){continue;}
+                                    let name=raster.path.file_name().unwrap_or_default().to_string_lossy();
+                                    if ui.button(name).clicked(){add_raster=Some(index);ui.close_menu();}
+                                }
+                            });
+                        }));
+                        if let Some(index)=add_raster{
+                            dialog.options.choices.push(template_project::raster_choice(index,&rasters[index]));
+                            dialog.automatic.push(sleufbase_rust::template_match::Suggestion{raster:Some(index),reason:sleufbase_rust::template_match::MatchKind::Missing});
+                            dialog.editor=sleufbase_rust::template_editor::Editor::new(
+                                &mut dialog.options.choices,rasters,&self.virtual_trenches,
+                            );
+                            dialog.editor.select(&dialog.options.choices,dialog.options.choices.len()-1,false,false);
+                            dialog.sort_mode=None;
+                        }
+                        ui.small("Pas het proefsleuflabel direct in de rij aan, bijvoorbeeld PS 25-2, 25B of 25EXTENT.");
                         for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
                             ui.push_id(idx, |ui| {
                                 ui.group(|ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
                                         if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
-                                        ui.strong(match slot.source {
-                                            Source::Job(i) => format!("KickTheMap-job {}", i + 1),
-                                            Source::Virtual(i) => format!("Virtuele sleuf {}", i + 1),
-                                            Source::Raster(i)=>format!("GeoTIFF {}",i+1),
-                                            Source::Empty(_)=>"Leeg vak".into(),
-                                        });
+                                        if !matches!(slot.source, Source::Empty(_)) {
+                                            let label = slot.label.get_or_insert_with(String::new);
+                                            if ui.add(egui::TextEdit::singleline(label)
+                                                .hint_text("Proefsleuflabel")
+                                                .desired_width(150.)
+                                                .char_limit(256)).changed() {
+                                                edited_label = Some(idx);
+                                            }
+                                        }
+                                        ui.label(&slot.title);
+                                    });
+                                    if matches!(slot.source,Source::Empty(_)){return;}
+                                    if slot.include && slot.raster.is_none() && matches!(slot.source,Source::Job(_)|Source::Raster(_)) {
+                                        ui.colored_label(DARK, "Koppel een GeoTIFF via Vakdetails.");
+                                    }
+                                    ui.collapsing("Vakdetails", |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Naam");
                                         ui.text_edit_singleline(&mut slot.title);
                                     });
-                                    if matches!(slot.source,Source::Empty(_)){ui.small("Dit vak blijft leeg op het blad.");return;}
-                                    ui.label(format!("Exportlabel: {}",preview_labels[idx].as_deref().unwrap_or("niet meenemen")));
-
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label("GeoTIFF:");
                                         let selected_name = slot.raster.and_then(|i| rasters.get(i))
@@ -298,7 +346,8 @@ impl SleufBaseApp {
                                     }
                                     if let Some(raster_index)=slot.raster {
                                         if let Some(info)=rasters.get(raster_index) {
-                                            ui.horizontal_wrapped(|ui| {
+                                            ui.collapsing("GeoTIFF-voorbeeld en kaartgegevens", |ui| {
+                                              ui.horizontal_wrapped(|ui| {
                                                 if let Some(Some(preview))=raster_previews.get(raster_index) {
                                                     ui.add(egui::Image::new((preview.id(),egui::vec2(190.,120.))));
                                                 }
@@ -307,6 +356,7 @@ impl SleufBaseApp {
                                                     ui.small(format!("RD Y {:.1}–{:.1}",info.bounds.min_y,info.bounds.max_y));
                                                     ui.small(format!("CRS: {}",info.epsg.map_or("onbekend".into(),|id|format!("EPSG:{id}"))));
                                                 });
+                                              });
                                             });
                                         }
                                     }
@@ -365,6 +415,7 @@ impl SleufBaseApp {
                                     ui.collapsing("Opmerkingen", |ui| {
                                         ui.text_edit_multiline(&mut slot.comments);
                                     });
+                                    });
                                 });
                             });
                         }
@@ -374,6 +425,7 @@ impl SleufBaseApp {
                             ui.colored_label(DARK, &dialog.error);
                         }
                         ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
+                        if let Some(index)=edited_label {dialog.editor.update_typed_label(&dialog.options.choices,index);}
                         let readiness=dialog.readiness();
                         let ready=readiness.is_ok();
                         if let Err(reason)=readiness{ui.small(reason);}
@@ -493,11 +545,17 @@ mod flow_audit_tests {
         app.virtual_trenches.push(VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());app
     }
     #[test]
-    fn ordinary_export_includes_virtual_trenches_alongside_loaded_tiffs(){
+    fn ordinary_export_suggests_trenches_without_unrelated_raster_rows(){
         let mut app=app();let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
-        app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());app.open_template_export();
+        let plain=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        let mut named=plain.clone();
+        named.path="PS2.tiff".into();
+        app.geotiffs.extend([plain,named]);
+        app.open_template_export();
         let d=app.project_template_dialog.as_ref().expect("mixed project dialog");assert!(app.template_order_dialog.is_none());
-        assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Raster(0))));
+        let sources=d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>();
+        assert_eq!(sources,vec![Source::Raster(1),Source::Virtual(0)]);
+        assert_eq!(app.geotiffs.len(),2,"unrelated raster remains available as a source");
     }
     #[test]
     fn preflight_explains_invalid_output_and_busy_launch_keeps_the_reviewed_form(){
