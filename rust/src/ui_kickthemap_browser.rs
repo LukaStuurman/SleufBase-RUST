@@ -125,11 +125,13 @@ pub(super) struct BrowserLogin {
     jobs:Vec<Job>,
     remember:bool,
     cookies:Option<serde_json::Value>,
+    account:Option<sleufbase_rust::kickthemap_session::Account>,
 }
 
 #[cfg(not(test))]
 fn connect_browser(
     remember:bool,
+    account:Option<sleufbase_rust::kickthemap_session::Account>,
     known_nonempty:bool,
     cancel:&AtomicBool,
     status:&mpsc::Sender<&'static str>,
@@ -140,7 +142,11 @@ fn connect_browser(
     };
     check_cancel()?;
     let mut browser=Browser::launch()?;
-    let saved=remember.then(stored::load).and_then(Result::ok).flatten();
+    let saved=(remember && account.is_none()).then(stored::load).and_then(Result::ok).flatten();
+    let account = match account {
+        Some(account) => Some(account),
+        None => stored::load_account().map_err(|_| "Het bewaarde account kon niet worden gelezen.")?,
+    };
     let mut restored=false;
     if let Some(cookies)=saved {
         // WebView2 can report a page target before its first URL is committed.
@@ -162,52 +168,62 @@ fn connect_browser(
         let jobs=session.fetch_jobs_from_browser(||browser.browser_job_payload())?;
         Ok::<_,String>((session,jobs))
     };
-    if !restored{
+    let mut stage_started = Instant::now();
+    let mut submitted = false;
+    let mut job_errors = 0;
+    loop {
         check_cancel()?;
-        browser.set_visible(true)?;
-        let _=status.send("Meld je aan bij KickTheMap. De joblijst opent automatisch.");
-    }
-    let restore_until=Instant::now()+Duration::from_secs(10);
-    let deadline=Instant::now()+Duration::from_secs(10*60);
-    let mut job_errors=0;
-    while Instant::now()<deadline {
-        check_cancel()?;
-        if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
-        if let Ok(csrf)=browser.csrf_token(){
-            match try_session(&browser,&csrf){
-                Ok((session,jobs))=>{
+        if browser.is_closed() { return Err("De verbinding met KickTheMap is gesloten.".into()); }
+        if let Some(csrf) = (restored || submitted).then(|| browser.csrf_token().ok()).flatten() {
+            match try_session(&browser, &csrf) {
+                Ok((session, jobs)) => {
                     check_cancel()?;
-                    browser.set_visible(false)?;
-                    let cookies=if remember{browser.session_cookies().ok()}else{None};
-                    return Ok(BrowserLogin{browser,session,jobs,remember,cookies});
+                    let cookies = if remember { browser.session_cookies().ok() } else { None };
+                    return Ok(BrowserLogin { browser, session, jobs, remember, cookies, account });
                 }
-                Err(error) if !restored=>{
-                    job_errors+=1;
-                    if job_errors>=3{return Err(format!("Jobs ophalen mislukt: {error}"));}
+                Err(error) if submitted => {
+                    job_errors += 1;
+                    if job_errors >= 3 { return Err(format!("Jobs ophalen mislukt: {error}")); }
                 }
-                Err(_)=>{}
+                Err(_) => {}
             }
-        }else{
-            job_errors=0;
         }
-        if restored&&Instant::now()>=restore_until{
+        if restored && stage_started.elapsed() >= Duration::from_secs(10) {
+            if account.is_none() {
+                return Err("De KickTheMap-sessie is verlopen. Vul je accountgegevens in SleufBase in.".into());
+            }
             browser.reset_signin()?;
-            check_cancel()?;
-            browser.set_visible(true)?;
-            let _=status.send("Meld je opnieuw aan bij KickTheMap. De joblijst opent automatisch.");
-            restored=false;
+            restored = false;
+            stage_started = Instant::now();
         }
-        for _ in 0..10{
-            check_cancel()?;
-            std::thread::sleep(Duration::from_millis(150));
+        if !restored && !submitted {
+            let account = account.as_ref().ok_or("Vul je KickTheMap-accountgegevens in SleufBase in.")?;
+            if browser.submit_signin(account).unwrap_or(false) {
+                submitted = true;
+                stage_started = Instant::now();
+                let _ = status.send("Aanmelding controleren en jobs ophalen…");
+            }
         }
+        if !restored && stage_started.elapsed() >= Duration::from_secs(35) {
+            return Err(if submitted {
+                "KickTheMap heeft de aanmelding niet bevestigd. Controleer je gegevens of probeer later opnieuw."
+            } else {
+                "Het beveiligde KickTheMap-formulier is niet beschikbaar. Probeer later opnieuw."
+            }.into());
+        }
+        std::thread::sleep(Duration::from_millis(350));
     }
-    Err("Aanmelden heeft te lang geduurd. Probeer opnieuw.".into())
 }
 
 impl SleufBaseApp {
     fn finish_kickthemap_login(&mut self,login:BrowserLogin){
         use sleufbase_rust::kickthemap_session as stored;
+        let account_storage = if login.remember {
+            login.account.as_ref().map_or(Ok(()), stored::save_account)
+        } else {
+            stored::forget_account()
+        };
+        self.shell.login_password.clear();
         let storage=if login.remember{
             login.cookies.ok_or_else(||std::io::Error::other("Geen geldige sessiecookies"))
                 .and_then(stored::save)
@@ -218,15 +234,16 @@ impl SleufBaseApp {
         self.live_jobs_owner=Some(login.session.snapshot_owner().clone());
         self.live_session=Some(login.session);
         self.live_jobs=login.jobs;
+        if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
         self.browser_ui.browser=Some(login.browser);
         self.browser_ui.open=true;
         self.shell.login_open=false;
         self.save_live_cache();
         self.browser_ui.status=format!("KickTheMap verbonden: {} live jobs.",self.live_jobs.len());
-        if storage.is_err(){
+        if account_storage.is_err() || storage.is_err(){
             self.browser_ui.status.push_str(if login.remember{
-                " Sessie kon niet lokaal worden onthouden."
-            }else{" De eerdere bewaarde sessie kon niet worden verwijderd."});
+                " Aanmeldgegevens konden niet volledig worden onthouden."
+            }else{" De eerdere aanmeldgegevens konden niet volledig worden verwijderd."});
         }
     }
     fn repair_kickthemap_download(&mut self,id:u64,path:PathBuf) {
@@ -280,11 +297,19 @@ impl SleufBaseApp {
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
-        if self.live_session.is_none()&&!self.live_operation_busy()&&sleufbase_rust::kickthemap_session::exists(){
-            self.start_kickthemap_login(true);
+        #[cfg(not(test))]
+        if self.live_session.is_none() && !self.live_operation_busy()
+            && (sleufbase_rust::kickthemap_session::exists() || sleufbase_rust::kickthemap_session::account_exists()) {
+            self.start_kickthemap_login(true, None);
         }
     }
     fn open_newest_jobs_cache(&mut self){
+        if let Some(cache) = Self::newest_jobs_cache() {
+            if !self.live_operation_busy(){self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());}
+            self.jobs_cache=Some(cache);
+        }
+    }
+    pub(super) fn newest_jobs_cache()->Option<JobsCache>{
         let dir=kickthemap_cache_dir().join("jobs_cache");
         let mut newest=None::<(f64,JobsCache)>;
         if let Ok(entries)=std::fs::read_dir(dir) {
@@ -297,14 +322,9 @@ impl SleufBaseApp {
                 }
             }
         }
-        if let Some((_,cache))=newest {
-            if !self.live_operation_busy(){
-                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
-            }
-            self.jobs_cache=Some(cache);
-        }
+        newest.map(|(_, cache)| cache)
     }
-    pub(super) fn start_kickthemap_login(&mut self,remember:bool) {
+    pub(super) fn start_kickthemap_login(&mut self,remember:bool,account:Option<sleufbase_rust::kickthemap_session::Account>) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let known_nonempty=!self.live_jobs.is_empty()||self.jobs_cache.as_ref().is_some_and(|c|!c.jobs.is_empty());
         let (tx,rx)=mpsc::channel();
@@ -318,12 +338,12 @@ impl SleufBaseApp {
         {
             let cancel=Arc::clone(&self.browser_ui.login_cancel);
             std::thread::spawn(move|| {
-                let _=tx.send(connect_browser(remember,known_nonempty,&cancel,&status_tx));
+                let _=tx.send(connect_browser(remember,account,known_nonempty,&cancel,&status_tx));
             });
         }
         #[cfg(test)]
         {
-            let _=(remember,known_nonempty,status_tx);
+            let _=(remember,account,known_nonempty,status_tx);
             self.browser_ui.launch_requests+=1;
             let _=tx.send(Err("Test: inlogvenster niet gestart".into()));
         }
@@ -408,7 +428,10 @@ impl SleufBaseApp {
                 if !self.browser_ui.login_cancel.load(Ordering::Relaxed){
                     match result{
                         Ok(login)=>self.finish_kickthemap_login(login),
-                        Err(error)=>self.browser_ui.status=error,
+                        Err(error)=>{
+                            if !self.shell.login_open {self.open_kickthemap_login();}
+                            self.browser_ui.status=error;
+                        }
                     }
                 }
                 self.message=self.browser_ui.status.clone();
@@ -692,7 +715,7 @@ impl SleufBaseApp {
     }
 }
 
-fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
+pub(super) fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
     // Match the two leading numbers in the original Jobs map. Both RD and
     // longitude/latitude are accepted; malformed values are not plotted.
     let mut words=Vec::new();
@@ -701,7 +724,7 @@ fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
         if c.is_ascii_digit()||((c=='-'||c=='.'||c==',')&&number.len()<30) {
             if c==',' {number.push('.');} else{number.push(c);}
         }else if !number.is_empty(){
-            if let Ok(n)=number.parse::<f64>(){words.push(n);}
+            if let Ok(n)=number.trim_end_matches('.').parse::<f64>(){words.push(n);}
             number.clear();
             if words.len()>=2{break;}
         }

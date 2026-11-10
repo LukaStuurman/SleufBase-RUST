@@ -1,11 +1,16 @@
-//! Sign-in options for the dedicated KickTheMap web view.
+//! Native KickTheMap sign-in form.
 use super::*;
 
 impl SleufBaseApp {
     pub(super) fn open_kickthemap_login(&mut self) {
         self.shell.login_open = true;
         self.shell.login_focus = true;
-        self.shell.login_remember = sleufbase_rust::kickthemap_session::exists();
+        self.shell.login_remember = true;
+        #[cfg(not(test))]
+        if let Ok(Some(account)) = sleufbase_rust::kickthemap_session::load_account() {
+            self.shell.login_email = account.email;
+            self.shell.login_password = account.password;
+        }
     }
 
     pub(super) fn show_kickthemap_login(&mut self, ctx: &egui::Context) {
@@ -32,12 +37,23 @@ impl SleufBaseApp {
                 if connected {
                     ui.label("Je bent aangemeld bij KickTheMap.");
                 } else {
-                    ui.label("Meld je aan op de KickTheMap-pagina. Je jobs openen automatisch.");
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.label("E-mailadres");
+                        let email = ui.add(egui::TextEdit::singleline(&mut self.shell.login_email)
+                            .desired_width(f32::INFINITY).char_limit(320));
+                        if self.shell.login_focus {
+                            email.request_focus();
+                            self.shell.login_focus = false;
+                        }
+                        ui.label("Wachtwoord");
+                        ui.add(egui::TextEdit::singleline(&mut self.shell.login_password)
+                            .desired_width(f32::INFINITY).char_limit(1024).password(true));
+                    });
                     ui.add_enabled(
                         !busy,
-                        egui::Checkbox::new(&mut self.shell.login_remember, "Aangemeld blijven op dit apparaat"),
+                        egui::Checkbox::new(&mut self.shell.login_remember, "Account onthouden op dit apparaat"),
                     );
-                    ui.small("Windows beveiligt de bewaarde sessie. Na verloop van de sessie meld je opnieuw aan.");
+                    ui.small("Windows beveiligt je opgeslagen aanmeldgegevens. Je jobs openen na het aanmelden.");
                 }
                 if connecting {
                     ui.horizontal_wrapped(|ui| {
@@ -54,20 +70,18 @@ impl SleufBaseApp {
                         logout = ui.add_enabled(!busy, egui::Button::new("Uitloggen")).clicked();
                     } else if !connecting {
                         let button = ui.add_enabled(
-                            !busy,
+                            !busy && !self.shell.login_email.trim().is_empty() && !self.shell.login_password.is_empty(),
                             egui::Button::new(egui::RichText::new("Inloggen").color(Color32::WHITE)).fill(ORANGE),
                         );
-                        if self.shell.login_focus {
-                            button.request_focus();
-                            self.shell.login_focus = false;
-                        }
-                        launch = button.clicked();
+                        launch = button.clicked() || (button.enabled()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                     }
                     close = ui.button(if connecting { "Annuleren" } else { "Sluiten" }).clicked();
                 });
             });
         if !open || close {
             self.shell.login_open = false;
+            self.shell.login_password.clear();
             if connecting {
                 self.cancel_kickthemap_login();
             }

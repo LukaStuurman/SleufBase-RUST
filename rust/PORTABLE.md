@@ -43,4 +43,4 @@ De Rust-migratie is niet 100% functieparitair met SleufBase Python v0.3.62. Beve
 
 ## Ingebouwd KickTheMap-inlogvenster
 
-Klik op Inloggen om binnen SleufBase aan te melden. Er wordt geen apart Edge-browservenster gestart. De installer bevat de volledige Microsoft WebView2 Runtime en installeert die automatisch als deze ontbreekt; hiervoor is geen aparte download nodig. Een bestaande runtime wordt hergebruikt. De portable ZIP bevat de runtime niet: installeer in dat geval eerst WebView2 of gebruik de installer. Rond zo nodig reCAPTCHA af. De joblijst opent automatisch. Met **Aangemeld blijven op dit apparaat** kan SleufBase de sessie bij een volgende start hergebruiken. Een mislukte start toont de eigenlijke WebView2-fout.
+Vul je e-mailadres en wachtwoord in bij **KickTheMap → Inloggen**. SleufBase meldt je op de achtergrond aan en opent de joblijst. Met **Account onthouden op dit apparaat** bewaart Windows je gegevens versleuteld. Via **Jobs** meldt SleufBase je opnieuw aan als de sessie is verlopen. De installer installeert Microsoft WebView2 indien nodig. Voor de portable ZIP moet WebView2 al op Windows aanwezig zijn.

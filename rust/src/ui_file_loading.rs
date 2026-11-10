@@ -285,6 +285,7 @@ impl SleufBaseApp {
             self.refresh_virtual_references();
             self.dirty = true;
             if matches!(purpose, LoadPurpose::GeoTiffs | LoadPurpose::Inputs { .. }) {
+                self.verify_kickthemap_raster_crs();
                 self.schedule_raster_previews();
             }
             // A deliberate import fits the new contents; background refreshes

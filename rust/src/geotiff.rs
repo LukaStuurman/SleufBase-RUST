@@ -28,6 +28,27 @@ pub struct GeoTiffInfo {
     pub metadata:Value,
 }
 
+impl GeoTiffInfo {
+    /// Some KickTheMap orthophotos contain RD positions with the GeoTIFF
+    /// user-defined CRS marker. Only resolve it against that job's own point.
+    pub fn confirm_kickthemap_rd(&mut self, job_id: u64, [x, y]: [f64; 2]) -> bool {
+        if self.epsg != Some(32767) || self.kickthemap_job_id != Some(job_id) {
+            return false;
+        }
+        let b = self.bounds;
+        if !x.is_finite() || !y.is_finite()
+            || !(0.0..=200.0).contains(&(b.max_x - b.min_x))
+            || !(0.0..=200.0).contains(&(b.max_y - b.min_y))
+            || !(b.min_x - 10.0..=b.max_x + 10.0).contains(&x)
+            || !(b.min_y - 10.0..=b.max_y + 10.0).contains(&y)
+        {
+            return false;
+        }
+        self.epsg = Some(28992);
+        true
+    }
+}
+
 pub fn from_tags(
     scale: &[f64],
     tiepoints: &[f64],

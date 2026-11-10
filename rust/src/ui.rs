@@ -416,7 +416,7 @@ impl SleufBaseApp {
         self.legacy_archive=doc.legacy_archive;
         self.template_preferences=doc.template_preferences;
         self.selected=(!self.datasets.is_empty()).then_some(0);
-        self.dirty=restored;
+        self.dirty=self.verify_kickthemap_raster_crs() || restored;
         self.schedule_raster_previews();
         self.resume_pending_ahn();
     }
@@ -772,7 +772,12 @@ impl SleufBaseApp {
     fn login_kickthemap(&mut self) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
 
-        self.start_kickthemap_login(self.shell.login_remember);
+        if self.shell.login_email.trim().is_empty() || self.shell.login_password.is_empty() {return;}
+        let account = sleufbase_rust::kickthemap_session::Account {
+            email: self.shell.login_email.trim().into(),
+            password: std::mem::take(&mut self.shell.login_password),
+        };
+        self.start_kickthemap_login(self.shell.login_remember, Some(account));
     }
 
     fn refresh_live_jobs(&mut self) {
@@ -894,6 +899,7 @@ impl SleufBaseApp {
                 self.live_jobs_owner=Some(session.snapshot_owner().clone());
                 self.live_session=Some(session);
                 self.live_jobs=jobs;
+                if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
                 self.live_busy=false;
                 self.live_rx=None;
                 self.message=format!("{} KickTheMap jobs live opgehaald",self.live_jobs.len());
@@ -933,12 +939,18 @@ impl SleufBaseApp {
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         #[cfg(not(test))]
-        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok();
+        let forgotten={
+            let session=sleufbase_rust::kickthemap_session::forget();
+            let account=sleufbase_rust::kickthemap_session::forget_account();
+            session.is_ok() && account.is_ok()
+        };
         #[cfg(test)]
         let forgotten=true;
-        self.shell.login_remember=false;
-        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale sessie is verwijderd."}
-            else{"Uitgelogd. De bewaarde sessie kon niet worden verwijderd."}.into();
+        self.shell.login_remember=true;
+        self.shell.login_email.clear();
+        self.shell.login_password.clear();
+        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale aanmeldgegevens zijn verwijderd."}
+            else{"Uitgelogd. De bewaarde aanmeldgegevens konden niet worden verwijderd."}.into();
         self.message=self.browser_ui.status.clone();
     }
 

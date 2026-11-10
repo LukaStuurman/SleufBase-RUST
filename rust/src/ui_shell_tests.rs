@@ -653,18 +653,18 @@ fn double_clicking_a_physical_or_virtual_trench_fits_only_that_trench() {
     }
 }
 #[test]
-fn login_menu_starts_embedded_browser_without_password_or_direct_http(){
+fn login_menu_requires_native_credentials_before_connecting(){
     let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
     frame(&mut app,&ctx,vec![]);let out=frame(&mut app,&ctx,vec![]);
     let out=click(&mut app,&ctx,label_position(&out,"KickTheMap"));
 
     let out=click(&mut app,&ctx,label_position(&out,"Inloggen..."));
     assert!(app.shell.login_open);
-    label_position(&out,"Aangemeld blijven op dit apparaat");
-    assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Wachtwoord")));
+    label_position(&out,"Account onthouden op dit apparaat");
+    label_position(&out,"E-mailadres");
+    label_position(&out,"Wachtwoord");
     let out=click(&mut app,&ctx,label_position(&out,"Inloggen"));
-    assert_eq!(app.browser_ui.launch_requests,1);assert!(app.live_rx.is_none());
-    assert!(!app.message.contains("reCAPTCHA. Kies"));
+    assert_eq!(app.browser_ui.launch_requests,0);assert!(app.live_rx.is_none());
 
     click(&mut app,&ctx,label_position(&out,"Sluiten"));assert!(!app.shell.login_open);
 }
@@ -672,19 +672,23 @@ fn login_menu_starts_embedded_browser_without_password_or_direct_http(){
 fn login_form_renders_at_minimum_size_without_contacting_accounts(){
     let mut app=SleufBaseApp::default();app.open_kickthemap_login();
     let(labels,image)=capture(&mut app,[1200,760]);
-    for text in ["KickTheMap inloggen","Inloggen","Aangemeld blijven op dit apparaat","Sluiten"]{
+    for text in ["KickTheMap inloggen","Inloggen","Account onthouden op dit apparaat","Sluiten"]{
         let(_,rect)=labels.iter().find(|(s,_)|s==text).unwrap();
         assert!(rect.min.x>=0.&&rect.max.x<=1200.&&rect.min.y>=0.&&rect.max.y<=760.);
     }
     if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR"){image.save(PathBuf::from(dir).join("kickthemap-login.png")).unwrap();}
 }
 #[test]
-fn embedded_login_primary_action_accepts_keyboard_and_never_sends_credentials(){
+fn native_login_accepts_enter_and_consumes_the_password(){
     let ctx=egui::Context::default();let mut app=SleufBaseApp::default();
-    app.open_kickthemap_login();for _ in 0..3{frame(&mut app,&ctx,vec![]);}
-    frame(&mut app,&ctx,vec![shortcut(egui::Key::Space,egui::Modifiers::NONE)]);
-    frame(&mut app,&ctx,vec![egui::Event::Key{key:egui::Key::Space,physical_key:None,pressed:false,repeat:false,modifiers:Default::default()}]);
+    app.open_kickthemap_login();
+    app.shell.login_email="fixture@example.test".into();
+    app.shell.login_password="fixture-password".into();
+    for _ in 0..3{frame(&mut app,&ctx,vec![]);}
+    frame(&mut app,&ctx,vec![shortcut(egui::Key::Enter,egui::Modifiers::NONE)]);
+    frame(&mut app,&ctx,vec![egui::Event::Key{key:egui::Key::Enter,physical_key:None,pressed:false,repeat:false,modifiers:Default::default()}]);
     assert_eq!(app.browser_ui.launch_requests,1);assert!(app.live_rx.is_none());
+    assert!(app.shell.login_password.is_empty());
 }
 
 #[test]
@@ -708,7 +712,7 @@ fn interactive_login_error_reaches_the_browser_controls_without_starting_a_brows
     let ctx=egui::Context::default();frame(&mut app,&ctx,vec![]);
     let out=frame(&mut app,&ctx,vec![]);
     label_position(&out,"Inloggen");
-    label_position(&out,"Aangemeld blijven op dit apparaat");
+    label_position(&out,"Account onthouden op dit apparaat");
     assert!(app.browser_ui.browser.is_none());assert!(!app.live_operation_busy());
     assert!(!app.message.contains("nog in Rust"));
 }

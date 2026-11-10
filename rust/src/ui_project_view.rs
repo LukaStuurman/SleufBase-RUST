@@ -19,6 +19,36 @@ pub(super) fn export_progress(ctx:&egui::Context,worker:&sleufbase_rust::project
 }
 
 impl SleufBaseApp {
+    pub(super) fn verify_kickthemap_raster_crs(&mut self) -> bool {
+        let unresolved: std::collections::HashSet<_> = self.geotiffs.iter()
+            .filter(|r| r.epsg == Some(32767))
+            .filter_map(|r| r.kickthemap_job_id)
+            .collect();
+        if unresolved.is_empty() { return false; }
+        let disk_cache = if self.live_jobs.is_empty() && self.jobs_cache.is_none() {
+            Self::newest_jobs_cache()
+        } else {
+            None
+        };
+        let cached = self.jobs_cache.as_ref().or(disk_cache.as_ref());
+        let jobs = self.live_jobs.iter().chain(cached.into_iter().flat_map(|c| &c.jobs));
+        let mut points = std::collections::HashMap::new();
+        for job in jobs.filter(|job| unresolved.contains(&job.job_id)) {
+            if let Some(rd) = super::kick_browser_ui::job_rd_coordinates(&job.coordinates) {
+                points.entry(job.job_id).or_insert(rd);
+            }
+        }
+        let mut changed = false;
+        for raster in &mut self.geotiffs {
+            if let Some(id) = raster.kickthemap_job_id {
+                if let Some(&point) = points.get(&id) {
+                    changed |= raster.confirm_kickthemap_rd(id, point);
+                }
+            }
+        }
+        changed
+    }
+
     pub(super) fn request_selected_background(&mut self){
         use sleufbase_rust::project_view::BackgroundProvider as B;
         self.background_restore_pending=false;
@@ -26,7 +56,12 @@ impl SleufBaseApp {
         self.pdok_texture=None;self.pdok_bounds=None;self.osm_texture=None;self.osm_bounds=None;
         self.osm_visible=false;
         if !self.project_view.use_background{return;}
+        if self.verify_kickthemap_raster_crs() { self.dirty = true; }
         if let Some(epsg)=self.geotiffs.iter().filter_map(|r|r.epsg).find(|epsg|*epsg!=28992){
+            if epsg == 32767 {
+                self.message = "De RD-ligging van een GeoTIFF kon niet worden bevestigd. Haal de bijbehorende KickTheMap-job op of laad een GeoTIFF met RD-coördinaten.".into();
+                return;
+            }
             self.message=format!("Kaartachtergronden vereisen RD (EPSG:28992); transformeer de GeoTIFF met EPSG:{epsg} eerst.");
             return;
         }
@@ -153,6 +188,31 @@ impl SleufBaseApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn kickthemap_local_geotiff_uses_rd_only_when_matching_job_confirms_its_location() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        let mut raster = sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        raster.epsg = Some(32767);
+        raster.kickthemap_job_id = Some(42);
+        let point = super::super::kick_browser_ui::job_rd_coordinates("5.75, 51.30").unwrap();
+        raster.bounds = Bounds { min_x: point[0], min_y: point[1], max_x: point[0]+3., max_y: point[1]+3. };
+        assert!(!raster.confirm_kickthemap_rd(43, point));
+        assert!(!raster.confirm_kickthemap_rd(42, [point[0]+30., point[1]]));
+        let mut app = SleufBaseApp::default();
+        app.project_view.use_background = true;
+        app.project_view.background_source = sleufbase_rust::project_view::BackgroundProvider::OpenStreetMap.label().into();
+        app.jobs_cache = Some(sleufbase_rust::jobs_cache::parse_cache(
+            r#"{"version":1,"jobs":[{"job_id":42,"coordinates":"5.75, 51.30"}]}"#,
+            std::path::Path::new("fixture.json"),
+        ).unwrap());
+        let original_transform = raster.transform;
+        app.geotiffs.push(raster);
+        app.request_selected_background();
+        assert_eq!(app.geotiffs[0].epsg, Some(28992));
+        assert_eq!(app.geotiffs[0].transform.pixel_to_world(1., 1.), original_transform.pixel_to_world(1., 1.));
+        assert!(app.osm_visible);
+    }
+
     #[test]
     fn failed_export_restores_allocations_identity_camera_and_unsaved_state(){
         let mut app=SleufBaseApp::default();app.project_name="Bewaard".into();app.project_path=Some("original.json".into());app.dirty=true;

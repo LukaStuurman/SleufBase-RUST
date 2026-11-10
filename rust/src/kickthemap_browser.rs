@@ -1,5 +1,5 @@
 //! Interactive KickTheMap browser sign-in using a *new*, temporary SleufBase
-//! WebView2 profile. The operator handles reCAPTCHA in the real browser. CDP is
+//! WebView2 profile. The sign-in page handles its own reCAPTCHA. CDP is
 //! limited to the locally launched browser, never attached to existing tabs.
 //! Credentials and session cookies are never saved to SleufBase project files.
 use serde_json::{Value,json};
@@ -182,6 +182,35 @@ impl Browser {
         if result.get("errorText").is_some(){return Err("KickTheMap-pagina kon niet worden geopend".into());}
         Ok(())
     }
+    /// Submit only the provider's own form, after its verification token is ready.
+    pub fn submit_signin(&self, account: &crate::kickthemap_session::Account) -> Result<bool, String> {
+        let ws = self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
+        let credentials = json!([account.email, account.password]);
+        let script = r#"(([email,password])=>{
+            if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin)
+                || !/^\/signin\/?$/.test(location.pathname)) return false;
+            const form=document.querySelector('form#signin-form');
+            if(!form || form.method!=='post' || form.action!==location.origin+'/login'
+                || form.target || !form.elements.namedItem('_token')?.value
+                || !form.elements.namedItem('g-recaptcha-response')?.value) return false;
+            const user=form.querySelector('input[type=email][name=email]');
+            const secret=form.querySelector('input[type=password][name=password]');
+            if(!user || !secret) return false;
+            user.value=email;
+            secret.value=password;
+            HTMLFormElement.prototype.requestSubmit.call(form);
+            return true;
+        })"#;
+        let result = self.command("Runtime.evaluate", json!({
+            "expression": format!("{script}({credentials})"),
+            "returnByValue": true,
+        }), Some(&ws)).map_err(|_| "Het KickTheMap-formulier is niet bereikbaar.")?;
+        if result.get("exceptionDetails").is_some() {
+            return Err("Het KickTheMap-formulier kon niet worden verzonden.".into());
+        }
+        Ok(result["result"]["value"].as_bool() == Some(true))
+    }
+
     pub fn cookies(&self)->Result<Vec<BrowserCookie>,String>{
         parse_browser_cookies(&self.cdp("Storage.getCookies",json!({}))?)
     }
