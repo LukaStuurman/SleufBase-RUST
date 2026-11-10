@@ -757,6 +757,25 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
 }
 
 #[test]
+fn removing_job_object_layer_preserves_its_source_file_and_other_jobs(){
+    let dir=tempfile::tempdir().unwrap();
+    let path=dir.path().join("PS42_jobFeatures.json");
+    std::fs::write(&path,b"fixture").unwrap();
+    let mut app=SleufBaseApp::default();
+    for (job_id,source_path) in [(42,path.clone()),(43,dir.path().join("PS43.json"))]{
+        app.datasets.push(sleufbase_rust::Dataset{job_id,title:format!("PS{job_id}"),source_path,features:Vec::new()});
+    }
+    app.selected=Some(1);
+    app.project_view.hidden_object_layers.push(path.clone());
+    app.remove_job_overlay(0);
+    assert_eq!(std::fs::read(&path).unwrap(),b"fixture");
+    assert_eq!(app.datasets.len(),1);
+    assert_eq!(app.datasets[0].job_id,43);
+    assert_eq!(app.selected,Some(0));
+    assert!(app.project_view.hidden_object_layers.is_empty());
+    assert!(app.dirty);
+}
+#[test]
 fn jobs_workspace_keeps_native_download_actions_visible_at_small_and_normal_sizes(){
     for size in [[680,420],[1200,760]]{
         let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),path:"/".into(),secure:true};

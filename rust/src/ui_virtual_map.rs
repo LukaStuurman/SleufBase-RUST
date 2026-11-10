@@ -378,12 +378,25 @@ mod tests {
         let initial=raster.clone();
         let mut app=SleufBaseApp{geotiffs:vec![raster],..Default::default()};
         app.make_virtual_from_raster(0);
+        assert!(app.virtual_trenches.is_empty(),"a linked raster must not silently produce an empty copy");
+        let center=sleufbase_rust::raster_points::center(&initial);
+        app.datasets.push(sleufbase_rust::Dataset{
+            job_id:1,title:"Bron".into(),source_path:"jobFeatures.json".into(),
+            features:vec![sleufbase_rust::Feature{
+                object_name:"Water".into(),source_name:"water".into(),
+                geometry:sleufbase_rust::Geometry::Point(Vertex{x:center[0],y:center[1],z:Some(2.7)}),
+                attributes:["PE".into(),"110".into(),"1".into()],
+            }],
+        });
+        app.make_virtual_from_raster(0);
         assert_eq!(app.geotiffs[0].transform,initial.transform);
         assert_eq!(app.geotiffs[0].metadata,initial.metadata);
         assert_eq!(app.virtual_trenches.len(),1);
         let copy=&app.virtual_trenches[0];
-        assert_eq!(copy.source_path,Some(initial.path));
-        assert_eq!(copy.job_id,1);
+        assert_eq!(copy.metadata["virtual_copy_source"],initial.path.to_string_lossy().as_ref());
+        assert_eq!(copy.job_id,0);
+        assert_eq!(copy.objects[0].attributes,["PE","110","1"]);
+        assert_eq!(copy.objects[0].position,Vertex{x:center[0],y:center[1],z:Some(2.7)});
         assert!(copy.width_meters>0.1);
         assert!(copy.length()>0.5);
         assert_eq!(app.virtual_map.selected,Some(0));
@@ -695,18 +708,46 @@ impl SleufBaseApp {
             .map(|x|std::borrow::Cow::Borrowed(x.label.as_str()))
             .chain(self.geotiffs.iter().filter_map(|x|
                 x.path.file_stem().map(|v|v.to_string_lossy()))));
-        let result=VirtualTrench::new(name,
-            Vertex{x:start.0,y:start.1,z:None},
-            Vertex{x:end.0,y:end.1,z:None},width);
+        let result=(||{
+            use sleufbase_rust::{raster_points,template_project::hydrate,virtual_trench_editor};
+            let mut copy=VirtualTrench::new(name,
+                Vertex{x:start.0,y:start.1,z:None},
+                Vertex{x:end.0,y:end.1,z:None},width)?;
+            let mut dataset=if raster.kickthemap_job_id.is_some_and(|id|id>0){
+                hydrate::resolve_raster(raster,&self.datasets,&std::sync::atomic::AtomicBool::new(false))?
+            }else{
+                let path=raster.path.with_file_name(format!("{}_jobFeatures.json",raster.path.file_stem().unwrap_or_default().to_string_lossy()));
+                self.datasets.iter().find(|dataset|dataset.source_path==path).map(std::borrow::Cow::Borrowed)
+            };
+            if dataset.is_none(){
+                if let Some(path)=raster_points::local_dataset_path(raster){
+                    let source=sleufbase_rust::load_job_features(&path)?;
+                    if raster.kickthemap_job_id.is_some_and(|id|source.job_id!=0&&source.job_id!=id){
+                        return Err("De objectbron hoort bij een andere KickTheMap-job.".into());
+                    }
+                    dataset=Some(std::borrow::Cow::Owned(source));
+                }
+            }
+            if let Some(dataset)=dataset.as_deref(){
+                if dataset.features.is_empty(){
+                    return Err("De gekoppelde KickTheMap-job bevat geen objectmetingen.".into());
+                }
+                virtual_trench_editor::copy_kickthemap_objects(
+                    &mut copy,dataset,&self.migrated_settings.object_rules,raster_points::start_in(&raster.metadata),
+                )?;
+            }else if raster.kickthemap_job_id.is_some_and(|id|id>0)||hydrate::local_path(raster).is_some(){
+                return Err("Laad eerst de objectpunten van deze KickTheMap-job via Jobs en maak daarna de kopie.".into());
+            }
+            copy.metadata=serde_json::json!({
+                "virtual_copy_source":raster.path.to_string_lossy(),
+                "tiff_comment_text":raster.metadata.get("tiff_comment_text").and_then(|x|x.as_str()).unwrap_or("")
+            });
+            virtual_trench_editor::check(&copy)?;
+            Ok::<_,String>(copy)
+        })();
         match result{
-            Ok(mut copy)=>{
-                copy.source_path=Some(raster.path.clone());
-                copy.job_id=raster.kickthemap_job_id.unwrap_or(0);
-                copy.metadata=serde_json::json!({
-                    "virtual_copy_source":raster.path.to_string_lossy().to_string(),
-                    "virtual_copy_geometry":"raster_centreline",
-                    "tiff_comment_text":raster.metadata.get("tiff_comment_text").and_then(|x|x.as_str()).unwrap_or("")
-                });
+            Ok(copy)=>{
+                let object_count=copy.objects.len();
                 self.cancel_virtual_map();
                 self.stop_raster_rotation();
                 self.virtual_trenches.push(copy);
@@ -715,7 +756,7 @@ impl SleufBaseApp {
                 self.raster_points.selected=None;
                 self.trench_markers.clear();
                 self.dirty=true;
-                self.message="Virtuele kopie van GeoTIFF-geometrie aangemaakt. De originele afbeelding blijft apart geladen.".into();
+                self.message=format!("Virtuele kopie aangemaakt met {object_count} objectmetingen.");
                 self.open_virtual_editor(new_index);
             }
             Err(e)=>self.message=format!("Virtuele kopie mislukt: {e}"),
@@ -1273,7 +1314,7 @@ impl SleufBaseApp {
                     Mode::Copy{target,label,start:None}=>{self.virtual_map.mode=Some(Mode::Copy{target,label,start:Some(world)});self.message="Klik nu de richting van de kopie.".into();}
                     Mode::Copy{target,label,start:Some(start)}=>{
                         match map::copy_in_direction(&self.virtual_trenches[target.index],label.clone(),start,world){
-                            Ok(copy)=>{self.hold_virtual_camera(view);self.virtual_trenches.push(copy);let i=self.virtual_trenches.len()-1;self.virtual_map.selected=Some(i);self.trench_markers.clear();self.dirty=true;self.open_virtual_editor(i);if let Some(editor)=&mut self.trench_editor{editor.start_automatic_ahn();}}
+                            Ok(copy)=>{self.hold_virtual_camera(view);self.virtual_trenches.push(copy);let i=self.virtual_trenches.len()-1;self.virtual_map.selected=Some(i);self.trench_markers.clear();self.dirty=true;self.open_virtual_editor(i);}
                             Err(e)=>{self.message=e;self.virtual_map.mode=Some(Mode::Copy{target,label,start:Some(start)});}
                         }
                     }

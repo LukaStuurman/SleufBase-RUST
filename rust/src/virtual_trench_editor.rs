@@ -222,6 +222,92 @@ pub fn export_tabular(t:&VirtualTrench)->Result<String,String> {
     if out.len()>10_000_000 {return Err("Excel-export overschrijdt het maximum".into());}
     Ok(out)
 }
+/// Copy the measured utility features into the editable crossing model.
+pub fn copy_kickthemap_objects(
+    trench:&mut VirtualTrench,
+    dataset:&crate::Dataset,
+    rules:&[crate::Rule],
+    measured_start:Option<[f64;2]>,
+)->Result<(),String>{
+    use crate::Geometry;
+    let markers:Vec<_>=dataset.features.iter().enumerate().filter_map(|(index,feature)|{
+        let Geometry::Point(point)=feature.geometry else{return None;};
+        let name=feature.source_name.trim().to_ascii_lowercase();
+        let generic=name.is_empty()||matches!(name.as_str(),"point"|"punt"|"maaiveld")||crate::profile::numeric(&name);
+        let utility=crate::matching_rule(&feature.source_name,rules).is_some_and(|rule|rule.target_layer!="0");
+        (point.z.is_some()&&generic&&!utility).then_some((index,point))
+    }).collect();
+    let reference=measured_start.unwrap_or([trench.start.x,trench.start.y]);
+    let distance=|a:Vertex,b:Vertex|(a.x-b.x).hypot(a.y-b.y);
+    let mut endpoints=None;
+    if let Some(&(start_index,start))=markers.iter().min_by(|(_,a),(_,b)|{
+        let to_reference=|p:&Vertex|(p.x-reference[0]).hypot(p.y-reference[1]);
+        to_reference(a).total_cmp(&to_reference(b))
+    }){
+        if let Some(&(end_index,end))=markers.iter().max_by(|(_,a),(_,b)|distance(start,*a).total_cmp(&distance(start,*b))){
+            if distance(start,end)>=0.5{
+                trench.start=start;
+                trench.end=end;
+                endpoints=Some([start_index,end_index]);
+            }
+        }
+    }
+    for (index,feature) in dataset.features.iter().enumerate(){
+        if endpoints.is_some_and(|indices|indices.contains(&index)){continue;}
+        let (position,angle)=match &feature.geometry{
+            Geometry::Point(point)=>(*point,None),
+            Geometry::Polyline(vertices)=>{
+                let Some(result)=line_crossing(trench,vertices) else{continue;};
+                result
+            }
+        };
+        let mut metadata=serde_json::json!({});
+        if let Some(angle)=angle{metadata["crossing_angle_degrees"]=serde_json::json!(angle);}
+        if let Some(rule)=crate::matching_rule(&feature.source_name,rules){
+            metadata["display_rgb"]=serde_json::json!(crate::cad::aci_rgb(i32::from(rule.color_aci)));
+        }
+        trench.objects.push(TrenchPoint{
+            metadata,role:"object".into(),object_name:feature.object_name.clone(),
+            source_name:feature.source_name.clone(),position,attributes:feature.attributes.clone(),
+        });
+    }
+    sort_objects(trench);
+    check(trench)
+}
+
+fn line_crossing(trench:&VirtualTrench,vertices:&[Vertex])->Option<(Vertex,Option<f64>)>{
+    let length=trench.length();
+    let mut best=None::<(f64,Vertex,Option<f64>)>;
+    for pair in vertices.windows(2){
+        let [a,b]=[pair[0],pair[1]];
+        let (along_a,offset_a)=coordinates(trench,a);
+        let (along_b,offset_b)=coordinates(trench,b);
+        let (along,offset)=(along_b-along_a,offset_b-offset_a);
+        let crossing=(offset.abs()>1e-9).then(||-offset_a/offset)
+            .filter(|fraction|(0.0..=1.0).contains(fraction))
+            .filter(|fraction|(0.0..=length).contains(&(along_a+along*fraction)));
+        // Prefer a true intersection, closest to the middle if the line
+        // crosses twice. A line off the axis keeps its actual lateral offset.
+        let fraction=crossing.unwrap_or(0.5);
+        let score=if crossing.is_some(){
+            (along_a+along*fraction-length*0.5).abs()
+        }else{
+            length+(offset_a+offset*fraction).abs()
+        };
+        let z=if fraction==0.{a.z}else if fraction==1.{b.z}else{
+            a.z.zip(b.z).map(|(a,b)|a+(b-a)*fraction)
+        };
+        let angle=(along.hypot(offset)>1e-9).then(||{
+            let along=if offset<0.{-along}else{along};
+            along.atan2(offset.abs()).to_degrees().clamp(-80.,80.)
+        });
+        if best.is_none_or(|(previous,_,_)|score<previous){
+            best=Some((score,Vertex{x:a.x+(b.x-a.x)*fraction,y:a.y+(b.y-a.y)*fraction,z},angle));
+        }
+    }
+    best.map(|(_,point,angle)|(point,angle)).or_else(||vertices.first().map(|point|(*point,None)))
+}
+
 /// Preserve measured 3D original; create a standalone editable derivative.
 pub fn manual_copy(original:&VirtualTrench,suffix:&str)->Result<VirtualTrench,String> {
     let reference=crate::virtual_map::reference(original)?;
@@ -231,6 +317,14 @@ pub fn manual_copy(original:&VirtualTrench,suffix:&str)->Result<VirtualTrench,St
     copy.alignment=None;
     copy.source_path=None;
     copy.job_id=0;
+    // A copied elevation is a measurement of the source. Moving the copy
+    // must not cause automatic ground sampling to replace that value.
+    for (point,metadata) in [(copy.start,&mut copy.start_metadata),(copy.end,&mut copy.end_metadata)]{
+        if point.z.is_some()&&crate::virtual_map::point_surface_mode(metadata)=="auto"{
+            metadata["surface_mode"]=serde_json::json!("manual");
+            metadata["surface_status"]=serde_json::json!("manual");
+        }
+    }
     if let Some(metadata)=copy.metadata.as_object_mut(){
         for key in ["rotation_degrees","base_transform_matrix","kickthemap_job_id","kickthemap_job_title","kickthemap_job_features_path","_sleufbase_python_tiff_index"]{metadata.remove(key);}
         if let Some([x,y])=reference{metadata.insert(crate::raster_points::REFERENCE.into(),serde_json::json!({"x":x,"y":y}));}
@@ -285,6 +379,46 @@ mod tests {
         assert_eq!(serde_json::to_vec(&t).unwrap(),original);
     }
     #[test]
+    fn kickthemap_copy_uses_measured_axis_and_preserves_crossings_when_relocated(){
+        use crate::{Dataset,Feature,Geometry};
+        let marker=|x,z|Feature{
+            object_name:"Meetpunt".into(),source_name:"POINT".into(),
+            geometry:Geometry::Point(Vertex{x,y:200.,z:Some(z)}),attributes:Default::default(),
+        };
+        let dataset=Dataset{
+            job_id:42,title:"PS42".into(),source_path:"source.json".into(),
+            features:vec![
+                marker(100.,5.),marker(110.,5.4),
+                Feature{
+                    object_name:"Waterleiding".into(),source_name:"Water".into(),
+                    geometry:Geometry::Polyline(vec![
+                        Vertex{x:103.,y:199.,z:Some(4.)},Vertex{x:105.,y:201.,z:Some(4.4)}
+                    ]),
+                    attributes:["PE".into(),"110".into(),"2".into()],
+                },
+                Feature{
+                    object_name:"LS".into(),source_name:"LS".into(),
+                    geometry:Geometry::Point(Vertex{x:108.,y:200.2,z:Some(4.3)}),
+                    attributes:["PVC".into(),"32".into(),"1".into()],
+                },
+            ],
+        };
+        let mut source=trench();
+        copy_kickthemap_objects(&mut source,&dataset,&[],Some([100.,200.])).unwrap();
+        assert_eq!((source.start.z,source.end.z),(Some(5.),Some(5.4)));
+        assert_eq!(source.objects.len(),2);
+        assert_eq!(source.objects[0].position,Vertex{x:104.,y:200.,z:Some(4.2)});
+        assert_eq!(source.objects[0].metadata["crossing_angle_degrees"],45.);
+        let relocated=crate::virtual_map::copy_in_direction(&source,"Nieuw".into(),[300.,400.],[300.,410.]).unwrap();
+        assert_eq!(relocated.objects[0].position,Vertex{x:300.,y:404.,z:Some(4.2)});
+        assert_eq!(relocated.objects[0].attributes,["PE","110","2"]);
+        assert_eq!(relocated.objects[0].source_name,"Water");
+        assert_eq!(relocated.objects[0].metadata,source.objects[0].metadata);
+        assert!((relocated.objects[1].position.x-299.8).abs()<1e-9);
+        assert_eq!(relocated.objects[1].position.z,Some(4.3));
+        assert_eq!(relocated.start.z,source.start.z);
+    }
+    #[test]
     fn measured_boundary_is_immutable_and_copy_is_editable() {
         let mut t=trench();
         t.boundary_3d=vec![
@@ -292,6 +426,11 @@ mod tests {
             Vertex{x:110.,y:200.,z:Some(-1.)},
             Vertex{x:110.,y:202.,z:Some(-1.)},
         ];
+        t.start.z=Some(2.);
+        let mut object=sample_object(3.,0.2);
+        object.attributes=["PE".into(),"110".into(),"2".into()];
+        object.metadata=serde_json::json!({"crossing_angle_degrees":15.,"measurement_id":"M42"});
+        t.objects.push(object);
         t.source_path=Some("source.dxf".into());
         t.job_id=443;
         let measured=t.clone();
@@ -303,6 +442,11 @@ mod tests {
         assert!(reverse_axis(&mut t).is_err());
         assert!(translate(&mut t,2.,0.).is_err());
         let mut new=manual_copy(&t,"(handmatig)").unwrap();
+        assert_eq!(serde_json::to_value(&new.objects).unwrap(),serde_json::to_value(&t.objects).unwrap());
+        let relocated=crate::virtual_map::copy_in_direction(&t,"Verplaatst".into(),[300.,400.],[300.,410.]).unwrap();
+        assert!((relocated.objects[0].position.x-299.8).abs()<1e-9);
+        assert_eq!((relocated.start.z,relocated.objects[0].position.z),(Some(2.),Some(-1.25)));
+        assert_eq!(relocated.objects[0].metadata,t.objects[0].metadata);
         assert!(new.boundary_3d.is_empty());
         assert!(new.source_path.is_none());
         assert_eq!(new.job_id,0);

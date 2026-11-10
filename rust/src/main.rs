@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 mod ui;
 mod rule_editor;
 mod export_dialog;
@@ -103,6 +105,23 @@ fn run_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn attach_cli_console(){
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        System::Console::{AttachConsole,GetStdHandle,ATTACH_PARENT_PROCESS,STD_ERROR_HANDLE,STD_OUTPUT_HANDLE},
+    };
+    // The desktop uses the GUI subsystem. CLI calls may still use existing
+    // redirected handles or the console of the invoking terminal.
+    unsafe {
+        let redirected=[STD_OUTPUT_HANDLE,STD_ERROR_HANDLE].into_iter().any(|stream|{
+            let handle=GetStdHandle(stream);
+            !handle.is_null()&&handle!=INVALID_HANDLE_VALUE
+        });
+        if !redirected{AttachConsole(ATTACH_PARENT_PROCESS);}
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
     if raw_args.first().is_some_and(|s|s=="--kickthemap-webview") {
@@ -112,6 +131,8 @@ fn main() -> eframe::Result<()> {
     }
     let command=raw_args.first().is_some_and(|s|s.to_string_lossy().starts_with('-')||s=="help");
     if command {
+        #[cfg(windows)]
+        attach_cli_console();
         let args:Vec<String>=match raw_args.iter().map(|s|s.clone().into_string()).collect(){Ok(args)=>args,Err(_)=>{eprintln!("Fout: ongeldige tekst in opdrachtregel");std::process::exit(2);}};
         if args[0]=="--licenses" {println!("{}",include_str!("../third_party/RustCrypto-NOTICES.txt"));println!("Wry 0.57.0 — ingebouwde WebView2-weergave\n{}",include_str!("../third_party/wry-LICENSE.txt"));println!("Pillow 11.3.0 — affine rasterrotatie, bilineaire kaartresampling en alphacompositie\n{}\nezdxf 1.4.4 — SHP/SHX/LFF-protocol, fontmetingen en vector-tekstuitlijning (native Rust-port met correcties)\n{}\nproj4rs 0.2.1 — native GPS/RD-navigatie\n{}",include_str!("../third_party/Pillow-LICENSE.txt"),include_str!("../third_party/ezdxf-LICENSE.txt"),include_str!("../third_party/proj4rs-NOTICES.txt"));return Ok(());}
         if ["-h", "--help", "help"].contains(&args[0].as_str()) {
