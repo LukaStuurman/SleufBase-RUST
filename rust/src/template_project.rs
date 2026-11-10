@@ -124,7 +124,7 @@ pub fn suggest(datasets: &[Dataset], rasters: &[GeoTiffInfo], trenches: &[Virtua
     choices
 }
 fn raster_identity(raster:&GeoTiffInfo)->(PathBuf,Option<u64>){(raster.path.clone(),raster.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64))}
-fn raster_choice(index:usize,raster:&GeoTiffInfo)->Choice{Choice{
+pub fn raster_choice(index:usize,raster:&GeoTiffInfo)->Choice{Choice{
     source:Source::Raster(index),raster:Some(index),include:true,
     title:raster.path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),label:None,legacy_slot:None,
     profile:true,manual_scale:crate::template_scale::coerce(raster.metadata.get(crate::template_scale::METADATA_KEY)),reverse:false,comments:String::new(),photos:Vec::new(),

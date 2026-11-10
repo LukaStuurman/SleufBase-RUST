@@ -133,6 +133,15 @@ impl TemplatePreferences {
         }
         Ok(())
     }
+    pub fn contains_raster_slot(&self,raster:&GeoTiffInfo)->bool{
+        let origin=raster.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64);
+        self.choices.iter().any(|choice|match &choice.source{
+            SourceKey::Raster{origin:Some(saved),..}=>origin==Some(*saved),
+            SourceKey::Raster{path,origin:None}=>path==&raster.path,
+            _=>false,
+        })
+    }
+
     pub fn restore(&self,jobs:&[Dataset],rasters:&[GeoTiffInfo],
         trenches:&[VirtualTrench])->Options
     {
