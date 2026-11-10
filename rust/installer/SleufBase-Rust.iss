@@ -1,5 +1,5 @@
-#define MyAppName "SleufBase Rust preview"
-#define MyAppVersion "0.1.0"
+#define MyAppName "SleufBase Rust"
+#define MyAppVersion "1.0.0"
 #define MyAppExeName "sleufbase-rust.exe"
 
 [Setup]
@@ -7,8 +7,8 @@ AppId={{B1B60FE1-34DA-4C80-A808-3F0E9A4245E6}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=Techbase
-DefaultDirName={localappdata}\Programs\Techbase\SleufBase-Rust-preview
-DefaultGroupName=Techbase\SleufBase Rust preview
+DefaultDirName={localappdata}\Programs\Techbase\SleufBase-Rust
+DefaultGroupName=Techbase\SleufBase Rust
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -24,8 +24,8 @@ WizardResizable=no
 CloseApplications=yes
 RestartApplications=yes
 UsePreviousAppDir=yes
-VersionInfoVersion=0.1.0.0
-VersionInfoDescription=SleufBase native Rust preview installer
+VersionInfoVersion=1.0.0.0
+VersionInfoDescription=SleufBase Rust installer
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 
@@ -40,11 +40,11 @@ Source: "..\dist\prerequisites\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Fl
 Source: "..\dist\portable-build\SleufBase-Rust-portable-preview\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\SleufBase Rust preview"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{autodesktop}\SleufBase Rust preview"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\SleufBase Rust"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{autodesktop}\SleufBase Rust"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "SleufBase Rust preview starten"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "SleufBase Rust starten"; Flags: nowait postinstall skipifsilent
 
 [Code]
 #include "webview2.iss"

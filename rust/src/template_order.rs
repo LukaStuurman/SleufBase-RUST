@@ -185,6 +185,20 @@ pub fn number(value: &str) -> Option<String> {
         trimmed.into()
     })
 }
+/// Normalize a typed proefsleuf label. The optional suffix is literal.
+pub fn typed_label(raw:&str)->Option<String>{
+    let raw=raw.trim();
+    if raw.is_empty()||raw.len()>256||raw.chars().any(char::is_control){return None;}
+    let body=raw.get(..2).filter(|p|p.eq_ignore_ascii_case("PS"))
+        .map_or(raw,|_|raw[2..].trim_start());
+    let digits=body.char_indices().find(|(_,c)|crate::object_layout::decimal(*c).is_none())
+        .map_or(body.len(),|(i,_)|i);
+    let label=if let Some(n)=number(&body[..digits]){
+        format!("PS{n}{}", &body[digits..])
+    }else{raw.to_owned()};
+    (label.len()<=256).then_some(label)
+}
+
 pub fn variant(value: &serde_json::Value) -> String {
     if let Some(s) = value.as_str() {
         let s = python_values::uppercase(python_values::trim(s));

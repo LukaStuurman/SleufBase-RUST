@@ -1,4 +1,4 @@
-name: Publish SleufBase Rust UI preview 12
+name: Publish SleufBase Rust 1.0
 
 on:
   workflow_run:
@@ -25,7 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          TAG: v0.1.0-preview.12
+          TAG: v1.0.0
         shell: bash
         run: |
           set -euo pipefail
@@ -78,28 +78,35 @@ jobs:
           sha256sum --check SleufBase-Rust-preview-Setup.sha256
           cd ..
           python3 tools/verify_native_preview.py release/SleufBase-Rust-portable-preview.zip release/SleufBase-Rust-portable-preview.sha256
-          python3 -c 'import json,os,zipfile; z=zipfile.ZipFile("release/SleufBase-Rust-portable-preview.zip"); assert json.loads(z.read("build-info.json"))["revision"] == os.environ["RUN_SHA"], "Package revision differs from the passing main build"'
+          python3 -c 'import json,os,zipfile; z=zipfile.ZipFile("release/SleufBase-Rust-portable-preview.zip"); info=json.loads(z.read("build-info.json")); assert info["application_version"] == "1.0.0"; assert info["revision"] == os.environ["RUN_SHA"], "Package revision differs from the passing main build"'
 
-      - name: Publish one-time preview release and Windows downloads
+      - name: Publish stable 1.0 release and Windows downloads
         if: steps.guard.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          TAG: v0.1.0-preview.12
+          TAG: v1.0.0
         shell: bash
         run: |
           set -euo pipefail
           current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
           test "$RUN_SHA" = "$current"
+          (
+            cd release
+            mv SleufBase-Rust-portable-preview.zip SleufBase-Rust-portable.zip
+            mv SleufBase-Rust-preview-Setup.exe SleufBase-Rust-Setup.exe
+            sha256sum SleufBase-Rust-portable.zip > SleufBase-Rust-portable.sha256
+            sha256sum SleufBase-Rust-Setup.exe > SleufBase-Rust-Setup.sha256
+          )
           gh release create "$TAG" \
-            release/SleufBase-Rust-portable-preview.zip \
-            release/SleufBase-Rust-portable-preview.sha256 \
-            release/SleufBase-Rust-preview-Setup.exe \
-            release/SleufBase-Rust-preview-Setup.sha256 \
+            release/SleufBase-Rust-portable.zip \
+            release/SleufBase-Rust-portable.sha256 \
+            release/SleufBase-Rust-Setup.exe \
+            release/SleufBase-Rust-Setup.sha256 \
             --repo "$GITHUB_REPOSITORY" \
             --target "$RUN_SHA" \
-            --title "SleufBase Rust 0.1.0 - UI preview 12" \
-            --notes-file rust/RELEASE_NOTES_UI_PREVIEW_12.md \
-            --prerelease --draft
+            --title "SleufBase Rust 1.0" \
+            --notes-file rust/RELEASE_NOTES_1_0.md \
+            --draft
           test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" = 4
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

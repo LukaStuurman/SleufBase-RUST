@@ -399,7 +399,10 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         metadata_bytes=metadata_bytes.saturating_add(crate::raster_points::validate_metadata(&metadata)?);
         if metadata_bytes>16*1024*1024{return Err("Te veel profielmetadata voor één export".into());}
         if has_dataset{datasets.push(dataset);}
-        let mut slot_label=choice.label.clone().unwrap_or_else(||format!("PS{:03}",slots.len()+1));
+        let mut slot_label=match choice.label.as_deref(){
+            Some(label)=>crate::template_order::typed_label(label).ok_or("Ongeldig proefsleuflabel")?,
+            None=>format!("PS{:03}",slots.len()+1),
+        };
         if let Some(number)=slot_label.strip_suffix("AUTO").and_then(crate::template_order::number){
             let counter=auto_variants.entry(number.clone()).or_insert(1);*counter+=1;
             slot_label=format!("PS{number}{}",crate::template_order::suffix(*counter));

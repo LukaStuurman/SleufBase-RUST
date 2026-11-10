@@ -91,7 +91,7 @@ impl Dialog {
         let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
         if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee.".into());}
         if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
-        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de PS-nummers van de geselecteerde vakken.".into());}
+        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de proefsleuflabels van de geselecteerde vakken.".into());}
         if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
         Ok(())
     }
@@ -132,7 +132,7 @@ impl SleufBaseApp {
         let rasters = &self.geotiffs;
         let raster_previews = &self.raster_textures;
         if let Some(dialog) = &mut self.project_template_dialog {
-            let mut clicked_row=None;let mut sync_editor=false;
+            let mut clicked_row=None;let mut sync_editor=false;let mut edited_label=None;
             egui::Window::new("DXF-sjabloon exporteren")
                 .open(&mut open)
                 .default_width(730.)
@@ -239,12 +239,14 @@ impl SleufBaseApp {
                             if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
                             if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
                         });
+                        ui.collapsing("Meerdere vakken aanpassen", |ui| {
                         ui.horizontal_wrapped(|ui|{
                             ui.label("PS-nummer");ui.add(egui::TextEdit::singleline(&mut dialog.editor.number).desired_width(75.));
                             ui.label("Variant");egui::ComboBox::from_id_salt("mixed-template-variant").selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant}).show_ui(ui,|ui|{ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");for c in 'B'..='Z'{ui.selectable_value(&mut dialog.editor.variant,c.to_string(),format!("Variant {c}"));}});
                             if ui.small_button("Nummer/variant toepassen").clicked(){match dialog.editor.apply_label(&mut dialog.options.choices){Ok(())=>{dialog.error.clear();if let Some(mode)=dialog.sort_mode{let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);template_order::reorder(&mut dialog.automatic,&order);}},Err(e)=>dialog.error=e}}
                             ui.label("Profielschaal");ui.add(egui::TextEdit::singleline(&mut dialog.editor.scale).desired_width(75.));
                             if ui.small_button("Schaal toepassen").clicked(){dialog.error=dialog.editor.apply_scale(&mut dialog.options.choices).err().unwrap_or_default();}
+                        });
                         });
                         let mut add_raster=None;
                         ui.add_enabled_ui(dialog.options.choices.len()<20_000,|ui|ui.menu_button("Losse GeoTIFF als vak toevoegen",|ui|{
@@ -265,25 +267,33 @@ impl SleufBaseApp {
                             dialog.editor.select(&dialog.options.choices,dialog.options.choices.len()-1,false,false);
                             dialog.sort_mode=None;
                         }
-                        let(preview_labels,invalid_labels)=dialog.editor.preview(&dialog.options.choices);
-                        if !invalid_labels.is_empty(){ui.colored_label(DARK,"Vul geldige PS-nummers in voor de geselecteerde exportvakken.");}
+                        ui.small("Pas het proefsleuflabel direct in de rij aan, bijvoorbeeld PS 25-2, 25B of 25EXTENT.");
                         for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
                             ui.push_id(idx, |ui| {
                                 ui.group(|ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
                                         if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
-                                        ui.strong(match slot.source {
-                                            Source::Job(i) => format!("KickTheMap-job {}", i + 1),
-                                            Source::Virtual(i) => format!("Virtuele sleuf {}", i + 1),
-                                            Source::Raster(i)=>format!("GeoTIFF {}",i+1),
-                                            Source::Empty(_)=>"Leeg vak".into(),
-                                        });
+                                        if !matches!(slot.source, Source::Empty(_)) {
+                                            let label = slot.label.get_or_insert_with(String::new);
+                                            if ui.add(egui::TextEdit::singleline(label)
+                                                .hint_text("Proefsleuflabel")
+                                                .desired_width(150.)
+                                                .char_limit(256)).changed() {
+                                                edited_label = Some(idx);
+                                            }
+                                        }
+                                        ui.label(&slot.title);
+                                    });
+                                    if matches!(slot.source,Source::Empty(_)){return;}
+                                    if slot.include && slot.raster.is_none() && matches!(slot.source,Source::Job(_)|Source::Raster(_)) {
+                                        ui.colored_label(DARK, "Koppel een GeoTIFF via Vakdetails.");
+                                    }
+                                    ui.collapsing("Vakdetails", |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Naam");
                                         ui.text_edit_singleline(&mut slot.title);
                                     });
-                                    if matches!(slot.source,Source::Empty(_)){ui.small("Dit vak blijft leeg op het blad.");return;}
-                                    ui.label(format!("Exportlabel: {}",preview_labels[idx].as_deref().unwrap_or("niet meenemen")));
-
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label("GeoTIFF:");
                                         let selected_name = slot.raster.and_then(|i| rasters.get(i))
@@ -405,6 +415,7 @@ impl SleufBaseApp {
                                     ui.collapsing("Opmerkingen", |ui| {
                                         ui.text_edit_multiline(&mut slot.comments);
                                     });
+                                    });
                                 });
                             });
                         }
@@ -414,6 +425,7 @@ impl SleufBaseApp {
                             ui.colored_label(DARK, &dialog.error);
                         }
                         ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
+                        if let Some(index)=edited_label {dialog.editor.update_typed_label(&dialog.options.choices,index);}
                         let readiness=dialog.readiness();
                         let ready=readiness.is_ok();
                         if let Err(reason)=readiness{ui.small(reason);}

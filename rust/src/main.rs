@@ -14,7 +14,7 @@ use sleufbase_rust::{
 use std::path::PathBuf;
 
 fn print_help() {
-    println!("SleufBase Rust 0.1.0 — lokale KickTheMap-objecten");
+    println!("SleufBase Rust {} — lokale KickTheMap-objecten", env!("CARGO_PKG_VERSION"));
     println!("sleufbase-rust.exe                               Open Windows desktopapp");
     println!("sleufbase-rust.exe project.json [kaart.tif ...]    Open project of kaartbestanden");
     println!("sleufbase-rust.exe --xlsx uitvoer.xlsx jobFeatures.json [extra.json ...]");
