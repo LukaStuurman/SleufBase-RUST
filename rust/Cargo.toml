@@ -40,9 +40,12 @@ unicode-script = "0.5.8"
 crc32fast = "1"
 
 [target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+webview2-com = "=0.39.1"
+windows-core = "0.62"
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 winit = "0.30"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }

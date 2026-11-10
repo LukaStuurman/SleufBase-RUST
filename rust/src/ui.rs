@@ -928,7 +928,9 @@ impl SleufBaseApp {
         self.live_jobs_owner=None;
         self.live_jobs.clear();
 
+        self.hide_kickthemap_pane();
         self.browser_ui.browser=None;
+        self.browser_ui.dock=None;
         self.browser_ui.selected.clear();
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
@@ -1292,7 +1294,18 @@ fn canvas(
 }
 
 impl eframe::App for SleufBaseApp {
-    fn update(&mut self,ctx:&egui::Context,_frame:&mut eframe::Frame) {self.render(ctx);}
+    fn update(&mut self,ctx:&egui::Context,frame:&mut eframe::Frame) {
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle,RawWindowHandle};
+            if let Ok(handle)=frame.window_handle(){
+                if let RawWindowHandle::Win32(handle)=handle.as_raw(){self.browser_ui.host=handle.hwnd.get();}
+            }
+        }
+        #[cfg(not(windows))]
+        let _=frame;
+        self.render(ctx);
+    }
 }
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
@@ -1383,7 +1396,11 @@ impl SleufBaseApp {
             self.trench_markers=self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
             self.refresh_virtual_references();
         }
-        self.show_original_map(ctx);
+        if self.shell.login_open||self.browser_ui.web_visible{
+            self.show_kickthemap_login(ctx);
+        }else{
+            self.show_original_map(ctx);
+        }
         self.show_extended_tools(ctx);
 
         if self.show_trench_dialog {
@@ -1427,8 +1444,9 @@ impl SleufBaseApp {
         self.show_tiff_comment_editor(ctx);
         self.show_map_comment_editor(ctx);
         if self.trench_editor.is_some() {self.show_virtual_editor(ctx);}
-        if self.browser_ui.open {self.show_kickthemap_workspace(ctx);}
-        self.show_kickthemap_login(ctx);
+        if self.browser_ui.open&&!self.shell.login_open&&!self.browser_ui.web_visible {
+            self.show_kickthemap_workspace(ctx);
+        }
 
 
 

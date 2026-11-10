@@ -3,24 +3,81 @@
 use serde_json::Value;
 #[cfg(windows)]
 use std::io::{Read, Write};
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+const PROFILE: &str = "rust-webview-profile";
+const SESSION: &str = "rust-session.dat";
 
 #[cfg(windows)]
 const MAX_BYTES: usize = 256 * 1024;
 
 fn path() -> PathBuf {
-    crate::loaded_jobs::kickthemap_cache_dir().join("rust-session.dat")
+    crate::loaded_jobs::kickthemap_cache_dir().join(SESSION)
 }
 
 pub fn exists() -> bool {
-    path().is_file()
+    path().is_file() || browser_profile().is_dir()
+}
+
+pub(crate) fn browser_profile() -> PathBuf {
+    crate::loaded_jobs::kickthemap_cache_dir().join(PROFILE)
+}
+#[cfg(windows)]
+pub(crate) fn lock_profile() -> io::Result<fs::File> {
+    lock_profile_in(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn lock_profile_in(root: &Path) -> io::Result<fs::File> {
+    fs::create_dir_all(root)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("rust-webview-profile.lock"))?;
+    file.try_lock().map_err(io::Error::from)?;
+    Ok(file)
 }
 
 pub fn forget() -> io::Result<()> {
-    match fs::remove_file(path()) {
+    forget_from(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn forget_from(root: &Path) -> io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let _lock = lock_profile_in(root)?;
+    match fs::remove_dir_all(root.join(PROFILE)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        result => result?,
+    }
+    match fs::remove_file(root.join(SESSION)) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+
+#[cfg(test)]
+#[test]
+fn logout_clears_only_the_saved_profile_and_session_after_its_owner_exits() {
+    let root = tempfile::tempdir().unwrap();
+    let profile = root.path().join(PROFILE);
+    let session = root.path().join(SESSION);
+    let jobs = root.path().join("jobs_cache");
+    fs::create_dir(&profile).unwrap();
+    fs::write(profile.join("fixture"), b"test account only").unwrap();
+    fs::write(&session, b"test session only").unwrap();
+    fs::create_dir(&jobs).unwrap();
+    let held = lock_profile_in(root.path()).unwrap();
+    assert!(forget_from(root.path()).is_err());
+    assert!(profile.is_dir() && session.is_file());
+    drop(held);
+    forget_from(root.path()).unwrap();
+    assert!(!profile.exists() && !session.exists() && jobs.is_dir());
 }
 
 #[cfg(windows)]
