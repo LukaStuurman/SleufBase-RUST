@@ -504,6 +504,48 @@ mod flow_audit_tests {
         assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));assert!(d.options.choices.iter().any(|c|matches!(c.source,Source::Raster(0))));
     }
     #[test]
+    fn one_template_window_keeps_both_source_types_regardless_of_add_order_or_legacy_state() {
+        let mut app=app();
+        let jobs=vec![Dataset{job_id:88,title:"KickTheMap PS88".into(),
+            source_path:"PS88.json".into(),features:Vec::new()}];
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        raster.kickthemap_job_id=Some(88);
+        app.geotiffs.push(raster);
+        // Historical TIFF-export state previously forced a separate
+        // window and excluded all newly added virtual trenches.
+        app.template_state=Some(Default::default());
+        app.open_template_export();
+        let mixed=app.project_template_dialog.as_ref().unwrap();
+        assert!(app.template_order_dialog.is_none());
+        assert_eq!(mixed.options.background,BackgroundKind::Pdok);
+        assert!(mixed.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
+        assert!(mixed.options.choices.iter().any(|c|matches!(c.source,Source::Raster(0))));
+        app.project_template_dialog=None;
+        app.datasets=jobs;
+        app.open_template_export();
+        let mixed=app.project_template_dialog.as_ref().unwrap();
+        assert!(mixed.options.choices.iter().any(|c|matches!(c.source,Source::Job(0))));
+        assert!(mixed.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
+        assert!(app.template_order_dialog.is_none());
+
+        // A saved raster-only layout is restored without dropping newly
+        // imported jobs or later-created virtual trenches.
+        let mut app=app;
+        app.project_template_dialog=None;
+        let previous=template_project::Options{
+            raster_layout:true,
+            choices:template_project::suggest_rasters(&app.geotiffs,&[]),
+            ..Default::default()
+        };
+        app.template_preferences=Some(sleufbase_rust::template_prefs::TemplatePreferences::capture(
+            &previous,&[],&app.geotiffs,&[]));
+        app.open_template_export();
+        let restored=app.project_template_dialog.as_ref().unwrap();
+        assert!(restored.options.choices.iter().any(|c|matches!(c.source,Source::Job(0))));
+        assert!(restored.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
+    }
+    #[test]
     fn preflight_explains_invalid_output_and_busy_launch_keeps_the_reviewed_form(){
         let dir=tempfile::tempdir().unwrap();let mut app=app();app.open_project_template_dialog();
         let d=app.project_template_dialog.as_mut().unwrap();assert!(d.readiness().unwrap_err().contains("uitvoer-DXF"));
