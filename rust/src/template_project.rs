@@ -84,7 +84,8 @@ impl Default for Options {
             font_directories: Vec::new(),
             dpi: 150,
             scale: 225.,
-            background: BackgroundKind::Blank,
+            // Use the same real-world aerial map for virtual and KickTheMap trenches.
+            background: BackgroundKind::Pdok,
             include_bgt: true,
             include_cadastral: true,
             include_cad: true,
