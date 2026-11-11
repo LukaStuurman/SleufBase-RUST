@@ -1578,7 +1578,7 @@ impl SleufBaseApp {
         self.show_tiff_comment_editor(ctx);
         self.show_map_comment_editor(ctx);
         if self.trench_editor.is_some() {self.show_virtual_editor(ctx);}
-        if self.browser_ui.open && !self.browser_ui.web_visible {
+        if self.browser_ui.open && !self.shell.login_open && !self.browser_ui.web_visible {
             self.show_kickthemap_workspace(ctx);
         }
         if !self.browser_ui.web_visible {
