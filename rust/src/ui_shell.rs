@@ -37,7 +37,7 @@ impl Default for State {
             settings_scan: None,
             settings_generation: None,
             focused_layer: None,
-            login_open: false,login_focus:false,login_remember:false,
+            login_open: false,login_focus:false,login_remember:true,
             login_email:String::new(),login_password:String::new(),
             login_pending_account:None,login_saved_attempted:false,login_is_native:false,
             installed: false,
