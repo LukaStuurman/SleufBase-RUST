@@ -35,6 +35,9 @@ impl SleufBaseApp {
         let saved = stored::account_exists();
         #[cfg(test)]
         let saved = false;
+        // Capture before the text editor processes Enter; single-line edits
+        // can consume this event while moving keyboard focus.
+        let submit_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
         let mut open = true;
         let mut login = false;
         let mut browser = false;
@@ -108,7 +111,7 @@ impl SleufBaseApp {
                             egui::Button::new(egui::RichText::new("Inloggen").color(Color32::WHITE)).fill(ORANGE),
                         );
                         login = button.clicked();
-                        if !busy && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if !busy && !self.shell.login_email.trim().is_empty() && submit_pressed {
                             login = true;
                         }
                     }
