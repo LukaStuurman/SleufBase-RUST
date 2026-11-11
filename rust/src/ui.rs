@@ -241,7 +241,7 @@ impl Default for SleufBaseApp {
             Ok((settings,backup))=>(settings,backup,String::new()),
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
-        Self {
+        let mut app = Self {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
             overview_ui:Default::default(),
@@ -332,7 +332,14 @@ impl Default for SleufBaseApp {
             last_backup:Instant::now(),
             zoom:1.0,
             pan:egui::Vec2::ZERO,
+        };
+        // Decrypt and connect only on a worker: startup never opens a browser
+        // or blocks the egui event loop. Tests cannot access the user's vault.
+        #[cfg(not(test))]
+        if sleufbase_rust::kickthemap_session::account_exists() {
+            app.start_saved_login();
         }
+        app
     }
 }
 
@@ -769,10 +776,77 @@ impl SleufBaseApp {
     }
 
 
-    fn login_kickthemap(&mut self) {
-        if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
+    fn start_saved_login(&mut self) {
+        use sleufbase_rust::kickthemap_session as stored;
+        if self.live_operation_busy() || self.live_session.is_some()
+            || self.shell.login_saved_attempted || !stored::account_exists() {
+            return;
+        }
+        self.shell.login_saved_attempted = true;
+        match stored::load_account() {
+            Ok(Some(account)) => {
+                self.shell.login_email = account.email.clone();
+                self.start_native_login(account, true);
+            }
+            Ok(None) => {},
+            Err(error) => {
+                self.open_kickthemap_login();
+                self.browser_ui.status = format!("Bewaarde inloggegevens kunnen niet worden gelezen: {error}");
+            }
+        }
+    }
 
-        self.start_kickthemap_login(self.shell.login_remember);
+    fn start_native_login(&mut self, account:sleufbase_rust::kickthemap_session::Account, remember:bool) {
+        if self.live_operation_busy() || self.browser_ui.batch_mode { return; }
+        self.shell.login_pending_account = if remember {
+            Some(sleufbase_rust::kickthemap_session::Account {
+                email:account.email.clone(), password:account.password.clone()
+            })
+        } else { None };
+        self.shell.login_is_native = true;
+        self.browser_ui.status = "Rechtstreeks aanmelden en jobs ophalen…".into();
+        self.message = self.browser_ui.status.clone();
+        let (tx,rx) = mpsc::channel();
+        self.live_rx = Some(rx);
+        self.live_busy = true;
+        #[cfg(not(test))]
+        std::thread::spawn(move|| {
+            let result = KickTheMapLiveClient::login(&account.email,&account.password)
+                .and_then(|mut session| {
+                    let jobs=session.fetch_jobs()?;
+                    Ok((session,jobs))
+                });
+            let _ = tx.send(result);
+        });
+        #[cfg(test)]
+        {
+            let _ = account;
+            let _ = tx.send(Err("Test: netwerklogin niet gestart".into()));
+        }
+    }
+
+    fn login_kickthemap(&mut self) {
+        use sleufbase_rust::kickthemap_session as stored;
+        if self.live_operation_busy() || self.browser_ui.batch_mode {return;}
+        let email=self.shell.login_email.trim().to_owned();
+        let password=std::mem::take(&mut self.shell.login_password);
+        if email.is_empty() {
+            self.browser_ui.status="Vul een e-mailadres in.".into();
+            return;
+        }
+        let account=if !password.is_empty() {
+            stored::Account {email,password}
+        } else {
+            match stored::load_account() {
+                Ok(Some(account)) if account.email.eq_ignore_ascii_case(&email) => account,
+                _ => {
+                    self.browser_ui.status="Vul je wachtwoord in voor dit e-mailadres.".into();
+                    return;
+                }
+            }
+        };
+        self.shell.login_saved_attempted=true;
+        self.start_native_login(account,self.shell.login_remember);
     }
 
     fn refresh_live_jobs(&mut self) {
@@ -891,25 +965,57 @@ impl SleufBaseApp {
         let event=self.live_rx.as_ref().map(|rx|rx.try_recv());
         match event {
             Some(Ok(Ok((session,jobs))))=>{
+                let native = std::mem::take(&mut self.shell.login_is_native);
                 self.live_jobs_owner=Some(session.snapshot_owner().clone());
                 self.live_session=Some(session);
                 self.live_jobs=jobs;
                 self.live_busy=false;
                 self.live_rx=None;
                 self.message=format!("{} KickTheMap jobs live opgehaald",self.live_jobs.len());
+                if native {
+                    // An earlier website view might belong to another account.
+                    self.browser_ui.browser=None;
+                    #[cfg(not(test))]
+                    {
+                        use sleufbase_rust::kickthemap_session as stored;
+                        let _=stored::forget();
+                        let saved=if let Some(account)=self.shell.login_pending_account.take(){
+                            stored::save_account(&account)
+                        }else{stored::forget_account()};
+                        if let Err(error)=saved{
+                            self.message.push_str(&format!(" (Account niet onthouden: {error})"));
+                        }
+                    }
+                    #[cfg(test)]
+                    {self.shell.login_pending_account=None;}
+                    self.shell.login_password.clear();
+                    self.shell.login_open=false;
+                    self.shell.login_saved_attempted=false;
+                    self.browser_ui.open=true;
+                }
+                self.browser_ui.status=self.message.clone();
                 self.save_live_cache();
             }
             Some(Ok(Err(err)))=>{
+                let native = std::mem::take(&mut self.shell.login_is_native);
+                self.shell.login_pending_account=None;
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
-                if err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED||err.contains("sessie verlopen") {
+                if native || err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED || err.contains("sessie verlopen") {
+                    if !native && err.contains("sessie verlopen") && !self.shell.login_saved_attempted
+                        && sleufbase_rust::kickthemap_session::account_exists() {
+                        self.start_saved_login();
+                        return;
+                    }
                     self.open_kickthemap_login();
                     self.browser_ui.status=err.clone();
                 }
                 self.message=format!("KickTheMap live: {err}");
             }
             Some(Err(TryRecvError::Disconnected))=>{
+                self.shell.login_is_native=false;
+                self.shell.login_pending_account=None;
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
@@ -933,12 +1039,18 @@ impl SleufBaseApp {
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         #[cfg(not(test))]
-        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok();
+        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok()
+            && sleufbase_rust::kickthemap_session::forget_account().is_ok();
         #[cfg(test)]
         let forgotten=true;
+        self.shell.login_pending_account=None;
+        self.shell.login_email.clear();
+        self.shell.login_password.clear();
+        self.shell.login_is_native=false;
+        self.shell.login_saved_attempted=true;
         self.shell.login_remember=false;
-        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale sessie is verwijderd."}
-            else{"Uitgelogd. De bewaarde sessie kon niet worden verwijderd."}.into();
+        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale aanmelding en inloggegevens zijn verwijderd."}
+            else{"Uitgelogd. Bewaarde inloggegevens konden mogelijk niet worden verwijderd."}.into();
         self.message=self.browser_ui.status.clone();
     }
 
