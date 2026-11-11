@@ -933,6 +933,8 @@ impl SleufBaseApp {
                     self.browser_ui.download_notice=None;
                     self.message="Een download uit een eerdere KickTheMap-sessie is afgerond; bestanden blijven op schijf. Vernieuw de huidige jobs.".into();return;
                 }
+                let expired=result.as_ref().err()
+                    .is_some_and(|error|error.to_lowercase().contains("sessie verlopen"));
                 self.live_session=Some(client);
                 self.live_download_rx=None;
                 self.live_busy=false;
@@ -950,6 +952,21 @@ impl SleufBaseApp {
                 }
                 if let Some(notice)=self.browser_ui.download_notice.take().and_then(|rx|rx.try_recv().ok()){
                     self.message.push('\n');self.message.push_str(&notice);
+                }
+                if expired {
+                    // A failed download may be the first indication of an expired
+                    // session. Do not retry the download under a new identity.
+                    self.live_session=None;
+                    if self.browser_ui.batch_mode {
+                        self.browser_ui.queue.clear();
+                        self.browser_ui.batch_mode=false;
+                    }
+                    if !cfg!(test) && !self.shell.login_saved_attempted
+                        && sleufbase_rust::kickthemap_session::account_exists() {
+                        self.start_saved_login();
+                    } else {
+                        self.open_kickthemap_login();
+                    }
                 }
             }
             Some(Err(TryRecvError::Disconnected))=>{
@@ -1005,7 +1022,7 @@ impl SleufBaseApp {
                 self.live_session=None;
                 if native || err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED || err.contains("sessie verlopen") {
                     if !native && err.contains("sessie verlopen") && !self.shell.login_saved_attempted
-                        && sleufbase_rust::kickthemap_session::account_exists() {
+                        && !cfg!(test) && sleufbase_rust::kickthemap_session::account_exists() {
                         self.start_saved_login();
                         return;
                     }
@@ -1040,8 +1057,11 @@ impl SleufBaseApp {
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         #[cfg(not(test))]
-        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok()
-            && sleufbase_rust::kickthemap_session::forget_account().is_ok();
+        let forgotten={
+            let session_removed=sleufbase_rust::kickthemap_session::forget().is_ok();
+            let credentials_removed=sleufbase_rust::kickthemap_session::forget_account().is_ok();
+            session_removed && credentials_removed
+        };
         #[cfg(test)]
         let forgotten=true;
         self.shell.login_pending_account=None;
