@@ -1072,7 +1072,7 @@ impl SleufBaseApp {
         self.shell.login_password.clear();
         self.shell.login_is_native=false;
         self.shell.login_saved_attempted=true;
-        self.shell.login_remember=false;
+        self.shell.login_remember=true;
         self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale aanmelding en inloggegevens zijn verwijderd."}
             else{"Uitgelogd. Bewaarde inloggegevens konden mogelijk niet worden verwijderd."}.into();
         self.message=self.browser_ui.status.clone();
