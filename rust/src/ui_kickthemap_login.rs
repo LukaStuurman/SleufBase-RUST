@@ -13,7 +13,7 @@ impl SleufBaseApp {
         #[cfg(not(test))]
         {
             if !already_open {
-                self.shell.login_remember = stored::account_exists() || stored::exists();
+                self.shell.login_remember |= stored::account_exists() || stored::exists();
             }
             if self.shell.login_email.is_empty() {
                 if let Ok(Some(account)) = stored::load_account() {
