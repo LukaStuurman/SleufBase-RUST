@@ -5,14 +5,19 @@ use sleufbase_rust::kickthemap_session as stored;
 
 impl SleufBaseApp {
     pub(super) fn open_kickthemap_login(&mut self) {
+        let already_open = self.shell.login_open;
         self.shell.login_open = true;
         self.shell.login_focus = true;
-        self.shell.login_remember = stored::account_exists() || stored::exists();
-        if self.shell.login_email.is_empty() {
-            if let Ok(Some(account)) = stored::load_account() {
-                // Show only the email; the password is decrypted in the worker
-                // when the user explicitly asks to sign in.
-                self.shell.login_email = account.email;
+        #[cfg(not(test))]
+        {
+            if !already_open {
+                self.shell.login_remember = stored::account_exists() || stored::exists();
+            }
+            if self.shell.login_email.is_empty() {
+                if let Ok(Some(account)) = stored::load_account() {
+                    // Show only the email, never the decrypted password.
+                    self.shell.login_email = account.email;
+                }
             }
         }
     }
@@ -24,7 +29,10 @@ impl SleufBaseApp {
         let busy = self.live_operation_busy();
         let connecting = self.browser_ui.capturing.is_some();
         let connected = self.live_session.is_some();
+        #[cfg(not(test))]
         let saved = stored::account_exists();
+        #[cfg(test)]
+        let saved = false;
         let mut open = true;
         let mut login = false;
         let mut browser = false;
