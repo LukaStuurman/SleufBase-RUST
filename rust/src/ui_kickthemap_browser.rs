@@ -280,7 +280,7 @@ impl SleufBaseApp {
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
-        if self.live_session.is_none() && !self.live_operation_busy()
+        if !cfg!(test) && self.live_session.is_none() && !self.live_operation_busy()
             && !self.shell.login_saved_attempted
             && sleufbase_rust::kickthemap_session::account_exists() {
             self.start_saved_login();
