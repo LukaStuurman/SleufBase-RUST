@@ -672,8 +672,11 @@ fn login_menu_opens_native_form_and_never_starts_browser() {
     assert_eq!(app.browser_ui.launch_requests,0);
     assert!(app.shell.login_password.is_empty());
     assert!(app.live_session.is_none());
-    click(&mut app,&ctx,label_position(&out,"Sluiten"));
+    let busy = frame(&mut app,&ctx,vec![]);
+    click(&mut app,&ctx,label_position(&busy,"Annuleren"));
     assert!(!app.shell.login_open);
+    assert!(app.live_rx.is_none());
+    assert!(!app.live_busy);
 }
 #[test]
 fn login_form_renders_at_minimum_size_without_contacting_accounts(){
