@@ -32,9 +32,18 @@ impl SleufBaseApp {
             self.message = "Rond de lopende taak eerst af".into();
             return;
         }
-        if self.template_state.is_none() && (self.template_preferences.as_ref().is_some_and(|p|p.raster_layout)
-            || !self.virtual_trenches.is_empty()){
-            self.open_project_template_dialog();return;
+        // Always present one combined planner. The old TIFF-only screen
+        // silently ignored virtual trenches whenever a historical template
+        // state was present, making import order change both UI and output.
+        self.open_project_template_dialog();
+        return;
+    }
+    #[cfg(test)]
+    pub(super) fn open_legacy_template_export(&mut self) {
+        if self.export_intent.is_some() || self.template_job.is_some()
+            || self.file_intent.is_some() || self.pending_project_action.is_some() {
+            self.message = "Rond de lopende taak eerst af".into();
+            return;
         }
         if self.geotiffs.is_empty() {
             self.message = "Laad eerst GeoTIFF-proefsleuven voor de sjabloonexport".into();
@@ -518,14 +527,14 @@ mod tests {
             "Gecombineerd project"
         );
         assert!(app.save_project_to_path(dir.path().join("restored.json")));
-        app.open_template_export();
+        app.open_legacy_template_export();
         assert!(app.template_order_dialog.is_some() && app.project_template_dialog.is_none());
     }
     #[test]
     fn native_template_window_worker_snapshot_and_project_switch_keep_complete_sources() {
         let mut app = template_app();
         let ctx = egui::Context::default();
-        app.open_template_export();
+        app.open_legacy_template_export();
         let mut state = app.template_order_dialog.as_ref().unwrap().state.clone();
         state.server_mode=sleufbase_rust::template_server::Mode::Offline;
         assert!(state.paired);
@@ -574,7 +583,7 @@ mod tests {
             app.snapshot().template_export.unwrap().project,
             "Uitvoerproject Ø"
         );
-        app.open_template_export();
+        app.open_legacy_template_export();
         assert!(app.template_order_dialog.is_some());
         app.request_project_action(ProjectAction::New, &ctx);
         assert!(app.pending_project_action.is_some());
@@ -599,7 +608,7 @@ mod tests {
             })
             .unwrap(),
         );
-        app.open_template_export();
+        app.open_legacy_template_export();
         let state = app.template_order_dialog.as_ref().unwrap().state.clone();
         let original = app.geotiffs.as_ptr();
         let dir = tempfile::tempdir().unwrap();
