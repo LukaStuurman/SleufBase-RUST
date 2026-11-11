@@ -223,6 +223,7 @@ impl SleufBaseApp {
         self.live_jobs_owner=Some(login.session.snapshot_owner().clone());
         self.live_session=Some(login.session);
         self.live_jobs=login.jobs;
+        if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
         self.browser_ui.browser=Some(login.browser);
         self.browser_ui.open=true;
         self.browser_ui.web_visible=login.review_password;
@@ -289,11 +290,23 @@ impl SleufBaseApp {
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
-        if self.live_session.is_none()&&!self.live_operation_busy()&&sleufbase_rust::kickthemap_session::exists(){
-            self.start_kickthemap_login(true);
+        // Never launch WebView2 automatically: only use it when the operator
+        // explicitly chooses the challenge/website fallback from the native form.
+        if !cfg!(test) && self.live_session.is_none() && !self.live_operation_busy()
+            && !self.shell.login_saved_attempted
+            && sleufbase_rust::kickthemap_session::account_exists() {
+            self.start_saved_login();
         }
     }
-    fn open_newest_jobs_cache(&mut self){
+    fn open_newest_jobs_cache(&mut self) {
+        if let Some(cache) = Self::newest_jobs_cache() {
+            if !self.live_operation_busy() {
+                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
+            }
+            self.jobs_cache=Some(cache);
+        }
+    }
+    pub(super) fn newest_jobs_cache()->Option<JobsCache> {
         let dir=kickthemap_cache_dir().join("jobs_cache");
         let mut newest=None::<(f64,JobsCache)>;
         if let Ok(entries)=std::fs::read_dir(dir) {
@@ -306,12 +319,7 @@ impl SleufBaseApp {
                 }
             }
         }
-        if let Some((_,cache))=newest {
-            if !self.live_operation_busy(){
-                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
-            }
-            self.jobs_cache=Some(cache);
-        }
+        newest.map(|(_,cache)|cache)
     }
     pub(super) fn start_kickthemap_login(&mut self,remember:bool) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
@@ -718,7 +726,7 @@ impl SleufBaseApp {
     }
 }
 
-fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
+pub(super) fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
     // Match the two leading numbers in the original Jobs map. Both RD and
     // longitude/latitude are accepted; malformed values are not plotted.
     let mut words=Vec::new();
@@ -727,7 +735,7 @@ fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
         if c.is_ascii_digit()||((c=='-'||c=='.'||c==',')&&number.len()<30) {
             if c==',' {number.push('.');} else{number.push(c);}
         }else if !number.is_empty(){
-            if let Ok(n)=number.parse::<f64>(){words.push(n);}
+            if let Ok(n)=number.trim_end_matches('.').parse::<f64>(){words.push(n);}
             number.clear();
             if words.len()>=2{break;}
         }
