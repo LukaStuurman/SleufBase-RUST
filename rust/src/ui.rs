@@ -984,6 +984,12 @@ impl SleufBaseApp {
         match event {
             Some(Ok(Ok((session,jobs))))=>{
                 let native = std::mem::take(&mut self.shell.login_is_native);
+                if native && self.live_jobs_owner.as_ref()!=Some(session.snapshot_owner()) {
+                    // A different account must never inherit selections or
+                    // offline snapshots from the previous authenticated owner.
+                    self.browser_ui.selected.clear();
+                    self.jobs_cache=None;
+                }
                 self.live_jobs_owner=Some(session.snapshot_owner().clone());
                 self.live_session=Some(session);
                 self.live_jobs=jobs;
