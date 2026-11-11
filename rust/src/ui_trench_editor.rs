@@ -776,6 +776,40 @@ mod usability_tests {
         assert!((objects[0].position.z.unwrap()-1.25).abs()<1e-5);
     }
     #[test]
+    fn crossing_preview_stays_fixed_during_a_mouse_drag(){
+        let ctx=egui::Context::default();
+        theme::install(&ctx);
+        let mut app=fixture();
+        let size=egui::vec2(1200.,760.);
+        let preview=|output:&egui::FullOutput|{
+            output.shapes.iter().find_map(|shape|match &shape.shape{
+                egui::Shape::Rect(rect) if rect.fill==Color32::from_rgb(242,245,248)
+                    &&rect.rect.size()==egui::vec2(108.,54.)=>Some(rect.rect),
+                _=>None,
+            }).expect("bovenaanzicht")
+        };
+        let mut output=frame(&mut app,&ctx,size,vec![]);
+        for _ in 0..4{output=frame(&mut app,&ctx,size,vec![]);}
+        let rect=preview(&output);
+        let pointer=|angle:f64|{
+            let (sin,cos)=angle.to_radians().sin_cos();
+            rect.center()+egui::vec2(sin as f32,-cos as f32)*21.
+        };
+        let button=|pos,pressed|egui::Event::PointerButton{
+            pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+        };
+        let start=pointer(0.);
+        frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(start),button(start,true)]);
+        for angle in [47.,-62.,18.]{
+            let output=frame(&mut app,&ctx,size,vec![egui::Event::PointerMoved(pointer(angle))]);
+            assert_eq!(preview(&output),rect);
+            let actual=app.trench_editor.as_ref().unwrap().object.angle;
+            assert!((actual-angle).abs()<0.001,"verwacht {angle}, kreeg {actual}");
+        }
+        frame(&mut app,&ctx,size,vec![button(pointer(18.),false)]);
+        assert_eq!(preview(&frame(&mut app,&ctx,size,vec![])),rect);
+    }
+    #[test]
     fn save_stays_visible_and_validation_preserves_project_at_multiple_sizes_and_dpi(){
         for size in [Vec2::new(680.,420.),Vec2::new(1200.,760.),Vec2::new(1500.,930.)] {
             for dpi in [1.,1.25,2.] {
