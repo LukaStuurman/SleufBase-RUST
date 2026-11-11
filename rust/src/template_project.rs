@@ -84,7 +84,9 @@ impl Default for Options {
             font_directories: Vec::new(),
             dpi: 150,
             scale: 225.,
-            background: BackgroundKind::Blank,
+            // A real aerial background is the standard for every trench type.
+            // Offline mode still honors its explicit no-network contract.
+            background: BackgroundKind::Pdok,
             include_bgt: true,
             include_cadastral: true,
             include_cad: true,
