@@ -1,10 +1,12 @@
 //! Native KickTheMap sign-in. The website view is a user-invoked fallback only
 //! for mandatory provider challenges (for example reCAPTCHA).
 use super::*;
+#[cfg(not(test))]
 use sleufbase_rust::kickthemap_session as stored;
 
 impl SleufBaseApp {
     pub(super) fn open_kickthemap_login(&mut self) {
+        #[cfg(not(test))]
         let already_open = self.shell.login_open;
         self.shell.login_open = true;
         self.shell.login_focus = true;
