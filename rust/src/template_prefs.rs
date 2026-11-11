@@ -155,7 +155,12 @@ impl TemplatePreferences {
             drawn_by:self.drawn_by.clone(),font_directories:self.font_directories.clone(),dpi:self.dpi,scale:self.scale,
             background:self.background,include_bgt:self.include_bgt,
             include_cadastral:self.include_cadastral,include_cad:self.include_cad,
-            choices:if self.raster_layout{template_project::suggest_rasters(rasters,trenches)}else{template_project::suggest(jobs,rasters,trenches)},
+            // A saved raster-only layout must not conceal imported KickTheMap jobs.
+            choices:if self.raster_layout && jobs.is_empty() {
+                template_project::suggest_rasters(rasters,trenches)
+            }else{
+                template_project::suggest(jobs,rasters,trenches)
+            },
         };
         let mut candidates=std::mem::take(&mut options.choices);
         for old in &self.choices{
