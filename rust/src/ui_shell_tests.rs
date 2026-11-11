@@ -758,7 +758,7 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
             if physical{
                 let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
                 app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
-                app.open_template_export();app.template_order_dialog.as_mut().unwrap().state.drawn_by="Tekenaar-veld-controle".into();
+                app.open_template_export();app.project_template_dialog.as_mut().unwrap().options.drawn_by="Tekenaar-veld-controle".into();
             }else{
                 app.virtual_trenches.push(VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
                 app.open_project_template_dialog();app.project_template_dialog.as_mut().unwrap().options.drawn_by="Tekenaar-veld-controle".into();
