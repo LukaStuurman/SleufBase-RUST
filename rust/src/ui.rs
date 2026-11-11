@@ -241,6 +241,7 @@ impl Default for SleufBaseApp {
             Ok((settings,backup))=>(settings,backup,String::new()),
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
+        #[allow(unused_mut)]
         let mut app = Self {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
