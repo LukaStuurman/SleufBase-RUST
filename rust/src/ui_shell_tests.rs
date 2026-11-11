@@ -673,7 +673,8 @@ fn login_menu_opens_native_form_and_never_starts_browser() {
     assert!(app.shell.login_password.is_empty());
     assert!(app.live_session.is_none());
     let busy = frame(&mut app,&ctx,vec![]);
-    click(&mut app,&ctx,label_position(&busy,"Annuleren"));
+    let close_label=if app.live_busy { "Annuleren" } else { "Sluiten" };
+    click(&mut app,&ctx,label_position(&busy,close_label));
     assert!(!app.shell.login_open);
     assert!(app.live_rx.is_none());
     assert!(!app.live_busy);
