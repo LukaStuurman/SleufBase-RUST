@@ -41,6 +41,7 @@ impl Dialog {
     fn new(app: &SleufBaseApp,settings:&MigratedSettings) -> Self {
         let options = Options {
             project: app.project_name.clone(),
+            // The source list is always mixed, independent of the import order.
             raster_layout:app.datasets.is_empty(),
             choices: if app.datasets.is_empty(){template_project::suggest_rasters(&app.geotiffs,&app.virtual_trenches)}else{template_project::suggest(&app.datasets,&app.geotiffs,&app.virtual_trenches)},
             ..Options::default()
@@ -177,7 +178,10 @@ impl SleufBaseApp {
                             ui.checkbox(&mut dialog.options.include_cad,
                                 "Zichtbare CAD/DXF-lagen (ook geneste blokken)");
                         });
-                        ui.label("Jobs gebruiken de volledige GeoTIFF. Virtuele/MarXact-sleuven kunnen zonder externe TIFF hun eigen transparante raster met meetpunten en grens gebruiken.");
+                        ui.label("Alle KickTheMap-, GeoTIFF- en virtuele proefsleuven worden in dezelfde sjabloonexport opgenomen. Een virtuele sleuf zonder GeoTIFF wordt transparant over de luchtfoto getekend.");
+                        if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Offline {
+                            ui.colored_label(DARK,"Offline export haalt geen luchtfoto op. Kies de netwerkmodus voor de PDOK-achtergrond.");
+                        }
                         ui.separator();
                         ui.heading("3. Proefsleufvakken en GeoTIFF-koppelingen");
                         let included=dialog.options.choices.iter().filter(|c|c.include&&!matches!(c.source,Source::Empty(_))).count();
