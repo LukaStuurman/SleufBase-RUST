@@ -152,16 +152,16 @@ Open in de linkerkolom **Virtuele proefsleuven → Bewerken** om een bestaande (
 
 Je bewerkt eerst een **concept** en kiest **Opslaan in project** om wijzigingen door te voeren. Verwijderen vraagt extra bevestiging. De oorspronkelijke 3D-grenzen en uitlijning van een gemeten MarXact-sleuf worden niet stilzwijgend gewijzigd. Klik **Handmatige kopie** om een losstaand, bewerkbaar exemplaar te maken; de originele bron wordt behouden. Gewijzigde objecten gaan mee in native projectopslag en bestaande object-/profiel-/sjabloonexports. Een volledig interactieve plaats-/sleepfunctie in de hoofdkaart, alle oorspronkelijke MarXact-visualisaties en volledige Python-pariteit ontbreken nog.
 
-### KickTheMap — browseraanmelding, live/offline jobmanager en batchdownloads
+### KickTheMap — native aanmelding, live/offline jobmanager en batchdownloads
 
 Kies **KickTheMap → Jobs** in het hoofdmenu of **Open KickTheMap-jobs** bij KickTheMap online.
 
-1. Kies **Aanmelden** en vervolgens **Inloggen**. SleufBase opent de aanmeldpagina in een tijdelijk WebView2-profiel.
-2. Meld je aan in het KickTheMap-venster en rond zo nodig reCAPTCHA af. SleufBase opent daarna automatisch de live joblijst. Met **Aangemeld blijven op dit apparaat** bewaart Windows de sessie versleuteld voor je eigen account. Open **Jobs** om de sessie te hergebruiken. **Uitloggen** verwijdert de lokale sessie.
-3. De manager toont **live jobs** en kan sorteren (naam/datum/job-ID), zoeken (adres, gemeente, titel, datum en ID), filters toepassen op downloadbaarheid en alleen daadwerkelijk geladen Rust-jobs, en meerdere jobs tegelijk selecteren. **Vernieuwen** haalt de lijst opnieuw op. Als de normale jobs-API faalt, probeert de manager een **zelfde-origin** jobs-request vanuit het zelf gestarte, reeds ingelogde Edge-tabblad. Als de native Rust-client geen downloadlink ontvangt, probeert hij de **ondertekende downloadlink** uit datzelfde venster via een beperkte, origin-gebonden browseraanroep op te halen; de uiteindelijke bestandsoverdracht wordt nog steeds in Rust op domein, type en grootte gecontroleerd.
+1. Kies **Aanmelden** en vervolgens **Inloggen**. De aanmeldpagina verschijnt in het SleufBase-hoofdvenster.
+2. Meld je aan in het KickTheMap-paneel en rond zo nodig reCAPTCHA af. Met **Aangemeld blijven op dit apparaat** kan WebView2 het e-mailadres en wachtwoord lokaal onthouden als je dat bevestigt. Open **Jobs** om een geldige sessie opnieuw te gebruiken. **Uitloggen** wist de lokale sessie en het bewaarde WebView2-profiel.
+4. De manager toont **live jobs** en kan sorteren (naam/datum/job-ID), zoeken (adres, gemeente, titel, datum en ID), filters toepassen op downloadbaarheid en alleen daadwerkelijk geladen Rust-jobs, en meerdere jobs tegelijk selecteren. **Vernieuwen** haalt de lijst opnieuw op. Als de normale jobs-API faalt, probeert de manager een **zelfde-origin** jobs-request vanuit het zelf gestarte, reeds ingelogde Edge-tabblad. Als de native Rust-client geen downloadlink ontvangt, probeert hij de **ondertekende downloadlink** uit datzelfde venster via een beperkte, origin-gebonden browseraanroep op te halen; de uiteindelijke bestandsoverdracht wordt nog steeds in Rust op domein, type en grootte gecontroleerd.
 4. Klik **Objecten downloaden + laden**, **GeoTIFF downloaden + laden** of **Beide bestanden per job**. Jobs worden op de achtergrond afgewerkt, met voortgang en annuleerknop; downloads worden beperkt, gevalideerd en samen met een `.job.json`-sidecar permanent opgeslagen. Een bestaand bestand wordt alleen hergebruikt wanneer de sidecar dezelfde job-ID vermeldt en het bestand opnieuw is gevalideerd. Onbekende bestaande bestanden worden nooit overschreven.
 5. Na een batch worden object-JSON en GeoTIFF **achtereenvolgens** in het actieve Rust-project geladen, zodat een lopende import niet door het volgende bestandstype wordt afgebroken. Bij een projectwissel worden downloads niet aan het verkeerde project gekoppeld.
-6. Bij een succesvolle vernieuwing schrijft Rust een **tokenvrije offline jobs-cache** (alleen jobmetadata), die later automatisch in de manager kan worden geopend. Uitloggen sluit het tijdelijke browserproces en verwijdert de sessiegegevens uit SleufBase.
+7. Bij een succesvolle vernieuwing schrijft Rust een **tokenvrije offline jobs-cache** (alleen jobmetadata), die later automatisch in de manager kan worden geopend. Uitloggen sluit het tijdelijke browserproces en verwijdert de sessiegegevens uit SleufBase.
 
 **Windows-vereiste:** De ingebouwde KickTheMap-weergave gebruikt Microsoft WebView2 Runtime. Bedrijfsbeleid moet de lokale verbinding tussen SleufBase en dit venster toestaan.
 
@@ -282,7 +282,7 @@ Zie [PARITY.md](PARITY.md) voor de volledige functiepariteit-checklist en releas
 
 - Rust leest bestaande lokale Python-SleufBase `jobs_cache/<email>.json` bestanden zonder wachtwoorden/cookies te lezen.
 - Zoek en filter op jobs die in de Rust-app zelf zijn geladen (lokaal ingeladen objectbestanden en TIFF-sidecars).
-- De cachestand is expliciet **niet live**. De eerste native online koppeling staat hieronder beschreven; browserlogin en volledig sessieherstel blijven open.
+- De cachestand is expliciet **niet live**. De huidige native inlog en de optionele ingebouwde websitefallback staan hierboven beschreven; volledige acceptatie met een echt KickTheMap-account is nog vereist.
 
 ## Kaartopmerkingen
 
@@ -303,7 +303,7 @@ Zie [PARITY.md](PARITY.md) voor de volledige functiepariteit-checklist en releas
 - Live jobs-payload kan rechtstreeks worden gelezen; toont actieve jobtitel, ID, adres, gemeente, datum en status.
 - De login en jobs-opvraag draaien op een achtergrondthread; geen wachtwoorden, cookies of tokens in het projectbestand.
 - Uitloggen verwijdert de sessie uit geheugen. De inlogvelden wissen het wachtwoord zodra verbinding wordt gestart.
-- De bestaande KickTheMap-authenticatie gebruikt soms interactieve reCAPTCHA/WebView2: dit pad geeft nu een expliciete foutmelding; de browserlogin is nog NIET gemigreerd.
+- KickTheMap kan interactieve reCAPTCHA/WebView2 vereisen. De optionele ingebouwde websitefallback is toegevoegd; reCAPTCHA wordt niet omzeild.
 - De live endpointcode heeft unit-tests voor HTML tokens en API JSON, maar is nog NIET getest tegen een echt ingelogd account; er zijn geen gebruikersinloggegevens opgehaald of opgeslagen.
 - Er zijn nu knoppen voor **GeoTIFF** en **Objecten** bij live jobs. De app vraagt een gesigneerde URL aan via `/jobs/get-file-url` in multipart/form/json, laadt zonder doorgeven van de KickTheMap-sessiecookies en controleert de inhoud.
 - Downloads krijgen een tijdelijke bestandsnaam en worden pas na formaatcontrole zonder overschrijven opgeslagen onder `%LOCALAPPDATA%/SleufBase/KickTheMap/Rust`.

@@ -125,7 +125,13 @@ fn attach_cli_console(){
 fn main() -> eframe::Result<()> {
     let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
     if raw_args.first().is_some_and(|s|s=="--kickthemap-webview") {
-        let result=if raw_args.len()==2 {sleufbase_rust::kickthemap_webview::run(&PathBuf::from(&raw_args[1]))}else{Err("Ongeldige interne browseropdracht".into())};
+        let result=match raw_args.as_slice(){
+            [_,control,profile,parent,mode] if mode=="remember"||mode=="temporary"=>
+                parent.to_str().and_then(|value|value.parse().ok()).ok_or("Ongeldig hoofdvenster".into())
+                    .and_then(|parent|sleufbase_rust::kickthemap_webview::run(
+                        std::path::Path::new(control),std::path::Path::new(profile),parent,mode=="remember")),
+            _=>Err("Ongeldige interne browseropdracht".into()),
+        };
         if let Err(error)=result {eprintln!("{error}");std::process::exit(2);}
         return Ok(());
     }

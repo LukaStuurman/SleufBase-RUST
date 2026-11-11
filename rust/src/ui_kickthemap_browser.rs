@@ -3,7 +3,7 @@
 //! are coordinated without blocking egui's main thread.
 use super::*;
 use sleufbase_rust::{
-    kickthemap_browser::Browser,
+    kickthemap_browser::{Browser,BrowserDock},
     jobs_cache::Job,
 };
 use std::{collections::{BTreeSet,VecDeque},sync::{Arc,atomic::{AtomicBool,Ordering}}};
@@ -39,6 +39,9 @@ enum RepairSource{File(PathBuf),Browser(sleufbase_rust::kickthemap_browser::Brow
 pub(super) struct BrowserUi {
     pub(super) open:bool,
     pub(super) browser:Option<Browser>,
+    pub(super) dock:Option<BrowserDock>,
+    pub(super) host:isize,
+    pub(super) web_visible:bool,
     #[cfg(test)] pub(super) launch_requests:usize,
     pub(super) capturing:Option<Receiver<Result<BrowserLogin,String>>>,
     login_status:Option<Receiver<&'static str>>,
@@ -105,7 +108,7 @@ fn ctrl_click_selects_the_inclusive_range_in_current_list_order(){
 }
 impl Default for BrowserUi {
     fn default()->Self {
-        Self {open:false,browser:None,capturing:None,login_status:None,login_cancel:Arc::default(),
+        Self {open:false,browser:None,dock:None,host:0,web_visible:false,capturing:None,login_status:None,login_cancel:Arc::default(),
             #[cfg(test)] launch_requests:0,
             selected:BTreeSet::new(),selection_anchor:None,filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
@@ -124,12 +127,13 @@ pub(super) struct BrowserLogin {
     session:KickTheMapLiveClient,
     jobs:Vec<Job>,
     remember:bool,
+    review_password:bool,
     cookies:Option<serde_json::Value>,
 }
 
 #[cfg(not(test))]
 fn connect_browser(
-    remember:bool,
+    dock:BrowserDock,host:isize,remember:bool,
     known_nonempty:bool,
     cancel:&AtomicBool,
     status:&mpsc::Sender<&'static str>,
@@ -139,7 +143,7 @@ fn connect_browser(
         if cancel.load(Ordering::Relaxed){Err("Aanmelden geannuleerd.".to_owned())}else{Ok(())}
     };
     check_cancel()?;
-    let mut browser=Browser::launch()?;
+    let mut browser=Browser::launch_embedded(dock,host,remember)?;
     let saved=remember.then(stored::load).and_then(Result::ok).flatten();
     let mut restored=false;
     if let Some(cookies)=saved {
@@ -177,9 +181,10 @@ fn connect_browser(
             match try_session(&browser,&csrf){
                 Ok((session,jobs))=>{
                     check_cancel()?;
-                    browser.set_visible(false)?;
+                    let review_password=remember&&!restored;
+                    if !review_password{browser.set_visible(false)?;}
                     let cookies=if remember{browser.session_cookies().ok()}else{None};
-                    return Ok(BrowserLogin{browser,session,jobs,remember,cookies});
+                    return Ok(BrowserLogin{browser,session,jobs,remember,review_password,cookies});
                 }
                 Err(error) if !restored=>{
                     job_errors+=1;
@@ -218,9 +223,11 @@ impl SleufBaseApp {
         self.live_jobs_owner=Some(login.session.snapshot_owner().clone());
         self.live_session=Some(login.session);
         self.live_jobs=login.jobs;
+        if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
         self.browser_ui.browser=Some(login.browser);
         self.browser_ui.open=true;
-        self.shell.login_open=false;
+        self.browser_ui.web_visible=login.review_password;
+        self.shell.login_open=login.review_password;
         self.save_live_cache();
         self.browser_ui.status=format!("KickTheMap verbonden: {} live jobs.",self.live_jobs.len());
         if storage.is_err(){
@@ -234,7 +241,10 @@ impl SleufBaseApp {
     }
     fn capture_kickthemap_download(&mut self,id:u64){
         let Some(browser)=self.browser_ui.browser.as_ref() else{return;};
-        self.start_kickthemap_repair(id,RepairSource::Browser(browser.channel()));
+        let channel=browser.channel();
+        if let Err(error)=browser.set_visible(true){self.browser_ui.status=error;return;}
+        self.browser_ui.web_visible=true;
+        self.start_kickthemap_repair(id,RepairSource::Browser(channel));
     }
     fn start_kickthemap_repair(&mut self,id:u64,source:RepairSource) {
         if self.live_operation_busy() || self.browser_ui.batch_mode { return; }
@@ -280,11 +290,23 @@ impl SleufBaseApp {
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
-        if self.live_session.is_none()&&!self.live_operation_busy()&&sleufbase_rust::kickthemap_session::exists(){
-            self.start_kickthemap_login(true);
+        // Never launch WebView2 automatically: only use it when the operator
+        // explicitly chooses the challenge/website fallback from the native form.
+        if !cfg!(test) && self.live_session.is_none() && !self.live_operation_busy()
+            && !self.shell.login_saved_attempted
+            && sleufbase_rust::kickthemap_session::account_exists() {
+            self.start_saved_login();
         }
     }
-    fn open_newest_jobs_cache(&mut self){
+    fn open_newest_jobs_cache(&mut self) {
+        if let Some(cache) = Self::newest_jobs_cache() {
+            if !self.live_operation_busy() {
+                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
+            }
+            self.jobs_cache=Some(cache);
+        }
+    }
+    pub(super) fn newest_jobs_cache()->Option<JobsCache> {
         let dir=kickthemap_cache_dir().join("jobs_cache");
         let mut newest=None::<(f64,JobsCache)>;
         if let Ok(entries)=std::fs::read_dir(dir) {
@@ -297,16 +319,17 @@ impl SleufBaseApp {
                 }
             }
         }
-        if let Some((_,cache))=newest {
-            if !self.live_operation_busy(){
-                self.browser_ui.status=format!("Offline cache geopend: {} jobs.",cache.jobs.len());
-            }
-            self.jobs_cache=Some(cache);
-        }
+        newest.map(|(_,cache)|cache)
     }
     pub(super) fn start_kickthemap_login(&mut self,remember:bool) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let known_nonempty=!self.live_jobs.is_empty()||self.jobs_cache.as_ref().is_some_and(|c|!c.jobs.is_empty());
+        #[cfg(not(test))]
+        let dock=match BrowserDock::new(){
+            Ok(dock)=>dock,
+            Err(error)=>{self.browser_ui.status=format!("KickTheMap-paneel openen: {error}");return;}
+        };
+        self.browser_ui.browser=None;
         let (tx,rx)=mpsc::channel();
         let (status_tx,status_rx)=mpsc::channel();
         self.browser_ui.capturing=Some(rx);
@@ -317,8 +340,12 @@ impl SleufBaseApp {
         #[cfg(not(test))]
         {
             let cancel=Arc::clone(&self.browser_ui.login_cancel);
+            let host=self.browser_ui.host;
+            self.browser_ui.dock=Some(dock.clone());
+            self.browser_ui.web_visible=true;
+            self.shell.login_open=true;
             std::thread::spawn(move|| {
-                let _=tx.send(connect_browser(remember,known_nonempty,&cancel,&status_tx));
+                let _=tx.send(connect_browser(dock,host,remember,known_nonempty,&cancel,&status_tx));
             });
         }
         #[cfg(test)]
@@ -330,6 +357,7 @@ impl SleufBaseApp {
     }
     pub(super) fn cancel_kickthemap_login(&mut self) {
         self.browser_ui.login_cancel.store(true,Ordering::Relaxed);
+        self.hide_kickthemap_pane();
         self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
@@ -338,6 +366,7 @@ impl SleufBaseApp {
             Some(Ok((browser,result)))=>{
                 self.browser_ui.browser=Some(browser);
                 self.browser_ui.opening_job=None;
+                if result.is_err(){self.hide_kickthemap_pane();}
                 self.browser_ui.status=match result {
                     Ok(())=>"Job geopend in het ingebouwde KickTheMap-venster".into(),
                     Err(e)=>format!("Job openen mislukt: {e}"),
@@ -346,6 +375,7 @@ impl SleufBaseApp {
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.browser_ui.opening_job=None;
+                self.hide_kickthemap_pane();
                 self.browser_ui.status="Jobvenster openen onderbroken".into();
             }
             _=>{}
@@ -408,7 +438,10 @@ impl SleufBaseApp {
                 if !self.browser_ui.login_cancel.load(Ordering::Relaxed){
                     match result{
                         Ok(login)=>self.finish_kickthemap_login(login),
-                        Err(error)=>self.browser_ui.status=error,
+                        Err(error)=>{
+                            self.hide_kickthemap_pane();
+                            self.browser_ui.status=error;
+                        }
                     }
                 }
                 self.message=self.browser_ui.status.clone();
@@ -488,6 +521,7 @@ impl SleufBaseApp {
         if self.browser_ui.opening_job.is_some(){self.browser_ui.browser=Some(browser);return;}
         let (tx,rx)=mpsc::channel();
         self.browser_ui.opening_job=Some(rx);
+        self.browser_ui.web_visible=true;
         self.browser_ui.status=format!("Job {id} openen in het ingebouwde venster…");
         std::thread::spawn(move||{
             let result=browser.open_job(id);
@@ -692,7 +726,7 @@ impl SleufBaseApp {
     }
 }
 
-fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
+pub(super) fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
     // Match the two leading numbers in the original Jobs map. Both RD and
     // longitude/latitude are accepted; malformed values are not plotted.
     let mut words=Vec::new();
@@ -701,7 +735,7 @@ fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
         if c.is_ascii_digit()||((c=='-'||c=='.'||c==',')&&number.len()<30) {
             if c==',' {number.push('.');} else{number.push(c);}
         }else if !number.is_empty(){
-            if let Ok(n)=number.parse::<f64>(){words.push(n);}
+            if let Ok(n)=number.trim_end_matches('.').parse::<f64>(){words.push(n);}
             number.clear();
             if words.len()>=2{break;}
         }

@@ -3,24 +3,162 @@
 use serde_json::Value;
 #[cfg(windows)]
 use std::io::{Read, Write};
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+const PROFILE: &str = "rust-webview-profile";
+const SESSION: &str = "rust-session.dat";
 
 #[cfg(windows)]
 const MAX_BYTES: usize = 256 * 1024;
 
 fn path() -> PathBuf {
-    crate::loaded_jobs::kickthemap_cache_dir().join("rust-session.dat")
+    crate::loaded_jobs::kickthemap_cache_dir().join(SESSION)
 }
 
-pub fn exists() -> bool {
-    path().is_file()
+// Credentials are optional and live only in a Windows-user DPAPI encrypted file.
+// Never persist an account in project files, snapshots, logs or plaintext settings.
+fn account_path() -> PathBuf {
+    crate::loaded_jobs::kickthemap_cache_dir().join("rust-account.dat")
 }
 
-pub fn forget() -> io::Result<()> {
-    match fs::remove_file(path()) {
+pub struct Account {
+    pub email: String,
+    pub password: String,
+}
+
+pub fn account_exists() -> bool {
+    account_path().is_file()
+}
+
+pub fn forget_account() -> io::Result<()> {
+    match fs::remove_file(account_path()) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+
+#[cfg(windows)]
+fn valid_account(account: &Account) -> bool {
+    let email = account.email.trim();
+    !email.is_empty() && email.len() <= 320
+        && email.contains('@') && !email.chars().any(char::is_whitespace)
+        && !account.password.is_empty() && account.password.len() <= 16384
+}
+
+#[cfg(windows)]
+pub fn load_account() -> io::Result<Option<Account>> {
+    let file = match fs::File::open(account_path()) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut encrypted = Vec::new();
+    file.take(MAX_BYTES as u64 + 1).read_to_end(&mut encrypted)?;
+    let plaintext = windows::transform(&encrypted, false)?;
+    let data: Value = serde_json::from_slice(&plaintext)?;
+    let account = Account {
+        email: data["email"].as_str().unwrap_or_default().to_owned(),
+        password: data["password"].as_str().unwrap_or_default().to_owned(),
+    };
+    if !valid_account(&account) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Ongeldig bewaard KickTheMap-account"));
+    }
+    Ok(Some(account))
+}
+
+#[cfg(windows)]
+pub fn save_account(account: &Account) -> io::Result<()> {
+    if !valid_account(account) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Ongeldige KickTheMap-inloggegevens"));
+    }
+    let plaintext = serde_json::to_vec(&serde_json::json!({
+        "email": account.email.trim(),
+        "password": account.password,
+    }))?;
+    let encrypted = windows::transform(&plaintext, true)?;
+    let path = account_path();
+    let parent = path.parent().expect("local account directory");
+    fs::create_dir_all(parent)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(&encrypted)?;
+    file.persist(path)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn load_account() -> io::Result<Option<Account>> {
+    Ok(None)
+}
+
+#[cfg(not(windows))]
+pub fn save_account(_: &Account) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Account bewaren vereist Windows"))
+}
+
+
+pub fn exists() -> bool {
+    path().is_file() || browser_profile().is_dir()
+}
+
+pub(crate) fn browser_profile() -> PathBuf {
+    crate::loaded_jobs::kickthemap_cache_dir().join(PROFILE)
+}
+#[cfg(windows)]
+pub(crate) fn lock_profile() -> io::Result<fs::File> {
+    lock_profile_in(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn lock_profile_in(root: &Path) -> io::Result<fs::File> {
+    fs::create_dir_all(root)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("rust-webview-profile.lock"))?;
+    file.try_lock().map_err(io::Error::from)?;
+    Ok(file)
+}
+
+pub fn forget() -> io::Result<()> {
+    forget_from(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn forget_from(root: &Path) -> io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let _lock = lock_profile_in(root)?;
+    match fs::remove_dir_all(root.join(PROFILE)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        result => result?,
+    }
+    match fs::remove_file(root.join(SESSION)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn logout_clears_only_the_saved_profile_and_session_after_its_owner_exits() {
+    let root = tempfile::tempdir().unwrap();
+    let profile = root.path().join(PROFILE);
+    let session = root.path().join(SESSION);
+    let jobs = root.path().join("jobs_cache");
+    fs::create_dir(&profile).unwrap();
+    fs::write(profile.join("fixture"), b"test account only").unwrap();
+    fs::write(&session, b"test session only").unwrap();
+    fs::create_dir(&jobs).unwrap();
+    let held = lock_profile_in(root.path()).unwrap();
+    assert!(forget_from(root.path()).is_err());
+    assert!(profile.is_dir() && session.is_file());
+    drop(held);
+    forget_from(root.path()).unwrap();
+    assert!(!profile.exists() && !session.exists() && jobs.is_dir());
 }
 
 #[cfg(windows)]
@@ -144,6 +282,16 @@ mod windows {
             bytes
         };
         Ok(result)
+    }
+
+    #[test]
+    fn credential_payload_is_protected_and_only_available_to_windows_user() {
+        let account = Account { email: "fixture@example.test".into(), password: "unique-test-password-93847".into() };
+        assert!(valid_account(&account));
+        let plaintext = serde_json::to_vec(&serde_json::json!({"email": account.email, "password": account.password})).unwrap();
+        let encrypted = transform(&plaintext, true).unwrap();
+        assert!(!encrypted.windows(account.password.len()).any(|x| x == account.password.as_bytes()));
+        assert_eq!(transform(&encrypted, false).unwrap(), plaintext);
     }
 
     #[test]

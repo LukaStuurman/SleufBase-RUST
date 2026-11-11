@@ -154,14 +154,8 @@ pub(super) fn show(
                 form.update_quantity_attribute();
             }
             ui.label("Kruishoek");
-            ui.add(
-                egui::DragValue::new(&mut form.angle)
-                    .custom_parser(parse_decimal)
-                    .range(-80.0..=80.)
-                    .speed(1.)
-                    .suffix("°"),
-            )
-            .on_hover_text("0° = haaks. Positief wijst richting het eindpunt.");
+            // Place the canvas first so changes in the angle text cannot
+            // move the drag target or change its center in the next frame.
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(108., 54.), egui::Sense::click_and_drag());
             let center = rect.center();
@@ -202,6 +196,14 @@ pub(super) fn show(
             for endpoint in [center - direction, center + direction] {
                 painter.circle_filled(endpoint, 4., ORANGE);
             }
+            ui.add(
+                egui::DragValue::new(&mut form.angle)
+                    .custom_parser(parse_decimal)
+                    .range(-80.0..=80.)
+                    .speed(1.)
+                    .suffix("°"),
+            )
+            .on_hover_text("0° = haaks. Positief wijst richting het eindpunt.");
         });
     });
     ui.collapsing("Extra invoer en brongegevens", |ui| {

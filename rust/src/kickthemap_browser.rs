@@ -100,31 +100,73 @@ fn read_port(profile:&Path)->Result<(u16,String),String>{
     {return Err("Ingebouwde browser DevTools-socket heeft een ongeldig formaat".into());}
     Ok((port,format!("ws://127.0.0.1:{port}{path}")))
 }
+/// Private geometry channel from the egui host to its native child window.
+#[derive(Clone)]
+pub struct BrowserDock {
+    control:std::sync::Arc<tempfile::TempDir>,
+    bounds:std::sync::Arc<std::sync::Mutex<Option<[i32;4]>>>,
+}
+impl BrowserDock {
+    pub fn new()->std::io::Result<Self>{
+        Ok(Self{control:std::sync::Arc::new(tempfile::Builder::new().prefix("sleufbase-kickthemap-").tempdir()?),
+            bounds:Default::default()})
+    }
+    pub fn set_bounds(&self,bounds:Option<[i32;4]>)->std::io::Result<()>{
+        use std::io::Write;
+        let mut previous=self.bounds.lock().unwrap();
+        if *previous!=bounds{
+            let mut file=tempfile::NamedTempFile::new_in(self.control.path())?;
+            if let Some([x,y,w,h])=bounds{write!(file,"{x} {y} {w} {h}")?;}
+            file.persist(self.control.path().join("window-bounds"))?;
+            *previous=bounds;
+        }
+        Ok(())
+    }
+}
 /// Owns the only browser from which a KickTheMap session can be adopted.
 pub struct Browser {
     process:BrowserProcess,
-    _profile:tempfile::TempDir,
+    _profile:std::sync::Arc<tempfile::TempDir>,
+    _remember_lock:Option<fs::File>,
     port:u16,
     websocket:String,
 }
 impl Browser {
-    pub fn launch()->Result<Self,String>{
+    pub fn launch_embedded(dock:BrowserDock,host:isize,remember:bool)->Result<Self,String>{
         #[cfg(windows)] {
-            let profile=tempfile::Builder::new().prefix("sleufbase-kickthemap-").tempdir().map_err(|e|e.to_string())?;
+            if host==0{return Err("Het SleufBase-hoofdvenster is niet beschikbaar".into());}
+            let (profile,lock)=if remember{
+                let lock=crate::kickthemap_session::lock_profile().map_err(|e|format!("KickTheMap-profiel: {e}"))?;
+                let profile=crate::kickthemap_session::browser_profile();
+                fs::create_dir_all(&profile).map_err(|e|e.to_string())?;
+                match fs::remove_file(profile.join("EBWebView").join("DevToolsActivePort")){
+                    Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string()),
+                }
+                (profile,Some(lock))
+            }else{(dock.control.path().to_owned(),None)};
             let mut command=Command::new(std::env::current_exe().map_err(|e|e.to_string())?);
-            command.arg("--kickthemap-webview").arg(profile.path());
-            Self::launch_owned(command,profile)
+            command.arg("--kickthemap-webview").arg(dock.control.path()).arg(&profile)
+                .arg(host.to_string()).arg(if remember{"remember"}else{"temporary"});
+            Self::launch_process(command,dock.control,profile,lock)
         }
-        #[cfg(not(windows))] {Err("De ingebouwde KickTheMap-browser vereist Windows en WebView2".into())}
+        #[cfg(not(windows))] {
+            let _=(dock,host,remember);
+            Err("De ingebouwde KickTheMap-browser vereist Windows en WebView2".into())
+        }
+    }
+    #[cfg(all(windows,test))]
+    fn launch_owned(command:Command,profile:tempfile::TempDir)->Result<Self,String>{
+        let path=profile.path().to_owned();
+        Self::launch_process(command,std::sync::Arc::new(profile),path,None)
     }
     #[cfg(windows)]
-    fn launch_owned(command:Command,profile:tempfile::TempDir)->Result<Self,String>{
-        let log=fs::File::create(profile.path().join("startup.log")).map_err(|e|e.to_string())?;
-        let process=BrowserProcess::spawn(&command,&log).map_err(|e|format!("Inlogvenster starten: {e}"))?;
-        let mut owned=Self{process,_profile:profile,port:0,websocket:String::new()};
+    fn launch_process(command:Command,control:std::sync::Arc<tempfile::TempDir>,profile:std::path::PathBuf,lock:Option<fs::File>)->Result<Self,String>{
+        let log=fs::File::create(control.path().join("startup.log")).map_err(|e|e.to_string())?;
+        let process=BrowserProcess::spawn(&command,&log).map_err(|e|format!("Inloggen starten: {e}"))?;
+        let mut owned=Self{process,_profile:control,_remember_lock:lock,port:0,websocket:String::new()};
         let deadline=Instant::now()+Duration::from_secs(45);
         while Instant::now()<deadline {
-            if let Ok((port,websocket))=read_port(owned._profile.path()){
+            if let Ok((port,websocket))=read_port(&profile){
                 owned.port=port;owned.websocket=websocket;
                 // WebView2 exposes its diagnostic port before its first page
                 // exists. Wait for the owned webview instead of announcing a
@@ -332,6 +374,15 @@ impl BrowserChannel {
 
 impl Drop for Browser {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if self._remember_lock.is_some() {
+            let _=fs::write(self._profile.path().join("window-stop"),[]);
+            let deadline=Instant::now()+Duration::from_millis(650);
+            while Instant::now()<deadline {
+                if self.is_closed(){return;}
+                std::thread::sleep(Duration::from_millis(35));
+            }
+        }
         let _=self.process.kill();
         let _=self.process.wait();
         // A private temporary profile is dropped after the owned browser.
@@ -402,15 +453,49 @@ mod embedded_tests {
     #[test]
     fn native_webview_fixture(){
         let Some(profile)=std::env::var_os("SLEUFBASE_WEBVIEW_FIXTURE") else{return};
-        if let Err(error)=crate::kickthemap_webview::run_fixture(Path::new(&profile)){
+        let parent=std::env::var("SLEUFBASE_WEBVIEW_TEST_PARENT").unwrap().parse().unwrap();
+        if let Err(error)=crate::kickthemap_webview::run_fixture(Path::new(&profile),parent){
             eprintln!("{error}");std::process::exit(3);
         }
     }
     #[test]
-    fn embedded_runtime_opens_local_fixture_and_connects_without_external_edge(){
+    fn embedded_runtime_is_a_child_of_the_app_and_keeps_the_owned_session(){
+        use std::ptr::null_mut;
+        use windows_sys::Win32::{
+            System::Threading::GetCurrentThreadId,
+            UI::WindowsAndMessaging::{
+                CreateWindowExW,DestroyWindow,DispatchMessageW,FindWindowExW,GetMessageW,
+                GetWindowLongW,PostThreadMessageW,TranslateMessage,GWL_STYLE,MSG,WM_QUIT,WS_CHILD,WS_POPUP,
+            },
+        };
+        struct Parent(u32,Option<std::thread::JoinHandle<()>>);
+        impl Drop for Parent{
+            fn drop(&mut self){
+                unsafe{PostThreadMessageW(self.0,WM_QUIT,0,0);}
+                let _=self.1.take().unwrap().join();
+            }
+        }
+        let (send,receive)=std::sync::mpsc::sync_channel(1);
+        let thread=std::thread::spawn(move||unsafe{
+            let class:Vec<u16>="STATIC\0".encode_utf16().collect();
+            let parent=CreateWindowExW(0,class.as_ptr(),std::ptr::null(),WS_POPUP,0,0,800,600,
+                null_mut(),null_mut(),null_mut(),std::ptr::null());
+            assert!(!parent.is_null());
+            send.send((parent as isize,GetCurrentThreadId())).unwrap();
+            let mut message:MSG=std::mem::zeroed();
+            while GetMessageW(&mut message,null_mut(),0,0)>0{
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            DestroyWindow(parent);
+        });
+        let (hwnd,thread_id)=receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        let _parent=Parent(thread_id,Some(thread));
         let profile=tempfile::Builder::new().prefix("sleufbase-webview-test-").tempdir().unwrap();
         let mut command=Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact",FIXTURE,"--nocapture"]).env("SLEUFBASE_WEBVIEW_FIXTURE",profile.path());
+        command.args(["--exact",FIXTURE,"--nocapture"])
+            .env("SLEUFBASE_WEBVIEW_FIXTURE",profile.path())
+            .env("SLEUFBASE_WEBVIEW_TEST_PARENT",hwnd.to_string());
         let browser=Browser::launch_owned(command,profile).unwrap();
         let deadline=Instant::now()+Duration::from_secs(5);
         loop {
@@ -421,6 +506,16 @@ mod embedded_tests {
             let result=browser.command("Runtime.evaluate",json!({"expression":"document.title","returnByValue":true}),Some(&ws)).unwrap();
             if result["result"]["value"]=="SleufBase local browser fixture"{break;}
             assert!(Instant::now()<deadline,"local fixture did not load");std::thread::sleep(Duration::from_millis(50));
+        }
+        let child=unsafe{FindWindowExW(hwnd as _,null_mut(),std::ptr::null(),std::ptr::null())};
+        assert!(!child.is_null(),"WebView2 host must be inside the SleufBase parent");
+        assert_ne!(unsafe{GetWindowLongW(child,GWL_STYLE)} as u32&WS_CHILD,0);
+        fs::write(browser._profile.path().join("window-bounds"),b"25 40 640 480").unwrap();
+        browser.set_visible(true).unwrap();
+        let until=Instant::now()+Duration::from_secs(3);
+        while fs::read(browser._profile.path().join("window-visible-ack")).ok().as_deref()!=Some(b"1"){
+            assert!(Instant::now()<until,"child did not acknowledge the pane bounds");
+            std::thread::sleep(Duration::from_millis(50));
         }
         browser.set_visible(false).unwrap();
         let until=Instant::now()+Duration::from_secs(3);

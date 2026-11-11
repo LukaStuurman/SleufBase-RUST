@@ -241,7 +241,8 @@ impl Default for SleufBaseApp {
             Ok((settings,backup))=>(settings,backup,String::new()),
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
-        Self {
+        #[allow(unused_mut)]
+        let mut app = Self {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
             overview_ui:Default::default(),
@@ -332,7 +333,14 @@ impl Default for SleufBaseApp {
             last_backup:Instant::now(),
             zoom:1.0,
             pan:egui::Vec2::ZERO,
+        };
+        // Decrypt and connect only on a worker: startup never opens a browser
+        // or blocks the egui event loop. Tests cannot access the user's vault.
+        #[cfg(not(test))]
+        if sleufbase_rust::kickthemap_session::account_exists() {
+            app.start_saved_login();
         }
+        app
     }
 }
 
@@ -416,7 +424,7 @@ impl SleufBaseApp {
         self.legacy_archive=doc.legacy_archive;
         self.template_preferences=doc.template_preferences;
         self.selected=(!self.datasets.is_empty()).then_some(0);
-        self.dirty=restored;
+        self.dirty=self.verify_kickthemap_raster_crs() || restored;
         self.schedule_raster_previews();
         self.resume_pending_ahn();
     }
@@ -769,10 +777,77 @@ impl SleufBaseApp {
     }
 
 
-    fn login_kickthemap(&mut self) {
-        if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
+    fn start_saved_login(&mut self) {
+        use sleufbase_rust::kickthemap_session as stored;
+        if self.live_operation_busy() || self.live_session.is_some()
+            || self.shell.login_saved_attempted || !stored::account_exists() {
+            return;
+        }
+        self.shell.login_saved_attempted = true;
+        match stored::load_account() {
+            Ok(Some(account)) => {
+                self.shell.login_email = account.email.clone();
+                self.start_native_login(account, true);
+            }
+            Ok(None) => {},
+            Err(error) => {
+                self.open_kickthemap_login();
+                self.browser_ui.status = format!("Bewaarde inloggegevens kunnen niet worden gelezen: {error}");
+            }
+        }
+    }
 
-        self.start_kickthemap_login(self.shell.login_remember);
+    fn start_native_login(&mut self, account:sleufbase_rust::kickthemap_session::Account, remember:bool) {
+        if self.live_operation_busy() || self.browser_ui.batch_mode { return; }
+        self.shell.login_pending_account = if remember {
+            Some(sleufbase_rust::kickthemap_session::Account {
+                email:account.email.clone(), password:account.password.clone()
+            })
+        } else { None };
+        self.shell.login_is_native = true;
+        self.browser_ui.status = "Rechtstreeks aanmelden en jobs ophalen…".into();
+        self.message = self.browser_ui.status.clone();
+        let (tx,rx) = mpsc::channel();
+        self.live_rx = Some(rx);
+        self.live_busy = true;
+        #[cfg(not(test))]
+        std::thread::spawn(move|| {
+            let result = KickTheMapLiveClient::login(&account.email,&account.password)
+                .and_then(|mut session| {
+                    let jobs=session.fetch_jobs()?;
+                    Ok((session,jobs))
+                });
+            let _ = tx.send(result);
+        });
+        #[cfg(test)]
+        {
+            let _ = account;
+            let _ = tx.send(Err("Test: netwerklogin niet gestart".into()));
+        }
+    }
+
+    fn login_kickthemap(&mut self) {
+        use sleufbase_rust::kickthemap_session as stored;
+        if self.live_operation_busy() || self.browser_ui.batch_mode {return;}
+        let email=self.shell.login_email.trim().to_owned();
+        let password=std::mem::take(&mut self.shell.login_password);
+        if email.is_empty() {
+            self.browser_ui.status="Vul een e-mailadres in.".into();
+            return;
+        }
+        let account=if !password.is_empty() {
+            stored::Account {email,password}
+        } else {
+            match stored::load_account() {
+                Ok(Some(account)) if account.email.eq_ignore_ascii_case(&email) => account,
+                _ => {
+                    self.browser_ui.status="Vul je wachtwoord in voor dit e-mailadres.".into();
+                    return;
+                }
+            }
+        };
+        self.shell.login_saved_attempted=true;
+        self.start_native_login(account,self.shell.login_remember);
     }
 
     fn refresh_live_jobs(&mut self) {
@@ -858,6 +933,8 @@ impl SleufBaseApp {
                     self.browser_ui.download_notice=None;
                     self.message="Een download uit een eerdere KickTheMap-sessie is afgerond; bestanden blijven op schijf. Vernieuw de huidige jobs.".into();return;
                 }
+                let expired=result.as_ref().err()
+                    .is_some_and(|error|error.to_lowercase().contains("sessie verlopen"));
                 self.live_session=Some(client);
                 self.live_download_rx=None;
                 self.live_busy=false;
@@ -876,6 +953,21 @@ impl SleufBaseApp {
                 if let Some(notice)=self.browser_ui.download_notice.take().and_then(|rx|rx.try_recv().ok()){
                     self.message.push('\n');self.message.push_str(&notice);
                 }
+                if expired {
+                    // A failed download may be the first indication of an expired
+                    // session. Do not retry the download under a new identity.
+                    self.live_session=None;
+                    if self.browser_ui.batch_mode {
+                        self.browser_ui.queue.clear();
+                        self.browser_ui.batch_mode=false;
+                    }
+                    if !cfg!(test) && !self.shell.login_saved_attempted
+                        && sleufbase_rust::kickthemap_session::account_exists() {
+                        self.start_saved_login();
+                    } else {
+                        self.open_kickthemap_login();
+                    }
+                }
             }
             Some(Err(TryRecvError::Disconnected))=>{
                 self.live_busy=false;
@@ -891,25 +983,64 @@ impl SleufBaseApp {
         let event=self.live_rx.as_ref().map(|rx|rx.try_recv());
         match event {
             Some(Ok(Ok((session,jobs))))=>{
+                let native = std::mem::take(&mut self.shell.login_is_native);
+                if native && self.live_jobs_owner.as_ref()!=Some(session.snapshot_owner()) {
+                    // A different account must never inherit selections or
+                    // offline snapshots from the previous authenticated owner.
+                    self.browser_ui.selected.clear();
+                    self.jobs_cache=None;
+                }
                 self.live_jobs_owner=Some(session.snapshot_owner().clone());
                 self.live_session=Some(session);
                 self.live_jobs=jobs;
+                if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
                 self.live_busy=false;
                 self.live_rx=None;
                 self.message=format!("{} KickTheMap jobs live opgehaald",self.live_jobs.len());
+                if native {
+                    // An earlier website view might belong to another account.
+                    self.browser_ui.browser=None;
+                    #[cfg(not(test))]
+                    {
+                        use sleufbase_rust::kickthemap_session as stored;
+                        let _=stored::forget();
+                        let saved=if let Some(account)=self.shell.login_pending_account.take(){
+                            stored::save_account(&account)
+                        }else{stored::forget_account()};
+                        if let Err(error)=saved{
+                            self.message.push_str(&format!(" (Account niet onthouden: {error})"));
+                        }
+                    }
+                    #[cfg(test)]
+                    {self.shell.login_pending_account=None;}
+                    self.shell.login_password.clear();
+                    self.shell.login_open=false;
+                    self.shell.login_saved_attempted=false;
+                    self.browser_ui.open=true;
+                }
+                self.browser_ui.status=self.message.clone();
                 self.save_live_cache();
             }
             Some(Ok(Err(err)))=>{
+                let native = std::mem::take(&mut self.shell.login_is_native);
+                self.shell.login_pending_account=None;
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
-                if err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED||err.contains("sessie verlopen") {
+                if native || err==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED || err.contains("sessie verlopen") {
+                    if !native && err.contains("sessie verlopen") && !self.shell.login_saved_attempted
+                        && !cfg!(test) && sleufbase_rust::kickthemap_session::account_exists() {
+                        self.start_saved_login();
+                        return;
+                    }
                     self.open_kickthemap_login();
                     self.browser_ui.status=err.clone();
                 }
                 self.message=format!("KickTheMap live: {err}");
             }
             Some(Err(TryRecvError::Disconnected))=>{
+                self.shell.login_is_native=false;
+                self.shell.login_pending_account=None;
                 self.live_busy=false;
                 self.live_rx=None;
                 self.live_session=None;
@@ -928,17 +1059,28 @@ impl SleufBaseApp {
         self.live_jobs_owner=None;
         self.live_jobs.clear();
 
+        self.hide_kickthemap_pane();
         self.browser_ui.browser=None;
+        self.browser_ui.dock=None;
         self.browser_ui.selected.clear();
         self.browser_ui.queue.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         #[cfg(not(test))]
-        let forgotten=sleufbase_rust::kickthemap_session::forget().is_ok();
+        let forgotten={
+            let session_removed=sleufbase_rust::kickthemap_session::forget().is_ok();
+            let credentials_removed=sleufbase_rust::kickthemap_session::forget_account().is_ok();
+            session_removed && credentials_removed
+        };
         #[cfg(test)]
         let forgotten=true;
-        self.shell.login_remember=false;
-        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale sessie is verwijderd."}
-            else{"Uitgelogd. De bewaarde sessie kon niet worden verwijderd."}.into();
+        self.shell.login_pending_account=None;
+        self.shell.login_email.clear();
+        self.shell.login_password.clear();
+        self.shell.login_is_native=false;
+        self.shell.login_saved_attempted=true;
+        self.shell.login_remember=true;
+        self.browser_ui.status=if forgotten{"Uitgelogd bij KickTheMap. De lokale aanmelding en inloggegevens zijn verwijderd."}
+            else{"Uitgelogd. Bewaarde inloggegevens konden mogelijk niet worden verwijderd."}.into();
         self.message=self.browser_ui.status.clone();
     }
 
@@ -1292,7 +1434,18 @@ fn canvas(
 }
 
 impl eframe::App for SleufBaseApp {
-    fn update(&mut self,ctx:&egui::Context,_frame:&mut eframe::Frame) {self.render(ctx);}
+    fn update(&mut self,ctx:&egui::Context,frame:&mut eframe::Frame) {
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle,RawWindowHandle};
+            if let Ok(handle)=frame.window_handle(){
+                if let RawWindowHandle::Win32(handle)=handle.as_raw(){self.browser_ui.host=handle.hwnd.get();}
+            }
+        }
+        #[cfg(not(windows))]
+        let _=frame;
+        self.render(ctx);
+    }
 }
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
@@ -1383,7 +1536,11 @@ impl SleufBaseApp {
             self.trench_markers=self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
             self.refresh_virtual_references();
         }
-        self.show_original_map(ctx);
+        if self.browser_ui.web_visible {
+            self.show_kickthemap_website(ctx);
+        } else {
+            self.show_original_map(ctx);
+        }
         self.show_extended_tools(ctx);
 
         if self.show_trench_dialog {
@@ -1427,8 +1584,12 @@ impl SleufBaseApp {
         self.show_tiff_comment_editor(ctx);
         self.show_map_comment_editor(ctx);
         if self.trench_editor.is_some() {self.show_virtual_editor(ctx);}
-        if self.browser_ui.open {self.show_kickthemap_workspace(ctx);}
-        self.show_kickthemap_login(ctx);
+        if self.browser_ui.open && !self.shell.login_open && !self.browser_ui.web_visible {
+            self.show_kickthemap_workspace(ctx);
+        }
+        if !self.browser_ui.web_visible {
+            self.show_kickthemap_login(ctx);
+        }
 
 
 
