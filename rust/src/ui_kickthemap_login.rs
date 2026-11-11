@@ -115,7 +115,7 @@ impl SleufBaseApp {
                             login = true;
                         }
                     }
-                    close = ui.add_enabled(!busy, egui::Button::new("Sluiten")).clicked();
+                    close = ui.button(if busy { "Annuleren" } else { "Sluiten" }).clicked();
                 });
                 if !connected {
                     ui.add_space(8.);
@@ -125,7 +125,18 @@ impl SleufBaseApp {
                     });
                 }
             });
-        if (!open || close) && !busy {
+        if !open || close {
+            if connecting {
+                self.cancel_kickthemap_login();
+            } else if self.shell.login_is_native && self.live_rx.is_some() {
+                // Drop the channel: an in-flight HTTP request may complete,
+                // but its result can never be installed into the app.
+                self.live_rx = None;
+                self.live_busy = false;
+                self.shell.login_pending_account = None;
+                self.shell.login_is_native = false;
+                self.browser_ui.status = "Aanmelden geannuleerd.".into();
+            }
             self.shell.login_open = false;
             self.shell.login_password.clear();
         } else if login {
