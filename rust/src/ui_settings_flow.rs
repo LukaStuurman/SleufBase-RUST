@@ -257,10 +257,9 @@ mod tests {
         let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
         app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
         app.open_template_export();
-        let state=&app.template_order_dialog.as_ref().unwrap().state;
-        assert_eq!(state.label_gap,7.);
-        assert!(state.profiles);
-        assert_eq!(state.overview_settings.centerline_color,[0x65,0x43,0x21]);
+        let opts=&app.project_template_dialog.as_ref().unwrap().options;
+        assert!(opts.choices[0].profile);
+        assert_eq!(opts.overview_settings.centerline_color,[0x65,0x43,0x21]);
         app.save_dxf();
         assert_eq!(app.export_dialog.as_ref().unwrap().label_gap,7.);
         let restored:NativeProject=serde_json::from_value(serde_json::to_value(app.snapshot()).unwrap()).unwrap();
