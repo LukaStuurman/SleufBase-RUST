@@ -196,7 +196,10 @@ impl SleufBaseApp {
                             ui.checkbox(&mut dialog.options.include_cad,
                                 "Zichtbare CAD/DXF-lagen (ook geneste blokken)");
                         });
-                        ui.label("Jobs gebruiken de volledige GeoTIFF. Virtuele/MarXact-sleuven kunnen zonder externe TIFF hun eigen transparante raster met meetpunten en grens gebruiken.");
+                        ui.label("KickTheMap- en virtuele proefsleuven worden samen geëxporteerd. Een virtuele sleuf zonder GeoTIFF verschijnt transparant op de luchtfoto.");
+                        if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Offline {
+                            ui.colored_label(DARK,"Offline export heeft geen luchtfoto: kies de netwerkmodus voor de PDOK-achtergrond.");
+                        }
                         ui.separator();
                         ui.heading("3. Proefsleufvakken en GeoTIFF-koppelingen");
                         let included=dialog.options.choices.iter().filter(|c|c.include&&!matches!(c.source,Source::Empty(_))).count();
@@ -556,6 +559,38 @@ mod flow_audit_tests {
         let sources=d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>();
         assert_eq!(sources,vec![Source::Raster(1),Source::Virtual(0)]);
         assert_eq!(app.geotiffs.len(),2,"unrelated raster remains available as a source");
+    }
+    #[test]
+    fn mixed_template_source_order_and_legacy_export_state_do_not_hide_virtual_trenches() {
+        let mut app=app();
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        raster.kickthemap_job_id=Some(88);
+        app.geotiffs.push(raster);
+        app.template_state=Some(Default::default());
+        app.open_template_export();
+        assert!(app.template_order_dialog.is_none());
+        let dlg=app.project_template_dialog.as_ref().unwrap();
+        assert_eq!(dlg.options.background,BackgroundKind::Pdok);
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Raster(0))));
+        app.project_template_dialog=None;
+        app.datasets.push(Dataset{job_id:88,title:"KickTheMap PS88".into(),
+            source_path:"PS88.json".into(),features:Vec::new()});
+        app.open_template_export();
+        let dlg=app.project_template_dialog.as_ref().unwrap();
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Job(0))));
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
+        assert!(app.template_order_dialog.is_none());
+        app.project_template_dialog=None;
+        let previous=template_project::Options{raster_layout:true,
+            choices:template_project::suggest_rasters(&app.geotiffs,&[]),..Default::default()};
+        app.template_preferences=Some(sleufbase_rust::template_prefs::TemplatePreferences::capture(
+            &previous,&[],&app.geotiffs,&[]));
+        app.open_template_export();
+        let dlg=app.project_template_dialog.as_ref().unwrap();
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Job(0))));
+        assert!(dlg.options.choices.iter().any(|c|matches!(c.source,Source::Virtual(0))));
     }
     #[test]
     fn preflight_explains_invalid_output_and_busy_launch_keeps_the_reviewed_form(){
