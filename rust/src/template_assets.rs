@@ -182,7 +182,7 @@ impl<'a> Batch<'a> {
                             let page = renderers[worker]
                                 .lock()
                                 .map_err(|_| "Kaartwerker is onverwacht gestopt")?
-                                .render_with_raster(
+                                .render_template_with_raster(
                                     source,
                                     *bounds,
                                     fallback,
