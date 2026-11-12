@@ -117,7 +117,12 @@ pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
     let border=t.measured_boundary();
     let border_width=(2.*source.quality).round_ties_even().max(2.) as u32;
     let dekband_width=(4.*source.quality).round_ties_even().max((border_width+1) as f64) as u32;
-    let point_width_px=(2.5*source.quality).round_ties_even().max(2.) as u32;
+    // Sharper exported detail also needs a slightly stronger cable stroke.
+    // Keep the exact historical 1x appearance for interactive previews.
+    let point_width_px = (2.5*source.quality).round_ties_even().max(2.) as u32;
+    let point_width_px = if source.quality >= 4. {
+        point_width_px.max((4. * source.quality).round_ties_even() as u32)
+    } else { point_width_px };
     let mut budget=300_000_000u64;
     // Python-compatible dekband strokes run along the measured axis; even
     // bounds reversed by imports are clamped to the physical trench length.
@@ -258,6 +263,18 @@ mod tests{
         assert_eq!(forward.image.dimensions(),reverse.image.dimensions());
         assert!(forward.details.rotation.abs()>1.);
         assert!((forward.details.rotation-reverse.details.rotation).abs()>90.);
+    }
+    #[test]
+    fn export_quality_draws_thicker_visible_cable_strokes_than_preview() {
+        let mut t=trench();
+        t.objects.push(TrenchPoint{metadata:serde_json::json!({"display_rgb":[255,40,30]}),role:"kabel".into(),object_name:"Kabel".into(),
+            source_name:"Kabel".into(),position:Vertex{x:155005.,y:463000.,z:Some(-0.5)},attributes:Default::default()});
+        let cancel=AtomicBool::new(false);
+        let low=render(&Source{trench:t.clone(),quality:1.,reverse:false},&cancel).unwrap();
+        let high=render(&Source{trench:t,quality:4.,reverse:false},&cancel).unwrap();
+        let count=|im:&RgbaImage| im.pixels().filter(|p|p.0==[255,40,30,235]).count();
+        assert!(count(&low)>0);
+        assert!(count(&high)>count(&low)*16);
     }
     #[test]
     fn cancel_and_invalid_scale_are_rejected(){

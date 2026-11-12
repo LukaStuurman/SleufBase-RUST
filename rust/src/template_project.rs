@@ -82,7 +82,7 @@ impl Default for Options {
             project: String::new(),
             drawn_by: String::new(),
             font_directories: Vec::new(),
-            dpi: 150,
+            dpi: 300,
             scale: 225.,
             // Use the same real-world aerial map for virtual and KickTheMap trenches.
             background: BackgroundKind::Pdok,
@@ -294,7 +294,7 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         let virtual_source=match (choice.source,raster){
             (Source::Virtual(i),None)=>{
                 let trench=trenches.get(i).ok_or("Virtuele sleuf niet meer beschikbaar")?;
-                Some(crate::virtual_raster::Source{trench:trench.clone(),quality:1.,reverse:choice.reverse})
+                Some(crate::virtual_raster::Source{trench:trench.clone(),quality:4.,reverse:choice.reverse})
             },
             _=>None,
         };
@@ -558,6 +558,20 @@ mod tests {
         opts.choices[0].include=false;
         assert!(build(&opts,&jobs,&[raster(Some(17))],&[],&[],None,&[],&Control::default())
             .err().unwrap().contains("minstens"));
+    }
+    #[test]
+    fn virtual_template_export_defaults_to_print_resolution() {
+        assert_eq!(Options::default().dpi, 300);
+        let trench = crate::virtual_trench::VirtualTrench::new(
+            "Test".into(),
+            crate::model::Vertex { x: 155000., y: 463000., z: Some(0.) },
+            crate::model::Vertex { x: 155006., y: 463000., z: Some(0.) },
+            0.6,
+        ).unwrap();
+        let low = crate::virtual_raster::layout(&trench, 1.).unwrap();
+        let high = crate::virtual_raster::layout(&trench, 4.).unwrap();
+        assert!(high.width >= low.width * 4 - 4);
+        assert!(high.height >= low.height * 4 - 4);
     }
     #[test]
     fn mixed_jobs_offer_unmatched_physical_rasters_once_per_source(){

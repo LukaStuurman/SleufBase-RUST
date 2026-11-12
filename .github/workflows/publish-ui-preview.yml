@@ -1,4 +1,4 @@
-name: Publish SleufBase Rust 1.0.1
+name: Publish SleufBase Rust 1.0.2
 
 on:
   workflow_run:
@@ -25,7 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          TAG: v1.0.1
+          TAG: v1.0.2
         shell: bash
         run: |
           set -euo pipefail
@@ -78,14 +78,14 @@ jobs:
           sha256sum --check SleufBase-Rust-preview-Setup.sha256
           cd ..
           python3 tools/verify_native_preview.py release/SleufBase-Rust-portable-preview.zip release/SleufBase-Rust-portable-preview.sha256
-          python3 -c 'import json,os,zipfile; z=zipfile.ZipFile("release/SleufBase-Rust-portable-preview.zip"); info=json.loads(z.read("build-info.json")); assert info["application_version"] == "1.0.1"; assert info["revision"] == os.environ["RUN_SHA"], "Package revision differs from the passing main build"'
+          python3 -c 'import json,os,zipfile; z=zipfile.ZipFile("release/SleufBase-Rust-portable-preview.zip"); info=json.loads(z.read("build-info.json")); assert info["application_version"] == "1.0.2"; assert info["revision"] == os.environ["RUN_SHA"], "Package revision differs from the passing main build"'
 
-      - name: Publish stable 1.0.1 release and Windows downloads
+      - name: Publish stable 1.0.2 release and Windows downloads
         if: steps.guard.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          TAG: v1.0.1
+          TAG: v1.0.2
         shell: bash
         run: |
           set -euo pipefail
@@ -105,7 +105,7 @@ jobs:
             release/SleufBase-Rust-Setup.sha256 \
             --repo "$GITHUB_REPOSITORY" \
             --target "$RUN_SHA" \
-            --title "SleufBase Rust 1.0.1" \
+            --title "SleufBase Rust 1.0.2" \
             --notes-file rust/RELEASE_NOTES_1_0.md \
             --draft
           test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" = 4

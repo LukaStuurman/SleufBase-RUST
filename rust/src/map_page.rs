@@ -88,7 +88,13 @@ fn expand(mut b: Bounds, aspect: f64) -> Bounds {
     b
 }
 pub fn layout(bounds: Bounds, settings: Settings) -> Result<Layout, String> {
+    layout_with_margin(bounds, settings, 82)
+}
+
+/// Compact DXF templates use narrower paper margins than standalone A4 maps.
+pub fn layout_with_margin(bounds: Bounds, settings: Settings, margin: u32) -> Result<Layout, String> {
     if !valid(bounds)
+        || !(48..=82).contains(&margin)
         || !(30..=600).contains(&settings.dpi)
         || !settings.scale.is_finite()
         || settings.scale <= 0.
@@ -102,11 +108,11 @@ pub fn layout(bounds: Bounds, settings: Settings) -> Result<Layout, String> {
         ((210. / 25.4) * dpi).round_ties_even() as u32,
     ];
     if u64::from(page_size[0]) * u64::from(page_size[1]) > 50_000_000
-        || page_size.iter().any(|&n| n <= 164)
+        || page_size.iter().any(|&n| n <= 2 * margin)
     {
         return Err("Kaartpagina overschrijdt het pixelbudget of is te klein".into());
     }
-    let map_size = [page_size[0] - 164, page_size[1] - 164];
+    let map_size = [page_size[0] - 2 * margin, page_size[1] - 2 * margin];
     let pixels_per_meter = dpi * 39.37007874 / settings.scale;
     let span = (bounds.max_x - bounds.min_x).max(bounds.max_y - bounds.min_y);
     let padding = (span * 0.1).clamp(1., 4.);
@@ -158,7 +164,7 @@ pub fn layout(bounds: Bounds, settings: Settings) -> Result<Layout, String> {
     Ok(Layout {
         page_size,
         map_size,
-        origin: [82., 82.],
+        origin: [f64::from(margin), f64::from(margin)],
         bounds: candidate,
         meters_per_pixel,
     })
@@ -310,7 +316,9 @@ pub fn plan(
         let y = top + layout.screen([b.min_x, c])[1].round_ties_even();
         line(&mut ops, vec![[left - 22., y], [left, y]], BLACK, 3);
         line(&mut ops, vec![[left + w, y], [left + w + 22., y]], BLACK, 3);
-        for (x, angle) in [(left - 50., 90.), (left + w + 50., 270.)] {
+        // Move rotated coordinate labels inward on compact pages.
+        let label_offset = (left - 18.).min(50.);
+        for (x, angle) in [(left - label_offset, 90.), (left + w + label_offset, 270.)] {
             ops.push(Op::Text {
                 position: [x, y],
                 text: format!("{}", c.round_ties_even() as i64),
@@ -612,4 +620,23 @@ pub(crate) fn draw(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod template_margin_tests {
+    use super::*;
+    #[test]
+    fn compact_template_frame_uses_more_map_pixels_without_clipping_page() {
+        let bounds = Bounds { min_x: 155000., min_y: 463000., max_x: 155010., max_y: 463008. };
+        let settings = Settings { dpi: 300, scale: 225. };
+        let normal = layout(bounds, settings).unwrap();
+        let compact = layout_with_margin(bounds, settings, 56).unwrap();
+        assert_eq!(normal.origin, [82., 82.]);
+        assert_eq!(compact.origin, [56., 56.]);
+        assert_eq!(compact.page_size, normal.page_size);
+        assert_eq!(compact.map_size[0], normal.map_size[0] + 52);
+        assert_eq!(compact.map_size[1], normal.map_size[1] + 52);
+        assert!(compact.bounds.min_x <= bounds.min_x);
+        assert!(compact.bounds.max_x >= bounds.max_x);
+    }
 }

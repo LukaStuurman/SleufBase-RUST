@@ -240,6 +240,42 @@ fn overlays(
     }
     Ok(())
 }
+/// Keep RD-accurate cable and leiding positions readable when a narrow
+/// virtual trench is downsampled onto an aerial photograph.
+fn emphasize_virtual_trench(
+    image: &mut RgbaImage,
+    layout: &Layout,
+    trench: &crate::virtual_trench::VirtualTrench,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    input::check(cancel)?;
+    let mut budget = 50_000_000u64;
+    let factor = layout.page_size[0] as f64 / 1754.;
+    let line_width = (6. * factor).round().clamp(4., 16.) as u32;
+    let mut outline = trench.measured_boundary().into_iter()
+        .map(|(x,y)| layout.screen([x,y])).collect::<Vec<_>>();
+    if outline.len() >= 2 {
+        if outline.first() != outline.last() {
+            outline.push(outline[0]);
+        }
+        map_canvas::line(image, &outline, line_width + 4, [255,255,255,255], cancel, &mut budget)?;
+        map_canvas::line(image, &outline, line_width, [0,115,203,255], cancel, &mut budget)?;
+    }
+    let radius = (9. * factor).round().clamp(6., 24.);
+    for (index, object) in trench.objects.iter().enumerate() {
+        if index % 256 == 0 { input::check(cancel)?; }
+        if matches!(object.role.to_lowercase().as_str(), "start" | "end") { continue; }
+        let [x,y] = layout.screen([object.position.x, object.position.y]);
+        if x < -radius || y < -radius
+            || x > image.width() as f64 + radius
+            || y > image.height() as f64 + radius { continue; }
+        let color = crate::virtual_raster::display_rgb(&object.metadata).unwrap_or([37,99,235]);
+        map_canvas::ellipse(image, [x-radius,y-radius,x+radius,y+radius], [0,0,0,255], None, cancel, &mut budget)?;
+        map_canvas::ellipse(image, [x-radius+2.,y-radius+2.,x+radius-2.,y+radius-2.], [255,255,255,255], None, cancel, &mut budget)?;
+        map_canvas::ellipse(image, [x-radius+4.,y-radius+4.,x+radius-4.,y+radius-4.], [color[0],color[1],color[2],255], None, cancel, &mut budget)?;
+    }
+    Ok(())
+}
 impl Renderer {
     pub fn render(
         &mut self,
@@ -265,9 +301,34 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
+        self.render_with_margin(source, bounds, fallback, profile_reference, 82, cancel)
+    }
+    /// The DXF template map needs less surrounding paper than standalone A4.
+    pub fn render_template_with_raster(
+        &mut self,
+        source: &Source,
+        bounds: Bounds,
+        fallback: Option<Raster<'_>>,
+        profile_reference: Option<[f64; 2]>,
+        cancel: &AtomicBool,
+    ) -> Result<Page, String> {
+        // A supplied PNG map is already rasterized for the legacy A4 layout.
+        // Do not change its expected dimensions or silently resample it.
+        let margin = if matches!(&source.background, Background::Png { .. }) { 82 } else { 56 };
+        self.render_with_margin(source, bounds, fallback, profile_reference, margin, cancel)
+    }
+    fn render_with_margin(
+        &mut self,
+        source: &Source,
+        bounds: Bounds,
+        fallback: Option<Raster<'_>>,
+        profile_reference: Option<[f64; 2]>,
+        margin: u32,
+        cancel: &AtomicBool,
+    ) -> Result<Page, String> {
         input::check(cancel)?;
         source.validate()?;
-        let layout = map_page::layout(bounds, source.settings)?;
+        let layout = map_page::layout_with_margin(bounds, source.settings, margin)?;
         let tiff = if source.include_tiff {
             Some(
                 source
@@ -303,7 +364,7 @@ impl Renderer {
             cancel,
         )?;
         let mut map = background(&source.background, &layout, cancel, &mut self.cadastral)?;
-        if let Some(tiff) = tiff {
+        if let Some(tiff) = tiff.as_ref() {
             let (image, transform) = match tiff {
                 Raster::Tiff(tiff) => {
                     let raster = crate::raster::decode_full_with_cancel(&tiff.path, cancel)?;
@@ -312,16 +373,23 @@ impl Renderer {
                     (image, tiff.transform)
                 }
                 Raster::Virtual(source) => {
-                    let info = crate::virtual_raster::layout(&source.trench, source.quality)?;
-                    (
-                        crate::virtual_raster::render(source, cancel)?,
-                        info.transform(),
-                    )
+                    // The adjacent detail image uses the full 4x raster; a map
+                    // can use 1x and draw readable cable markers afterward.
+                    let map_source = crate::virtual_raster::Source {
+                        trench: source.trench.clone(),
+                        quality: source.quality.min(1.),
+                        reverse: source.reverse,
+                    };
+                    let info = crate::virtual_raster::layout(&map_source.trench, map_source.quality)?;
+                    (crate::virtual_raster::render(&map_source, cancel)?, info.transform())
                 }
             };
             map_raster::paint_with_opacity(&mut map, image, transform, &layout, source.tiff_opacity, cancel)?;
         }
         overlays(&mut map, source, &layout, cancel)?;
+        if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
+            emphasize_virtual_trench(&mut map, &layout, &virtual_source.trench, cancel)?;
+        }
         let mut image = crate::raster_rotation::allocate(layout.page_size[0], layout.page_size[1])?;
         for p in image.pixels_mut() {
             *p = Rgba([255; 4]);
@@ -330,5 +398,33 @@ impl Renderer {
         drop(map);
         map_page::draw(&mut image, &operations, fonts, cancel)?;
         Ok(Page { image, layout })
+    }
+}
+
+#[cfg(test)]
+mod virtual_map_visibility_tests {
+    use super::*;
+    use crate::model::Vertex;
+    use crate::virtual_trench::{TrenchPoint, VirtualTrench};
+    #[test]
+    fn cable_marker_remains_visible_on_dark_aerial_map() {
+        let mut trench = VirtualTrench::new(
+            "Virtuele PS".into(),
+            Vertex { x: 155000., y: 463000., z: Some(0.) },
+            Vertex { x: 155003., y: 463000., z: Some(0.) },
+            0.6,
+        ).unwrap();
+        trench.objects.push(TrenchPoint {
+            metadata: serde_json::json!({"display_rgb": [250,40,60]}),
+            role: "kabel".into(), object_name: "Kabel".into(), source_name: "Kabel".into(),
+            position: Vertex { x: 155001.5, y: 463000., z: Some(-0.6) },
+            attributes: Default::default(),
+        });
+        let bounds=Bounds { min_x: 154990., min_y: 462990., max_x: 155010., max_y: 463010. };
+        let layout=map_page::layout_with_margin(bounds, Settings { dpi: 72, scale: 100. },56).unwrap();
+        let mut image=RgbaImage::from_pixel(layout.map_size[0], layout.map_size[1], Rgba([25,25,25,255]));
+        emphasize_virtual_trench(&mut image, &layout, &trench, &AtomicBool::new(false)).unwrap();
+        let [x,y]=layout.screen([155001.5,463000.]);
+        assert_eq!(image.get_pixel(x as u32, y as u32).0, [250,40,60,255]);
     }
 }
