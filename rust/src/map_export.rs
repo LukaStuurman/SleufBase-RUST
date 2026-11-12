@@ -312,7 +312,10 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
-        self.render_with_margin(source, bounds, fallback, profile_reference, 56, cancel)
+        // A supplied PNG map is already rasterized for the legacy A4 layout.
+        // Do not change its expected dimensions or silently resample it.
+        let margin = if matches!(&source.background, Background::Png { .. }) { 82 } else { 56 };
+        self.render_with_margin(source, bounds, fallback, profile_reference, margin, cancel)
     }
     fn render_with_margin(
         &mut self,
