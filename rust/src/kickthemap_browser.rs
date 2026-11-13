@@ -218,6 +218,9 @@ impl Browser {
         self.cdp("Storage.clearCookies",json!({}))?;
         self.navigate_account("/signin")
     }
+    pub fn open_account_home(&self)->Result<(),String>{
+        self.navigate_account("/")
+    }
     fn navigate_account(&self,path:&str)->Result<(),String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
         let result=self.command("Page.navigate",json!({"url":format!("{ORIGIN}{path}")}),Some(&ws))?;

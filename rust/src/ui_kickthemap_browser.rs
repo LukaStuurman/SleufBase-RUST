@@ -46,6 +46,9 @@ pub(super) struct BrowserUi {
     pub(super) capturing:Option<Receiver<Result<BrowserLogin,String>>>,
     login_status:Option<Receiver<&'static str>>,
     login_cancel:Arc<AtomicBool>,
+    #[cfg(all(windows, not(test)))]
+    startup_login_checked:bool,
+    restoring_login:bool,
     pub(super) selected:BTreeSet<u64>,
     selection_anchor:Option<u64>,
     filters:[String;7],
@@ -109,6 +112,9 @@ fn ctrl_click_selects_the_inclusive_range_in_current_list_order(){
 impl Default for BrowserUi {
     fn default()->Self {
         Self {open:false,browser:None,dock:None,host:0,web_visible:false,capturing:None,login_status:None,login_cancel:Arc::default(),
+            #[cfg(all(windows, not(test)))]
+            startup_login_checked:false,
+            restoring_login:false,
             #[cfg(test)] launch_requests:0,
             selected:BTreeSet::new(),selection_anchor:None,filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
@@ -127,13 +133,12 @@ pub(super) struct BrowserLogin {
     session:KickTheMapLiveClient,
     jobs:Vec<Job>,
     remember:bool,
-    review_password:bool,
     cookies:Option<serde_json::Value>,
 }
 
 #[cfg(not(test))]
 fn connect_browser(
-    dock:BrowserDock,host:isize,remember:bool,
+    dock:BrowserDock,host:isize,remember:bool,restore_only:bool,
     known_nonempty:bool,
     cancel:&AtomicBool,
     status:&mpsc::Sender<&'static str>,
@@ -156,7 +161,12 @@ fn connect_browser(
             if Instant::now()>=deadline{break;}
             std::thread::sleep(Duration::from_millis(250));
         }
-        if !restored{browser.reset_signin()?;}
+        if !restored && !restore_only{browser.reset_signin()?;}
+    }
+    if restore_only && !restored {
+        // Older installs may only have the persistent WebView2 profile.
+        // Navigate to the authenticated landing page to try that session.
+        browser.open_account_home()?;
     }
     let try_session=|browser:&Browser,csrf:&str| {
 
@@ -166,7 +176,7 @@ fn connect_browser(
         let jobs=session.fetch_jobs_from_browser(||browser.browser_job_payload())?;
         Ok::<_,String>((session,jobs))
     };
-    if !restored{
+    if !restored && !restore_only{
         check_cancel()?;
         browser.set_visible(true)?;
         let _=status.send("Meld je aan bij KickTheMap. De joblijst opent automatisch.");
@@ -181,12 +191,11 @@ fn connect_browser(
             match try_session(&browser,&csrf){
                 Ok((session,jobs))=>{
                     check_cancel()?;
-                    let review_password=remember&&!restored;
-                    if !review_password{browser.set_visible(false)?;}
+                    browser.set_visible(false)?;
                     let cookies=if remember{browser.session_cookies().ok()}else{None};
-                    return Ok(BrowserLogin{browser,session,jobs,remember,review_password,cookies});
+                    return Ok(BrowserLogin{browser,session,jobs,remember,cookies});
                 }
-                Err(error) if !restored=>{
+                Err(error) if !restored && !restore_only=>{
                     job_errors+=1;
                     if job_errors>=3{return Err(format!("Jobs ophalen mislukt: {error}"));}
                 }
@@ -195,7 +204,10 @@ fn connect_browser(
         }else{
             job_errors=0;
         }
-        if restored&&Instant::now()>=restore_until{
+        if (restored || restore_only) && Instant::now()>=restore_until{
+            if restore_only {
+                return Err("De bewaarde KickTheMap-sessie kon niet worden hersteld. Meld je opnieuw aan.".into());
+            }
             browser.reset_signin()?;
             check_cancel()?;
             browser.set_visible(true)?;
@@ -217,6 +229,8 @@ impl SleufBaseApp {
             login.cookies.ok_or_else(||std::io::Error::other("Geen geldige sessiecookies"))
                 .and_then(stored::save)
         }else{stored::forget()};
+        // A website sign-in can select a different account from the native form.
+        let cleared_account = self.browser_ui.restoring_login || stored::forget_account().is_ok();
         if self.live_jobs_owner.as_ref()!=Some(login.session.snapshot_owner()){
             self.browser_ui.selected.clear();
         }
@@ -226,10 +240,13 @@ impl SleufBaseApp {
         if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
         self.browser_ui.browser=Some(login.browser);
         self.browser_ui.open=true;
-        self.browser_ui.web_visible=login.review_password;
-        self.shell.login_open=login.review_password;
+        self.browser_ui.web_visible=false;
+        self.shell.login_open=false;
         self.save_live_cache();
         self.browser_ui.status=format!("KickTheMap verbonden: {} live jobs.",self.live_jobs.len());
+        if !cleared_account {
+            self.browser_ui.status.push_str(" De eerdere inloggegevens konden niet worden verwijderd.");
+        }
         if storage.is_err(){
             self.browser_ui.status.push_str(if login.remember{
                 " Sessie kon niet lokaal worden onthouden."
@@ -290,13 +307,6 @@ impl SleufBaseApp {
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
-        // Never launch WebView2 automatically: only use it when the operator
-        // explicitly chooses the challenge/website fallback from the native form.
-        if !cfg!(test) && self.live_session.is_none() && !self.live_operation_busy()
-            && !self.shell.login_saved_attempted
-            && sleufbase_rust::kickthemap_session::account_exists() {
-            self.start_saved_login();
-        }
     }
     fn open_newest_jobs_cache(&mut self) {
         if let Some(cache) = Self::newest_jobs_cache() {
@@ -322,12 +332,36 @@ impl SleufBaseApp {
         newest.map(|(_,cache)|cache)
     }
     pub(super) fn start_kickthemap_login(&mut self,remember:bool) {
+        self.start_embedded_login(remember, false);
+    }
+    #[cfg(all(windows, not(test)))]
+    pub(super) fn resume_kickthemap_on_startup(&mut self) {
+        if self.browser_ui.startup_login_checked || self.live_operation_busy() {
+            return;
+        }
+        self.browser_ui.startup_login_checked = true;
+        if sleufbase_rust::kickthemap_session::exists() {
+            self.start_embedded_login(true, true);
+        } else if sleufbase_rust::kickthemap_session::account_exists() {
+            self.start_saved_login();
+        }
+    }
+    fn start_embedded_login(&mut self, remember:bool, restore_only:bool) {
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let known_nonempty=!self.live_jobs.is_empty()||self.jobs_cache.as_ref().is_some_and(|c|!c.jobs.is_empty());
         #[cfg(not(test))]
         let dock=match BrowserDock::new(){
             Ok(dock)=>dock,
-            Err(error)=>{self.browser_ui.status=format!("KickTheMap-paneel openen: {error}");return;}
+            Err(error)=>{
+                self.browser_ui.status=format!("KickTheMap-paneel openen: {error}");
+                if restore_only {
+                    self.start_saved_login();
+                    if !self.live_operation_busy() {
+                        self.open_kickthemap_login();
+                    }
+                }
+                return;
+            }
         };
         self.browser_ui.browser=None;
         let (tx,rx)=mpsc::channel();
@@ -335,6 +369,7 @@ impl SleufBaseApp {
         self.browser_ui.capturing=Some(rx);
         self.browser_ui.login_status=Some(status_rx);
         self.browser_ui.login_cancel=Arc::default();
+        self.browser_ui.restoring_login=restore_only;
         self.browser_ui.status="Verbinding maken met KickTheMap…".into();
         self.message=self.browser_ui.status.clone();
         #[cfg(not(test))]
@@ -342,10 +377,10 @@ impl SleufBaseApp {
             let cancel=Arc::clone(&self.browser_ui.login_cancel);
             let host=self.browser_ui.host;
             self.browser_ui.dock=Some(dock.clone());
-            self.browser_ui.web_visible=true;
-            self.shell.login_open=true;
+            self.browser_ui.web_visible=!restore_only;
+            self.shell.login_open=!restore_only;
             std::thread::spawn(move|| {
-                let _=tx.send(connect_browser(dock,host,remember,known_nonempty,&cancel,&status_tx));
+                let _=tx.send(connect_browser(dock,host,remember,restore_only,known_nonempty,&cancel,&status_tx));
             });
         }
         #[cfg(test)]
@@ -354,6 +389,10 @@ impl SleufBaseApp {
             self.browser_ui.launch_requests+=1;
             let _=tx.send(Err("Test: inlogvenster niet gestart".into()));
         }
+    }
+    #[cfg(test)]
+    pub(super) fn test_restore_kickthemap_login(&mut self) {
+        self.start_embedded_login(true, true);
     }
     pub(super) fn cancel_kickthemap_login(&mut self) {
         self.browser_ui.login_cancel.store(true,Ordering::Relaxed);
@@ -441,9 +480,16 @@ impl SleufBaseApp {
                         Err(error)=>{
                             self.hide_kickthemap_pane();
                             self.browser_ui.status=error;
+                            if self.browser_ui.restoring_login {
+                                self.start_saved_login();
+                                if !self.live_operation_busy() {
+                                    self.open_kickthemap_login();
+                                }
+                            }
                         }
                     }
                 }
+                self.browser_ui.restoring_login=false;
                 self.message=self.browser_ui.status.clone();
             }
         }

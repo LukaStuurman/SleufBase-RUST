@@ -1,5 +1,5 @@
 #define MyAppName "SleufBase Rust"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.3"
 #define MyAppExeName "sleufbase-rust.exe"
 
 [Setup]
