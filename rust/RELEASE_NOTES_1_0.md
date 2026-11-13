@@ -1,4 +1,7 @@
-## SleufBase Rust 1.0.2 voor Windows
+## SleufBase Rust 1.0.3 voor Windows
+
+- SleufBase herstelt een onthouden KickTheMap-sessie automatisch bij het opstarten.
+- Als KickTheMap opnieuw om verificatie vraagt, kun je die afronden in de ingebouwde aanmeldpagina.
 
 ### Scherpere en duidelijkere DXF-sjabloonexport
 - De luchtfotokaart in het DXF-sjabloon krijgt compactere witte randen, terwijl RD-coördinaten, schaalbalk, legenda en noordpijl behouden blijven.

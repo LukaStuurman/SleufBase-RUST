@@ -86,7 +86,7 @@ impl SleufBaseApp {
                             "Inloggegevens onthouden en automatisch aanmelden",
                         ),
                     );
-                    ui.small("Inloggegevens worden alleen op dit apparaat versleuteld met Windows DPAPI bewaard. Uitloggen wist ze.");
+                    ui.small("SleufBase bewaart je aanmelding versleuteld op dit apparaat. Uitloggen wist de bewaarde aanmelding.");
                     if saved && self.shell.login_password.is_empty() {
                         ui.small("Een wachtwoord is veilig opgeslagen. Vul een nieuw wachtwoord in om het te vervangen.");
                     }
@@ -119,10 +119,10 @@ impl SleufBaseApp {
                 });
                 if !connected {
                     ui.add_space(8.);
-                    ui.collapsing("Als KickTheMap een beveiligingscontrole vereist", |ui| {
-                        ui.small("Bij een verplichte reCAPTCHA kan de rechtstreekse aanmelding worden geweigerd. Gebruik dan de beveiligde KickTheMap-weergave binnen SleufBase. Deze stap kan niet automatisch worden overgeslagen.");
-                        browser = ui.add_enabled(!busy, egui::Button::new("Beveiligde website-aanmelding")).clicked();
-                    });
+                    if self.browser_ui.status == sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED {
+                        ui.small("Rond de beveiligingscontrole af in SleufBase. Met ‘Inloggegevens onthouden’ opent SleufBase je sessie automatisch bij de volgende start.");
+                    }
+                    browser = ui.add_enabled(!busy, egui::Button::new("Aanmelden in ingebouwde KickTheMap-pagina")).clicked();
                 }
             });
         if !open || close {

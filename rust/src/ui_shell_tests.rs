@@ -680,6 +680,18 @@ fn login_menu_opens_native_form_and_never_starts_browser() {
     assert!(!app.live_busy);
 }
 #[test]
+fn failed_kickthemap_restore_offers_sign_in_without_showing_the_website() {
+    let mut app = SleufBaseApp::default();
+    app.test_restore_kickthemap_login();
+    assert!(!app.shell.login_open);
+    assert!(!app.browser_ui.web_visible);
+    app.poll_kickthemap_browser(&egui::Context::default());
+    assert!(app.shell.login_open);
+    assert!(!app.browser_ui.web_visible);
+    assert!(!app.live_operation_busy());
+}
+
+#[test]
 fn login_form_renders_at_minimum_size_without_contacting_accounts(){
     let mut app=SleufBaseApp::default();
     app.open_kickthemap_login();

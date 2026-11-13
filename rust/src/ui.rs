@@ -241,8 +241,7 @@ impl Default for SleufBaseApp {
             Ok((settings,backup))=>(settings,backup,String::new()),
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
-        #[allow(unused_mut)]
-        let mut app = Self {
+        Self {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
             overview_ui:Default::default(),
@@ -333,14 +332,7 @@ impl Default for SleufBaseApp {
             last_backup:Instant::now(),
             zoom:1.0,
             pan:egui::Vec2::ZERO,
-        };
-        // Decrypt and connect only on a worker: startup never opens a browser
-        // or blocks the egui event loop. Tests cannot access the user's vault.
-        #[cfg(not(test))]
-        if sleufbase_rust::kickthemap_session::account_exists() {
-            app.start_saved_login();
         }
-        app
     }
 }
 
@@ -778,6 +770,14 @@ impl SleufBaseApp {
 
 
     fn start_saved_login(&mut self) {
+        #[cfg(test)]
+        return;
+        #[cfg(not(test))]
+        self.load_saved_login();
+    }
+
+    #[cfg(not(test))]
+    fn load_saved_login(&mut self) {
         use sleufbase_rust::kickthemap_session as stored;
         if self.live_operation_busy() || self.live_session.is_some()
             || self.shell.login_saved_attempted || !stored::account_exists() {
@@ -1444,6 +1444,10 @@ impl eframe::App for SleufBaseApp {
         }
         #[cfg(not(windows))]
         let _=frame;
+        #[cfg(all(windows, not(test)))]
+        if self.browser_ui.host != 0 {
+            self.resume_kickthemap_on_startup();
+        }
         self.render(ctx);
     }
 }
