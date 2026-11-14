@@ -163,7 +163,8 @@ impl Editor {
         Ok(result)
     }
     fn add_or_replace(&mut self)->Result<(),String> {
-        let mut next=self.build()?;
+        let mut next=self.draft.clone();
+        edit::edit_axis_preserving_order(&mut next,self.label.clone(),self.start,self.end,self.width)?;
         let mut object=self.object.to_object(&next)?;
         if let Some(old)=self.selected.and_then(|i|self.draft.objects.get(i)){
             let typed=object.metadata.take();
@@ -179,9 +180,6 @@ impl Editor {
                 }
             }
         }
-        // Keep the draft's indices stable while selecting other markers.
-        // The normal build/save path sorts objects on the current axis.
-        next.objects.clone_from(&self.draft.objects);
         if let Some(index)=self.selected {
             next.objects[index]=object;
         }else{
@@ -192,6 +190,20 @@ impl Editor {
         self.selected=None;
         self.object=ObjectForm::default();self.entry_started=false;
         Ok(())
+    }
+    /// Commit the active form before copying, importing, or leaving the tab.
+    /// An unchanged selected object must not become a second new entry.
+    fn finish_entry(&mut self)->Result<(),String> {
+        if self.entry_changed(){self.add_or_replace()?;}
+        self.selected=None;
+        self.object=ObjectForm::default();
+        self.entry_started=false;
+        self.section_drag=None;
+        Ok(())
+    }
+    fn completed_draft(&mut self)->Result<VirtualTrench,String> {
+        self.finish_entry()?;
+        self.build()
     }
     fn entry_changed(&self)->bool {
         if let Some(index)=self.selected {
@@ -363,14 +375,9 @@ impl SleufBaseApp {
                         }
                     }
                     if ui.selectable_label(!editor.objects_tab,"Sleufgegevens").clicked()&&editor.objects_tab{
-                        let result=if editor.entry_changed(){editor.add_or_replace()}else{Ok(())};
+                        let result=editor.finish_entry();
                         match result{
-                            Ok(())=>{
-                                editor.selected=None;
-                                editor.object=ObjectForm::default();
-                                editor.section_drag=None;
-                                editor.jump_to_objects=Some(false);
-                            }
+                            Ok(())=>editor.jump_to_objects=Some(false),
                             Err(error)=>editor.error=error,
                         }
                     }
@@ -527,9 +534,9 @@ impl SleufBaseApp {
                     ui.heading(if editor.selected.is_some(){"Kabel of leiding bewerken"}else{"Nieuwe kabel of leiding"});
                     pick_requested=object_ui::show(&mut editor,ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
                     if editor.selected.is_some()&&ui.button("Nieuwe kabel/leiding").clicked(){
-                        let result=if editor.entry_changed(){editor.add_or_replace()}else{Ok(())};
+                        let result=editor.finish_entry();
                         match result{
-                            Ok(())=>{editor.selected=None;editor.object=ObjectForm::default();editor.entry_started=false;editor.error.clear();}
+                            Ok(())=>editor.error.clear(),
                             Err(error)=>editor.error=error,
                         }
                     }
@@ -572,7 +579,7 @@ impl SleufBaseApp {
                         ui.add(egui::TextEdit::multiline(&mut editor.paste)
                             .desired_rows(5).hint_text("LS\\tKabel\\tKickTheMap\\t2,5\\t-0,3\\t-1,2"));
                         if ui.button("Importeer geplakte Excel-regels").clicked() {
-                            let result=if editor.entry_changed(){editor.add_or_replace()}else{editor.selected=None;Ok(())};
+                            let result=editor.finish_entry();
                             match result.and_then(|_|editor.build()){
                                 Ok(mut next)=>match edit::import_tabular(&mut next,&editor.paste) {
                                     Ok(count)=>{
@@ -587,7 +594,7 @@ impl SleufBaseApp {
                             }
                         }
                         if ui.button("Kopieer alle meetobjecten naar Excel").clicked() {
-                            match editor.build().and_then(|t|edit::export_tabular(&t)){
+                            match editor.completed_draft().and_then(|t|edit::export_tabular(&t)){
                                 Ok(table)=>ui.ctx().copy_text(table),
                                 Err(e)=>editor.error=e,
                             }
@@ -626,7 +633,7 @@ impl SleufBaseApp {
         if let Some(cmd)=action {
             match cmd {
                 Action::Save=>{
-                    let result=if editor.entry_changed(){editor.add_or_replace().and_then(|_|editor.build())}else{editor.build()};
+                    let result=editor.completed_draft();
                     match result {
                         Ok(next)=>{
                             self.virtual_trenches[editor.index]=next;
@@ -639,7 +646,7 @@ impl SleufBaseApp {
                     }
                 },
                 Action::Copy=>{
-                    match editor.build().and_then(|t|edit::manual_copy(&t,"(handmatig)")){
+                    match editor.completed_draft().and_then(|t|edit::manual_copy(&t,"(handmatig)")){
                         Ok(copy)=>{
                             self.virtual_trenches.push(copy);
                             self.trench_markers.clear();
@@ -930,5 +937,72 @@ mod depth_audit_tests {
         let mut editor=Editor::new(0,&trench);editor.selected=Some(0);editor.object=ObjectForm::from_object(&trench,&trench.objects[0]);assert!(editor.object.use_depth);assert_eq!(editor.object.depth,0.85);
         editor.object.use_depth=false;editor.add_or_replace().unwrap();let point=&editor.draft.objects[0];assert_eq!(point.position.z,trench.objects[0].position.z);assert_eq!(point.metadata["surface_mode"],"manual");assert!(point.metadata.get("sleufbase_depth_meters").is_none());
         sleufbase_rust::virtual_map::apply_surface_height(&mut editor.draft,sleufbase_rust::virtual_map::MapPoint::Start,Some(8.)).unwrap();assert_eq!(editor.draft.objects[0].position.z,trench.objects[0].position.z);
+    }
+}
+
+#[cfg(test)]
+mod draft_snapshot_tests {
+    use super::*;
+    fn editor()->Editor {
+        let mut trench=VirtualTrench::new("PS12".into(),
+            Vertex{x:155000.,y:463000.,z:Some(2.)},
+            Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+        trench.objects.push(ObjectForm{chainage:8.,name:"Bestaande kabel".into(),..Default::default()}.to_object(&trench).unwrap());
+        Editor::new(0,&trench)
+    }
+    #[test]
+    fn manual_copy_and_excel_snapshot_include_pending_new_and_edited_cables() {
+        for edit_existing in [false,true] {
+            let mut editor=editor();
+            let original=serde_json::to_vec(&editor.original).unwrap();
+            if edit_existing {assert!(editor.select_object(0));}
+            editor.object.name="Ingevoerde waterleiding".into();
+            editor.object.source="water".into();
+            editor.object.chainage=3.;
+            editor.object.use_depth=true;editor.object.depth=0.75;
+            let snapshot=editor.completed_draft().unwrap();
+            let expected=if edit_existing{1}else{2};
+            assert_eq!(snapshot.objects.len(),expected);
+            let copy=edit::manual_copy(&snapshot,"(handmatig)").unwrap();
+            let tsv=edit::export_tabular(&snapshot).unwrap();
+            assert_eq!(copy.objects[0].object_name,"Ingevoerde waterleiding");
+            assert_eq!(copy.objects[0].position.z,Some(1.25));
+            assert!(tsv.contains("Ingevoerde waterleiding\twater\t3.0000"));
+            assert_eq!(editor.completed_draft().unwrap().objects.len(),expected);
+            assert_eq!(serde_json::to_vec(&editor.original).unwrap(),original);
+        }
+    }
+    #[test]
+    fn excel_import_after_unchanged_selection_does_not_create_a_duplicate() {
+        let mut editor=editor();assert!(editor.select_object(0));
+        assert!(!editor.entry_changed());
+        editor.finish_entry().unwrap();
+        let mut next=editor.build().unwrap();
+        edit::import_tabular(&mut next,"leiding\tNieuw water\twater\t3\t0\t1.2").unwrap();
+        editor.draft=next;
+        let saved=editor.completed_draft().unwrap();
+        assert_eq!(saved.objects.len(),2);
+        assert_eq!(saved.objects.iter().filter(|p|p.object_name=="Bestaande kabel").count(),1);
+    }
+    #[test]
+    fn invalid_pending_entry_blocks_copy_and_keeps_the_draft() {
+        let mut editor=editor();let before=serde_json::to_vec(&editor.draft).unwrap();
+        editor.object.name="Nieuwe kabel".into();editor.object.angle=81.;
+        assert!(editor.completed_draft().is_err());
+        assert_eq!(serde_json::to_vec(&editor.draft).unwrap(),before);
+        assert_eq!(editor.object.name,"Nieuwe kabel");
+    }
+    #[test]
+    fn saving_a_new_cable_with_changed_start_height_updates_existing_linked_depths() {
+        let mut editor=editor();
+        editor.draft.objects[0].position.z=Some(1.4);
+        editor.draft.objects[0].metadata=serde_json::json!({"surface_mode":"start","surface_z":2.,"sleufbase_depth_meters":0.6});
+        editor.start.z=Some(5.);editor.mark_endpoint_height(true);
+        editor.object.name="Nieuwe kabel".into();editor.object.chainage=3.;
+        editor.object.use_depth=true;editor.object.depth=0.8;
+        let saved=editor.completed_draft().unwrap();
+        assert_eq!(saved.objects[0].position.z,Some(4.2));
+        assert_eq!(saved.objects[1].position.z,Some(4.4));
+        assert_eq!(saved.objects[1].metadata["surface_z"],5.);
     }
 }

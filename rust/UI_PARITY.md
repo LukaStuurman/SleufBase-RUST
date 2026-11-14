@@ -46,7 +46,7 @@ tooltip-/focusvolgorde en overige context-/exportdetails blijven open.
 - `_bytecode/app.cpython-311.pyc`: grootte 731007 bytes en SHA-256 `723928f95127363585753065d5440c4e3be242089d590d58029a2214f0caebec` zijn in deze audit gecontroleerd tegen `_bytecode/legacy_bytecode_manifest.json`. Alleen `marshal`/codeobjectinspectie; het app-codeobject is niet uitgevoerd.
 - Hieronder betekent `app.pyc:functie:regel` de oorspronkelijke `co_firstlineno` uit dat gevalideerde codeobject. Dit zijn geen regelnummers van de huidige wrapper `app.py`.
 - Actieve patches gaan voor de basis-bytecode. Wrapperinstallatie staat in oorspronkelijke `app.py:3232-3244`; de instellingen- en marXact-hooks in oorspronkelijke `__init__.py:40-56`.
-- Cyclomedia en StreetSmart zijn expliciete uitzonderingen. Hun login, kaartachtergrond, opnamepunten, ingebed paneel en bediening hoeven niet te worden overgenomen. Andere oorspronkelijke vensters en contextacties blijven binnen scope.
+- Cyclomedia, StreetSmart en de Gemma-AI-functie zijn op gebruikersverzoek vervallen. Hun vensters en bediening zijn geen acceptatievoorwaarde. Handmatige maaiveldinvoer en AHN-aanvulling blijven binnen scope.
 - De genoemde native regels zijn een momentopname tijdens lopend rootwerk. Wijzigingen moeten opnieuw aan deze lijst worden getoetst.
 
 ## Grootste concrete verschillen
@@ -75,7 +75,7 @@ Alle regels blijven open totdat bronvergelijking en zichtbare bediening zijn gec
 - [ ] Inline **Locatie** met suggesties, toetsenbord, focus en kaartmarkering (`app.py:425-881` vervangt `open_location_dialog:3475`).
 - [ ] **Acties**: Project laden..., Project opslaan, Project opslaan als..., Laad GeoTIFF(s), Laad KLIC DXF, Zoom naar alles, Toon TIFF-adressen, Export kaarten, Kadastrale export DXF, Proefsleuven sjabloon DXF, Wis alle referentiepunten, Laad alle beginpunten, Wis opmerkingen, Wis alles (`_build_menu:2886`; latere actieve patches meenemen).
 - [ ] **KickTheMap**: Jobs, Inloggen..., Exporteer objectpunten naar DXF..., Uitloggen; de actieve patch verwijdert Browser/Laad GeoTIFF uit job en zet Jobs bovenaan (`app.py:192-263`).
-- [ ] **AI -> Maaiveld via Gemma** (`app.py:2490-2610`), **Instellingen**, marXact-import en orientatiemenu (`marxact_alignment_ui_patch.py:331`).
+- [ ] **Instellingen**, marXact-import en orientatiemenu (`marxact_alignment_ui_patch.py:331`).
 - [ ] Fysieke TIFF-contextmenu: Draai 90° linksom/rechtsom, Interactief draaien, Hoek invullen..., Reset rotatie, Maak virtuele kopie..., Opmerking bewerken..., Opmerking wissen (`_create_tiff_context_menu:3408`).
 - [ ] Virtuele TIFF-contextmenu: Virtuele proefsleuf bewerken..., Naam wijzigen..., Verplaats op kaart..., Draai 90 graden linksom/rechtsom, Interactief draaien, Hoek invullen..., Reset rotatie, Virtuele kopie plaatsen..., Punt op kaart toevoegen..., Opmerking bewerken..., Opmerking wissen. Ook kaartcontextmenus voor verplaatsen/draaien/bewerken en lege kaart **Virtuele proefsleuf toevoegen** (`_create_tiff_context_menu:3408`).
 - [ ] Lijstselectie, rechtsklikselectie, Delete/BackSpace, KLIC-zichtbaarheid en verwijderknoppen (`_build_layout:417`).
@@ -93,7 +93,6 @@ Alle regels blijven open totdat bronvergelijking en zichtbare bediening zijn gec
 - [ ] **Gevonden lagen (...)** (`_show_feature_popup:11413`) en kabeldetails bij kaartselectie.
 - [ ] **MarXact kabel-/leidingoriëntatie** (`marxact_alignment_ui_patch.py:91`), 650x310.
 - [ ] **Autosave laden** (`autosave_restore_ui.py:124`), 760x430; projectladen/-opslaan/-opslaan als en bevestigingen rond niet-opgeslagen werk.
-- [ ] **Maaiveld via Gemma** (`app.py:2490`): geselecteerde sleuf, voorbereiden, aanvraag, resultaatbewerking, fout/annuleren. Adapter `ui_ai_maaiveld.rs:129` bestaat.
 
 ### Instellingen
 

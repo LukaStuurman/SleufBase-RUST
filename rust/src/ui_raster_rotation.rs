@@ -554,7 +554,7 @@ mod tests {
     }
     #[test]
     fn original_map_controls_remain_inside_their_clip_at_supported_window_sizes() {
-        let expected = ["Locatie","Acties","KickTheMap","AI","Instellingen","marXact","Maaiveld invullen","Referentiepunt","Beginpunt"];
+        let expected = ["Locatie","Acties","KickTheMap","Instellingen","marXact","Maaiveld invullen","Referentiepunt","Beginpunt"];
         for width in [1200., 1500.] {
             let ctx = egui::Context::default();
             let mut app = SleufBaseApp {

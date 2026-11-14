@@ -350,7 +350,7 @@ fn python_exchange_merges_slot_order_scales_labels_and_unknown_metadata(){
 #[test]
 fn python_exchange_representable_virtual_template_preferences_use_original_job_key(){
     use sleufbase_rust::{legacy_project::{legacy_payload,ProjectUiState},template_project::{Options,BackgroundKind},template_prefs::TemplatePreferences};
-    let dir=tempfile::tempdir().unwrap();let mut raw=fixture();raw.as_object_mut().unwrap().remove("template_export_slots");let mut project=import_value(raw,&dir.path().join("source.klicproject")).unwrap();let options=Options{background:BackgroundKind::Pdok,choices:sleufbase_rust::template_project::suggest(&[],&[],&project.virtual_trenches),..Default::default()};
+    let dir=tempfile::tempdir().unwrap();let mut raw=fixture();raw.as_object_mut().unwrap().remove("template_export_slots");let mut project=import_value(raw,&dir.path().join("source.klicproject")).unwrap();let options=Options{dpi:150,scale:225.,background:BackgroundKind::Pdok,choices:sleufbase_rust::template_project::suggest(&[],&[],&project.virtual_trenches),..Default::default()};
     project.template_preferences=Some(TemplatePreferences::capture(&options,&[],&[],&project.virtual_trenches));let out=legacy_payload(&project,&ProjectUiState::default()).unwrap();assert_eq!(out["template_export_slots"][0]["layer_key"],"job:123");assert_eq!(out["tiffs"][0]["metadata"]["template_proefsleuf_label"],"PS42");
     project.template_preferences.as_mut().unwrap().server_mode=sleufbase_rust::template_server::Mode::Offline;assert!(legacy_payload(&project,&ProjectUiState::default()).unwrap_err().contains("offline servergegevens"));
 }

@@ -2,6 +2,10 @@
 //! app.py:_install_template_variant_order_patch. Unknown originals stay attached.
 use super::*;
 use std::collections::{HashMap,VecDeque};
+// Python v1 does not save template map resolution/scale. Keep its fixed
+// rendering contract independent of the higher-resolution native defaults.
+pub(crate) const MAP_DPI:u32=150;
+pub(crate) const MAP_SCALE:f64=225.;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Source {Raster(PathBuf),Virtual{job_id:u64,label:String},Empty}
 #[derive(Clone,Debug)]

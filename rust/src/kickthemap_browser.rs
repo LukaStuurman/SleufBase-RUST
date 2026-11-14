@@ -15,7 +15,7 @@ mod capture;
 pub use capture::CaptureHandle;
 
 #[cfg(windows)]
-use crate::vllm_runtime::windows_job::Process as BrowserProcess;
+use crate::windows_job::Process as BrowserProcess;
 #[cfg(not(windows))]
 use std::process::Child as BrowserProcess;
 const ORIGIN:&str="https://www.my.kickthemap.com";

@@ -1,9 +1,9 @@
 //! Manual terrain-segment text/color editing, matching the validated original
-//! app's maaiveld mode. ai_profile is used only for profile/marker geometry;
-//! this workflow never calls an AI service or changes measured elevations.
+//! app's maaiveld mode. Profile preparation supplies the marker geometry;
+//! editing terrain descriptions leaves measured elevations unchanged.
 use super::*;
 use sleufbase_rust::{
-    ai_profile::{self, Source},
+    maaiveld_profile::{self, Source},
     export_control::Control,
     raster_points,
 };
@@ -40,7 +40,7 @@ impl Write for HashWriter {
 struct Job {
     stamp: Stamp,
     control: Arc<Control>,
-    rx: Receiver<Result<ai_profile::Prepared, String>>,
+    rx: Receiver<Result<maaiveld_profile::Prepared, String>>,
 }
 impl Drop for Job {
     fn drop(&mut self) {
@@ -347,7 +347,7 @@ impl SleufBaseApp {
                 .name("manual-maaiveld-profile".into())
                 .spawn(move || {
                     let result =
-                        ai_profile::prepare(&project, local_source, &settings, &task_control);
+                        maaiveld_profile::prepare(&project, local_source, &settings, &task_control);
                     let _ = tx.send(result);
                 })
                 .map_err(|e| e.to_string())?;

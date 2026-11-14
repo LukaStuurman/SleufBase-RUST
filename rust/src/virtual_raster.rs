@@ -89,7 +89,9 @@ pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&Atomic
 {
     input::check(cancel)?;
     let info=layout(&source.trench,source.quality)?;
-    let image=render(source,cancel)?;
+    // Print detail uses stronger cable strokes without changing the general
+    // virtual-raster contract used by previews and independent map sources.
+    let image=render_with_export_detail(source,cancel,true)?;
     let transform=info.transform();
     let start=[source.trench.start.x,source.trench.start.y];
     let end=[source.trench.end.x,source.trench.end.y];
@@ -105,7 +107,12 @@ pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&Atomic
         cancel,
     )
 }
+/// Render the original virtual-raster appearance at the requested resolution.
+/// Template export explicitly selects stronger strokes in its detail pane.
 pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
+    render_with_export_detail(source,cancel,false)
+}
+fn render_with_export_detail(source:&Source,cancel:&AtomicBool,export_detail:bool)->Result<RgbaImage,String>{
     input::check(cancel)?;
     let t=&source.trench;
     let info=layout(t,source.quality)?;
@@ -117,10 +124,10 @@ pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
     let border=t.measured_boundary();
     let border_width=(2.*source.quality).round_ties_even().max(2.) as u32;
     let dekband_width=(4.*source.quality).round_ties_even().max((border_width+1) as f64) as u32;
-    // Sharper exported detail also needs a slightly stronger cable stroke.
-    // Keep the exact historical 1x appearance for interactive previews.
+    // Export detail benefits from a stronger cable stroke. Resolution alone
+    // must not silently change the appearance of general-purpose rasters.
     let point_width_px = (2.5*source.quality).round_ties_even().max(2.) as u32;
-    let point_width_px = if source.quality >= 4. {
+    let point_width_px = if export_detail && source.quality >= 4. {
         point_width_px.max((4. * source.quality).round_ties_even() as u32)
     } else { point_width_px };
     let mut budget=300_000_000u64;
@@ -270,11 +277,24 @@ mod tests{
         t.objects.push(TrenchPoint{metadata:serde_json::json!({"display_rgb":[255,40,30]}),role:"kabel".into(),object_name:"Kabel".into(),
             source_name:"Kabel".into(),position:Vertex{x:155005.,y:463000.,z:Some(-0.5)},attributes:Default::default()});
         let cancel=AtomicBool::new(false);
-        let low=render(&Source{trench:t.clone(),quality:1.,reverse:false},&cancel).unwrap();
-        let high=render(&Source{trench:t,quality:4.,reverse:false},&cancel).unwrap();
-        let count=|im:&RgbaImage| im.pixels().filter(|p|p.0==[255,40,30,235]).count();
-        assert!(count(&low)>0);
-        assert!(count(&high)>count(&low)*16);
+        let low=prepare_for_template(&Source{trench:t.clone(),quality:1.,reverse:false},&cancel).unwrap();
+        let source=Source{trench:t,quality:4.,reverse:false};
+        let info=layout(&source.trench,source.quality).unwrap();
+        let general=crate::template_raster::prepare(render(&source,&cancel).unwrap(),
+            &crate::template_raster::Options{
+                transform:info.transform(),roads:&[],terrain:&[],
+                axis:Some([[source.trench.start.x,source.trench.start.y],[source.trench.end.x,source.trench.end.y]]),
+                reverse:false,
+            },&cancel).unwrap();
+        let high=prepare_for_template(&source,&cancel).unwrap();
+        // Compare the same rotated/cropped/normalized stage in all three cases:
+        // template preparation deliberately changes visible alpha from 235 to 255.
+        let count=|im:&RgbaImage| im.pixels().filter(|p|p.0==[255,40,30,255]).count();
+        assert_eq!(high.details.source_size,general.details.source_size);
+        assert_eq!(high.image.dimensions(),general.image.dimensions());
+        assert!(count(&low.image)>0);
+        assert!(count(&high.image)>count(&low.image)*16);
+        assert!(count(&high.image)>count(&general.image),"template detail keeps stronger strokes at the same resolution");
     }
     #[test]
     fn cancel_and_invalid_scale_are_rejected(){

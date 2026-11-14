@@ -21,6 +21,7 @@ fn original()->Value{
 fn active_order_survives_native_save_edits_and_python_export_with_distinct_blank_metadata(){
     let raw=original();let mut native=legacy_project::import_value(raw.clone(),Path::new("layout.klicproject")).unwrap();
     let prefs=native.template_preferences.as_ref().unwrap();
+    assert_eq!((prefs.dpi,prefs.scale),(150,225.));
     let unedited=legacy_project::legacy_payload(&native,&ProjectUiState::default()).unwrap();
     assert_eq!(unedited["template_export_settings"],raw["template_export_settings"]);
     let mut options=prefs.restore(&native.datasets,&native.rasters,&native.virtual_trenches);
@@ -36,6 +37,8 @@ fn active_order_survives_native_save_edits_and_python_export_with_distinct_blank
     let dir=tempfile::tempdir().unwrap();let file=dir.path().join("native.json");project::save_project(&file,&native).unwrap();
     let reopened=project::read_project(&file).unwrap();
     assert_eq!(&*reopened.legacy_archive.as_ref().unwrap().original,&raw);
+    let prefs=reopened.template_preferences.as_ref().unwrap();
+    assert_eq!((prefs.dpi,prefs.scale),(150,225.));
     let payload=legacy_project::legacy_payload(&reopened,&ProjectUiState::default()).unwrap();
     assert_eq!(payload["unknown_project"],raw["unknown_project"]);
     assert_eq!(payload["template_export_slots"][1]["unknown_blank"],"last");
@@ -65,6 +68,8 @@ fn standalone_raster_slot_is_active_without_inventing_a_profile_job(){
         "template_export_slots":[{"layer_key":"job:73","ps_number":"7","included":true},{"layer_key":null}]});
     let native=legacy_project::import_value(raw,Path::new("raster.klicproject")).unwrap();
     assert_eq!(native.rasters.len(),1);
+    let prefs=native.template_preferences.as_ref().unwrap();
+    assert_eq!((prefs.dpi,prefs.scale),(150,225.));
     let mut options=native.template_preferences.as_ref().unwrap().restore(&[],&native.rasters,&[]);
     assert_eq!(options.choices.len(),2);assert_eq!(options.choices[0].source,Source::Raster(0));
     options.server_mode=sleufbase_rust::template_server::Mode::Offline;
@@ -98,4 +103,39 @@ fn duplicate_virtual_names_and_job_ids_keep_distinct_original_slot_identities_af
     assert_eq!(options.choices[0].source,Source::Virtual(1));assert_eq!(options.choices[0].label.as_deref(),Some("PS42C"));
     assert_eq!(options.choices[2].source,Source::Virtual(0));assert_eq!(options.choices[2].label.as_deref(),Some("PS42AUTO"));
     assert_eq!(options.choices[0].legacy_slot,Some(0));assert_eq!(options.choices[2].legacy_slot,Some(2));
+}
+
+#[test]
+fn native_high_resolution_preferences_are_preserved_when_python_export_rejects_them(){
+    let dir=tempfile::tempdir().unwrap();
+    let source=dir.path().join("original.klicproject");
+    let original_bytes=serde_json::to_vec(&original()).unwrap();
+    std::fs::write(&source,&original_bytes).unwrap();
+    let mut native=legacy_project::read_legacy_project(&source).unwrap();
+    // New native exports keep their sharp 300 DPI default. Python cannot save
+    // this explicit preference, or a different map scale, in its v1 format.
+    assert_eq!(template_project::Options::default().dpi,300);
+    for (dpi,scale) in [(300,225.),(150,450.)]{
+        let mut options=native.template_preferences.as_ref().unwrap()
+            .restore(&native.datasets,&native.rasters,&native.virtual_trenches);
+        options.dpi=dpi;options.scale=scale;
+        native.template_preferences=Some(template_prefs::TemplatePreferences::capture(
+            &options,&native.datasets,&native.rasters,&native.virtual_trenches));
+        let saved=dir.path().join(format!("native-{dpi}.json"));
+        project::save_project(&saved,&native).unwrap();
+        let reopened=project::read_project(&saved).unwrap();
+        let prefs=reopened.template_preferences.as_ref().unwrap();
+        assert_eq!((prefs.dpi,prefs.scale),(dpi,scale));
+        let before=serde_json::to_value(&reopened).unwrap();
+        let target=dir.path().join(format!("python-{dpi}.klicproject"));
+        let error=legacy_project::write_legacy_project(
+            &reopened,&target,&ProjectUiState::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        ).unwrap_err();
+        assert!(error.contains("kaart-DPI/schaal"),"{error}");
+        assert!(error.contains("150 DPI"),"{error}");
+        assert!(!target.exists());
+        assert_eq!(serde_json::to_value(&reopened).unwrap(),before);
+        assert_eq!(std::fs::read(&source).unwrap(),original_bytes);
+    }
 }

@@ -46,6 +46,11 @@ Ze tellen niet meer mee als ontbrekende functies of releasevoorwaarden. Oude
 achtergrondvoorkeuren worden bij migratie naar de standaard PDOK omgezet;
 oorspronkelijke Python-referenties blijven als bewijs ongewijzigd.
 
+Scopewijziging op gebruikersverzoek van 14 november 2026: de Gemma-AI-functie
+is verwijderd uit de app en de actuele broncode. AI-analyse, modelstart en
+GPU-/modelacceptatie zijn geen resterende werkpakketten of releasevoorwaarden.
+Handmatige maaiveldinvoer, profielvoorbereiding en AHN-aanvulling blijven behouden.
+
 Broncontrole van het **actieve** exportcontract: `__init__.py` installeert V9,
 maar niet `template_dynamic_profile_leader_patch`. De expliciete regressies in
 `tests/test_profile_leader_v0310_behavior.py` vereisen de oorspronkelijke
@@ -56,14 +61,13 @@ De gedeelde ATTDEF-/blokondersteuning wordt ook door de actieve route gebruikt.
 
 ## Volgorde en bewijs
 
-Aanvulling 24 oktober 2026: Gemma-profielvoorbereiding, genummerde kaart,
-aanvraag en bewerkbare controle vóór toepassen zijn aangesloten. Het zelfstandige
-kadastrale exportvenster en beide sjabloonplanners gebruiken dezelfde
+Aanvulling 24 oktober 2026: het zelfstandige kadastrale exportvenster
+en beide sjabloonplanners gebruiken dezelfde
 overzichtskern voor hartlijnen, vlakken, kleuren, labels en affine TIFFs.
 Projectformaat 5 voegt kaartpositie, laagkeuze en projectgebonden instellingen
 toe en behoudt lezen van 1–4. De desktop-Python-export geeft verplaatste
 bronvectors terug vóór uitgestelde projectacties. Centrale review richt zich
-ook op annulering, geen tweede onbedoelde modelstart, metadatabehoud en
+ook op annulering, metadatabehoud en
 exportbudgetten. Dit vervangt geen van de volledige acceptatie-/leveringsgates.
 
 De uitgevoerde lokale integratie- en oorspronkelijke uitvoercontroles staan in
@@ -96,8 +100,8 @@ afbeeldingspixels, Excel en de oorspronkelijke CAD-metadata. Het portable pakket
 neemt de acht standaardlogo's mee; de nieuwe referenties/readbacks staan ook in CI.
 
 Deze uitbreiding sluit geen heel werkpakket of releasevoorwaarde af. Volledige
-project-/UI-conversie, overige kadastrale exportkeuzes, automatische AHN- en
-Gemma/AI-workflows, alle dienstvarianten, CAD-/praktijkacceptatie en levering
+project-/UI-conversie, overige kadastrale exportkeuzes, automatische AHN-workflows,
+alle dienstvarianten, CAD-/praktijkacceptatie en levering
 blijven open. Optionele native werkfoto's blijven behouden; in de onderzochte
 actieve oorspronkelijke sjabloonroute is geen afzonderlijk fotoannotatiecontract
 aangetroffen. Dit vervangt geen acceptatie van de overige oorspronkelijke route.
@@ -114,7 +118,7 @@ aangetroffen. Dit vervangt geen acceptatie van de overige oorspronkelijke route.
 4. **Raster en kaarten**: begrensde strip-/tegeldecodering, kleur/alpha/hoogte,
    pyramides, WMS/WMTS/OSM en offline caches; ruimtelijke juistheid en geheugen meten.
 5. **Externe diensten**: KickTheMap browserauth/herstel/fallbacks,
-   AHN-profielen en AI-workflows. Native netwerkcode met lokale foutscenario-tests;
+   AHN-profielen en kaart-/profielcontext. Native netwerkcode met lokale foutscenario-tests;
    accountgebonden acceptatie apart aantonen met een beschikbare sessie.
 6. **Dagelijkse bediening en instellingen**: alle menu's, shortcuts, drag/drop,
    objectbewerking, disciplines/Excel, configuratie en foutmeldingen.
@@ -417,7 +421,7 @@ aangetroffen. Dit vervangt geen acceptatie van de overige oorspronkelijke route.
   Een echte PDOK-batch voor twee openbare proefcoördinaten levert beide adressen in
   bronvolgorde. De nieuwe referentie reproduceert bytegelijk met een andere hashseed.
   Zie tests/fixtures/raster-addresses voor de afzonderlijke contracten en audits.
-- Zelfstandige kaartexport, resterende menu's/voorkeuren, AI,
+- Zelfstandige kaartexport, resterende menu's/voorkeuren,
   volledige project-/praktijkacceptatie en levering blijven vereist.
 
 ## Voortgang 22 oktober 2026: oorspronkelijke locatiebediening
@@ -454,7 +458,7 @@ aangetroffen. Dit vervangt geen acceptatie van de overige oorspronkelijke route.
   notices worden met EXE/portable preview meegeleverd en via --licenses getoond.
 - Reverse-lookup is geport en is inmiddels gekoppeld aan TIFF-adressen/kopiëren
   (zie de voortgang hierboven). Zelfstandige kaartexport, resterende menu's/
-  voorkeuren, AI, volledige projectacceptatie en levering blijven nodig.
+  voorkeuren, volledige projectacceptatie en levering blijven nodig.
   Zie tests/fixtures/location.
 
 ## Voortgang 22 oktober 2026: gewone MTEXT-kleuren

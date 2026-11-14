@@ -246,14 +246,60 @@ fn emphasize_virtual_trench(
     image: &mut RgbaImage,
     layout: &Layout,
     trench: &crate::virtual_trench::VirtualTrench,
+    opacity: f64,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     input::check(cancel)?;
+    if opacity == 0. { return Ok(()); }
+    if opacity == 1. {
+        return draw_virtual_emphasis(image, layout, trench, [0.,0.], cancel);
+    }
+    // Raster and emphasis are separate layers with CAD between them; each uses
+    // the chosen opacity. Composite emphasis once so its halo/marker strokes
+    // cannot repeatedly increase that layer's opacity. Limit the temporary image
+    // to the clipped trench extent rather than allocating another A4 page.
+    let mut min = [f64::INFINITY;2];
+    let mut max = [f64::NEG_INFINITY;2];
+    for (index,point) in trench.measured_boundary().into_iter()
+        .chain(trench.objects.iter().map(|object|(object.position.x,object.position.y)))
+        .enumerate()
+    {
+        if index % 256 == 0 { input::check(cancel)?; }
+        let point = layout.screen([point.0,point.1]);
+        for axis in 0..2 {
+            min[axis] = min[axis].min(point[axis]);
+            max[axis] = max[axis].max(point[axis]);
+        }
+    }
+    // The largest marker radius is 24px; include its rasterized outer edge.
+    let size = [image.width(),image.height()];
+    let begin: [u32;2] = std::array::from_fn(|i|(min[i]-26.).floor().clamp(0.,f64::from(size[i])) as u32);
+    let end: [u32;2] = std::array::from_fn(|i|(max[i]+26.).ceil().clamp(0.,f64::from(size[i])) as u32);
+    if (0..2).any(|i|end[i]<=begin[i]) { return Ok(()); }
+    let mut emphasis = crate::raster_rotation::allocate(end[0]-begin[0],end[1]-begin[1])?;
+    draw_virtual_emphasis(&mut emphasis, layout, trench, begin.map(f64::from), cancel)?;
+    for (index,pixel) in emphasis.pixels_mut().enumerate() {
+        if index % 16384 == 0 { input::check(cancel)?; }
+        pixel[3] = (f64::from(pixel[3])*opacity) as u8;
+    }
+    map_raster::composite(image, &emphasis, begin.map(|v|v as i32), cancel)
+}
+fn draw_virtual_emphasis(
+    image: &mut RgbaImage,
+    layout: &Layout,
+    trench: &crate::virtual_trench::VirtualTrench,
+    origin: [f64;2],
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let screen = |point| {
+        let point = layout.screen(point);
+        [point[0]-origin[0],point[1]-origin[1]]
+    };
     let mut budget = 50_000_000u64;
     let factor = layout.page_size[0] as f64 / 1754.;
     let line_width = (6. * factor).round().clamp(4., 16.) as u32;
     let mut outline = trench.measured_boundary().into_iter()
-        .map(|(x,y)| layout.screen([x,y])).collect::<Vec<_>>();
+        .map(|(x,y)| screen([x,y])).collect::<Vec<_>>();
     if outline.len() >= 2 {
         if outline.first() != outline.last() {
             outline.push(outline[0]);
@@ -265,7 +311,7 @@ fn emphasize_virtual_trench(
     for (index, object) in trench.objects.iter().enumerate() {
         if index % 256 == 0 { input::check(cancel)?; }
         if matches!(object.role.to_lowercase().as_str(), "start" | "end") { continue; }
-        let [x,y] = layout.screen([object.position.x, object.position.y]);
+        let [x,y] = screen([object.position.x, object.position.y]);
         if x < -radius || y < -radius
             || x > image.width() as f64 + radius
             || y > image.height() as f64 + radius { continue; }
@@ -301,7 +347,7 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
-        self.render_with_margin(source, bounds, fallback, profile_reference, 82, cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, cancel)
     }
     /// The DXF template map needs less surrounding paper than standalone A4.
     pub fn render_template_with_raster(
@@ -315,7 +361,7 @@ impl Renderer {
         // A supplied PNG map is already rasterized for the legacy A4 layout.
         // Do not change its expected dimensions or silently resample it.
         let margin = if matches!(&source.background, Background::Png { .. }) { 82 } else { 56 };
-        self.render_with_margin(source, bounds, fallback, profile_reference, margin, cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, cancel)
     }
     fn render_with_margin(
         &mut self,
@@ -324,6 +370,7 @@ impl Renderer {
         fallback: Option<Raster<'_>>,
         profile_reference: Option<[f64; 2]>,
         margin: u32,
+        template_detail: bool,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
         input::check(cancel)?;
@@ -373,22 +420,27 @@ impl Renderer {
                     (image, tiff.transform)
                 }
                 Raster::Virtual(source) => {
-                    // The adjacent detail image uses the full 4x raster; a map
-                    // can use 1x and draw readable cable markers afterward.
-                    let map_source = crate::virtual_raster::Source {
-                        trench: source.trench.clone(),
-                        quality: source.quality.min(1.),
-                        reverse: source.reverse,
-                    };
-                    let info = crate::virtual_raster::layout(&map_source.trench, map_source.quality)?;
-                    (crate::virtual_raster::render(&map_source, cancel)?, info.transform())
+                    // Validate the requested source even when a template map
+                    // can use 1x plus emphasis beside its full 4x detail pane.
+                    let mut info = crate::virtual_raster::layout(&source.trench, source.quality)?;
+                    let reduced;
+                    let map_source = if template_detail && source.quality > 1. {
+                        reduced = crate::virtual_raster::Source {
+                            trench: source.trench.clone(), quality: 1., reverse: source.reverse,
+                        };
+                        info = crate::virtual_raster::layout(&reduced.trench, reduced.quality)?;
+                        &reduced
+                    } else { *source };
+                    (crate::virtual_raster::render(map_source, cancel)?, info.transform())
                 }
             };
             map_raster::paint_with_opacity(&mut map, image, transform, &layout, source.tiff_opacity, cancel)?;
         }
         overlays(&mut map, source, &layout, cancel)?;
-        if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
-            emphasize_virtual_trench(&mut map, &layout, &virtual_source.trench, cancel)?;
+        if template_detail {
+            if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
+                emphasize_virtual_trench(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;
+            }
         }
         let mut image = crate::raster_rotation::allocate(layout.page_size[0], layout.page_size[1])?;
         for p in image.pixels_mut() {
@@ -422,9 +474,11 @@ mod virtual_map_visibility_tests {
         });
         let bounds=Bounds { min_x: 154990., min_y: 462990., max_x: 155010., max_y: 463010. };
         let layout=map_page::layout_with_margin(bounds, Settings { dpi: 72, scale: 100. },56).unwrap();
-        let mut image=RgbaImage::from_pixel(layout.map_size[0], layout.map_size[1], Rgba([25,25,25,255]));
-        emphasize_virtual_trench(&mut image, &layout, &trench, &AtomicBool::new(false)).unwrap();
-        let [x,y]=layout.screen([155001.5,463000.]);
-        assert_eq!(image.get_pixel(x as u32, y as u32).0, [250,40,60,255]);
+        for (opacity,expected) in [(0.,[25,25,25,255]),(0.5,[137,32,42,255]),(1.,[250,40,60,255])] {
+            let mut image=RgbaImage::from_pixel(layout.map_size[0], layout.map_size[1], Rgba([25,25,25,255]));
+            emphasize_virtual_trench(&mut image, &layout, &trench, opacity, &AtomicBool::new(false)).unwrap();
+            let [x,y]=layout.screen([155001.5,463000.]);
+            assert_eq!(image.get_pixel(x as u32, y as u32).0, expected,"opacity {opacity}");
+        }
     }
 }
