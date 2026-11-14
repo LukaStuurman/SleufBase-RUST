@@ -383,8 +383,22 @@ mod tests {
         let dir=tempfile::tempdir().unwrap();let output=dir.path().join("virtual.dxf");
         let options=Options{server_mode:sleufbase_rust::template_server::Mode::Offline,template:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/cadastral_template.dxf"),paired:false,dpi:96,include_bgt:false,include_cadastral:false,include_cad:false,choices:vec![Choice{label:None,legacy_slot:None,source:Source::Virtual(0),raster:None,include:true,title:"PS12".into(),profile:true,manual_scale:None,reverse:false,comments:String::new(),photos:Vec::new()}],..Default::default()};
         app.start_project_template_export(options,output.clone());assert!(app.template_job.is_some());assert!(app.virtual_trenches.is_empty());
-        let ctx=egui::Context::default();let until=Instant::now()+Duration::from_secs(30);
-        while app.template_job.is_some(){app.poll_template_job(&ctx);assert!(Instant::now()<until);std::thread::sleep(Duration::from_millis(2));}
+        let ctx=egui::Context::default();
+        // The 96 DPI setting applies to the map, not the 4x detail raster.
+        // This angled fixture rotates 8.7 million pixels and processes the
+        // complete 19 MB template in a debug build alongside other CI tests.
+        let started=Instant::now();let timeout=Duration::from_secs(120);
+        loop {
+            app.poll_template_job(&ctx);
+            // A completed event may be received at the deadline; its actual
+            // output must be checked below instead of reporting a timeout.
+            let Some(job)=app.template_job.as_ref() else{break;};
+            let (stage,bytes)=job.control.progress();
+            assert!(started.elapsed()<timeout,
+                "Project template export did not finish within {timeout:?}: elapsed={:?}, stage={stage:?}, written_bytes={bytes}, status={:?}, detail={:?}",
+                started.elapsed(),job.status,job.control.detail());
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(app.virtual_trenches.as_ptr(),pointer);assert_eq!(app.virtual_trenches[0].objects.as_ptr(),objects);assert_eq!(app.virtual_trenches[0].metadata,metadata);assert!(output.is_file(),"{}",app.message);
         let doc=sleufbase_rust::dxf_document::Document::load(&output,&std::sync::atomic::AtomicBool::new(false)).unwrap();assert!(doc.records().any(|r|r.kind()=="LEADER"));assert!(doc.records().any(|r|r.kind()=="MTEXT"&&r.first(1).is_some_and(|s|s.contains("Bronnotitie"))));
     }
