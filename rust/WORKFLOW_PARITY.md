@@ -3,7 +3,8 @@
 De volledige doelstelling en releasevoorwaarden staan in [PARITY.md](PARITY.md).
 Deze inventaris koppelt het werk nadrukkelijk aan bedieningen van de bestaande
 app. Componenttests en extra CAD-mogelijkheden zijn geen bewijs dat de volledige
-gebruikersworkflow af is.
+gebruikersworkflow af is. De Gemma-AI-functie is op gebruikersverzoek verwijderd
+en valt buiten de acceptatievoorwaarden; handmatige maaiveldinvoer en AHN blijven.
 
 [Het oorspronkelijke menu](tests/fixtures/workflows/original.json) komt uit de
 hash-gecontroleerde Python 3.11-code van `KlicViewerApp._build_menu`, uitgevoerd
@@ -38,7 +39,7 @@ sluit geen globale acceptatievoorwaarde.
 | KickTheMap inloggen/jobs/objectexport/browser/uitloggen | Native manager, geïsoleerde browser en downloads bestaan; alle echte provider-/fallback-/accountvarianten en gebruiksacceptatie blijven open |
 | StreetSmart inloggen/browser/uitloggen/selector | Op gebruikersverzoek van 22 oktober 2026 vervallen voor Rust; geen venster of port vereist |
 | Open instellingen | Native regels/autosave/exportopties en oorspronkelijke niet-geheime profiel-/logo-/overzichtsvoorkeuren bestaan; opgeslagen projectkeuzes en expliciete projectinstellingen gaan voor algemene standaarden. Volledige migratie, terugconversie en praktijkacceptatie blijven open |
-| Maaiveld via Gemma | Desktopbronkeuze, werkelijk genummerd kaartbeeld, Gemma-aanvraag en controle/bewerking van drie teksten vóór expliciet toepassen zijn aangesloten. Profielpunten volgen verse BRT/BGT-context, dekbanden en rotatie; achtergrond en CAD-keuze volgen de oorspronkelijke kaartvoorkeuren. Automatische AHN-aanvulling volgt verplaatste eindpunten en beschermt handmatige/gemeten hoogtes. Echte model-/GPU-/account- en projectacceptatie blijven open |
+| Maaiveld invullen / AHN aanvullen | Handmatige tekst- en kleurbewerking bij begin-, midden- en eindpunt blijven beschikbaar. Profielpunten volgen lokale brongegevens, BRT/BGT-context, dekbanden en rotatie. Automatische AHN-aanvulling volgt verplaatste eindpunten en beschermt handmatige/gemeten hoogtes. Annulering en gewijzigde brongegevens worden bewaakt; echte dienst- en projectacceptatie blijven open |
 
 Aanvullende controle 25 oktober: de gewone sjabloonmenuactie herstelt nu ook
 opgeslagen gemengde raster-/virtuele-/lege vakken, PS-varianten en schaal.

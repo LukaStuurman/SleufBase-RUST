@@ -64,10 +64,9 @@ pub mod template_branding;
 pub mod project_view;
 pub mod cadastral_overview;
 pub mod project_exchange_worker;
-pub mod ai_maaiveld;
-pub mod ai_scene;
-pub mod ai_profile;
-pub mod vllm_runtime;
+pub mod maaiveld_profile;
+#[cfg(windows)]
+pub(crate) mod windows_job;
 pub mod template_prefs;
 pub mod template_cad;
 pub mod template_match;

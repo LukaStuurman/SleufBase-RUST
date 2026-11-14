@@ -196,7 +196,6 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
             "Locatie",
             "Acties",
             "KickTheMap",
-            "AI",
             "Instellingen",
             "marXact",
             "Weergave",

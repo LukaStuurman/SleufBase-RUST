@@ -165,7 +165,6 @@ impl SleufBaseApp {
                     }
                     action = action.or(menu(ui, "Acties", ACTIONS));
                     action = action.or(menu(ui, "KickTheMap", KICKTHEMAP));
-                    action = action.or(menu(ui, "AI", &[("Maaiveld via Gemma", "ai")]));
                     let settings = ui.button("Instellingen");
                     if settings.clicked() {
                         self.open_settings();
@@ -251,7 +250,6 @@ impl SleufBaseApp {
             },
             "objects" => self.save_dxf(),
             "logout" => self.logout_live_jobs(),
-            "ai" => self.open_ai_maaiveld(),
             "marxact_orientation" => self.open_marxact_orientation(),
             "marxact" => {
                 if let Some(files) = rfd::FileDialog::new()

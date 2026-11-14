@@ -43,8 +43,9 @@ manifest zonder expliciete `Profile.virtual_trench` om compatibiliteit te testen
 De desktop-AHN-actie werkt in het geopende concept. Annuleren, een verouderd
 antwoord, verbindingsverlies en het sluiten van de editor behouden het project.
 Handmatige/gemeten hoogtes blijven beschermd; aan het beginmaaiveld gekoppelde
-objecten behouden hun diepte. Dit is geen bewijs voor de volledige Gemma-/AI-route
-of automatische verversing bij iedere kaartbewerking.
+objecten behouden hun diepte. Dit is geen bewijs voor automatische verversing
+bij iedere kaartbewerking. Handmatige maaiveldinvoer en AHN blijven beschikbaar;
+de Gemma-AI-functie is op gebruikersverzoek verwijderd.
 
 `--export-python nieuw.klicproject native.json` schrijft uitsluitend een nieuw
 bestand. Onbekende metadata, ontbrekende/onleesbare bronverwijzingen en
@@ -109,9 +110,9 @@ pagina's en tegels, tijdens retries en wachttijden en bij verwerking van
 features/paden. Een vastgelopen HTTP-header of antwoordbody houdt de caller niet
 vast: die controleert annulering tijdens het wachten met stappen van 20 ms.
 
-Kadaster, BGT en de AI-kaart-/profiel-/Gemma-aanvragen delen maximaal **vier** achtergrondverzoeken. Een reeds lopend
-socketverzoek kan na annulering nog maximaal de ingestelde HTTP-timeout van
-**45 seconden** voor Kadaster/BGT of standaard **180 seconden** voor Gemma voortbestaan; de caller wacht daar niet op. Ook wachten op een
+Kadaster-, BGT- en profielverzoeken delen maximaal **vier** achtergrondverzoeken.
+Een reeds lopend socketverzoek kan na annulering nog tot de ingestelde HTTP-timeout
+voortbestaan (**45 seconden** voor Kadaster/BGT); de caller wacht daar niet op. Ook wachten op een
 vrij verzoekslot is annuleerbaar. Antwoordpagina's blijven begrensd op 24 MiB;
 veilige vervolg-URL's, paginalimieten en geometriebudgetten blijven gelden.
 

@@ -59,8 +59,6 @@ mod raster_rotation_ui;
 mod virtual_map_ui;
 #[path="ui_project_view.rs"]
 mod project_view_ui;
-#[path="ui_ai_maaiveld.rs"]
-mod ai_maaiveld_ui;
 #[path="ui_cadastral_overview.rs"]
 mod cadastral_overview_ui;
 #[path="ui_comments.rs"]
@@ -133,7 +131,6 @@ pub struct SleufBaseApp {
     maaiveld_ui:maaiveld_ui::State,
     shell:shell_ui::State,
     overview_ui:cadastral_overview_ui::State,
-    ai_maaiveld_ui:ai_maaiveld_ui::State,
     project_view:sleufbase_rust::project_view::ProjectView,
     project_settings:Option<MigratedSettings>,
     project_exchange:Option<sleufbase_rust::project_exchange_worker::Worker>,
@@ -246,7 +243,6 @@ impl Default for SleufBaseApp {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
             overview_ui:Default::default(),
-            ai_maaiveld_ui:Default::default(),
             project_view:migrated_settings.viewer.project_view(),project_settings:None,project_exchange:None,exchange_deferred:None,
             background_restore_pending:false,pdok_source:pdok_wms::Source::Aerial,
             raster_rotation:Default::default(),
@@ -345,7 +341,7 @@ impl Default for SleufBaseApp {
 }
 
 impl SleufBaseApp {
-    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.ai_maaiveld_ui.owns_sources()||self.overview_ui.busy()}
+    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.overview_ui.busy()}
     fn snapshot(&self) -> NativeProject {
         NativeProject {
             view:Some(self.project_view.clone()),project_settings:self.project_settings.clone(),
@@ -368,7 +364,6 @@ impl SleufBaseApp {
         if let Some(worker)=&mut self.pending_ahn {worker.cancel();}
         self.recovery_dialog=None;
         self.overview_ui=Default::default();
-        self.ai_maaiveld_ui=Default::default();
         self.close_maaiveld_mode();
         self.virtual_map=Default::default();
         self.raster_rotation=Default::default();
@@ -430,7 +425,7 @@ impl SleufBaseApp {
     }
 
     fn request_project_action(&mut self,action:ProjectAction,ctx:&egui::Context) {
-        if self.defer_for_project_exchange(&action)||self.defer_for_ai(&action)||self.defer_for_overview(&action){return;}
+        if self.defer_for_project_exchange(&action)||self.defer_for_overview(&action){return;}
         if self.defer_action_for_export(&action)||self.defer_action_for_template(&action){return;}
         if self.pending_project_action.is_some() {return;}
         self.cancel_file_load();
@@ -445,7 +440,7 @@ impl SleufBaseApp {
     }
 
     fn execute_project_action(&mut self,action:ProjectAction,ctx:&egui::Context) {
-        if self.defer_for_project_exchange(&action)||self.defer_for_ai(&action)||self.defer_for_overview(&action){return;}
+        if self.defer_for_project_exchange(&action)||self.defer_for_overview(&action){return;}
         if self.defer_action_for_export(&action)||self.defer_action_for_template(&action){return;}
         match action {
             ProjectAction::ClearLayers=>self.clear_map_layers(ctx),
@@ -1458,14 +1453,6 @@ impl SleufBaseApp {
             self.poll_cadastral_overview(ctx);
             if self.overview_ui.busy(){self.show_cadastral_overview(ctx);return;}
         }
-        if self.ai_maaiveld_ui.busy(){
-            if ctx.input(|i|i.viewport().close_requested()){
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.defer_for_ai(&ProjectAction::Close);
-            }
-            self.poll_ai_maaiveld(ctx);
-            if self.ai_maaiveld_ui.busy(){self.show_ai_maaiveld(ctx);return;}
-        }
         if self.project_exchange.as_ref().is_some_and(|w|w.is_busy()) {
             if ctx.input(|i|i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1517,8 +1504,6 @@ impl SleufBaseApp {
         self.poll_point_downloads();
         self.poll_manual_maaiveld(ctx);
         self.poll_tiff_addresses(ctx);
-        self.show_ai_maaiveld(ctx);
-        if self.ai_maaiveld_ui.busy(){return;}
         self.show_cadastral_overview(ctx);
         if self.overview_ui.busy(){return;}
         if ctx.input_mut(|i|i.consume_key(egui::Modifiers::CTRL,egui::Key::L)){self.open_location();}

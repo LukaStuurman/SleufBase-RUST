@@ -222,6 +222,9 @@ pub fn import_legacy(project:&crate::project::NativeProject)->Result<Option<Temp
     };
     let mut options=Options{
         raster_layout:true,project:project.name.clone(),background:BackgroundKind::Pdok,
+        // Import the Python rendering contract, not evolving native defaults.
+        // Otherwise an untouched import cannot be exported back losslessly.
+        dpi:legacy::MAP_DPI,scale:legacy::MAP_SCALE,
         profile_style:crate::settings_compat::ProfilePreferences::from_settings(&settings),
         overview_settings:crate::cadastral_overview::Settings::from_settings(&settings)?,
         ..Default::default()

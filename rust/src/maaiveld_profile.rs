@@ -1,7 +1,9 @@
-//! Original Gemma marker geometry: local job/virtual points, fresh BRT and BGT
+//! Terrain profile marker geometry: local job/virtual points, fresh BRT and BGT
 //! context, base-profile deck-band injection, final profile, then map rotation.
-use crate::{ai_maaiveld::Point,export_control::Control,profile_context::{self,Kind,Paths},project::NativeProject,settings_compat::MigratedSettings,Bounds,Dataset,Vertex};
+use crate::{export_control::Control,profile_context::{self,Kind,Paths},project::NativeProject,settings_compat::MigratedSettings,Bounds,Dataset,Vertex};
 use std::{borrow::Cow,sync::atomic::AtomicBool};
+#[derive(Clone,Debug,serde::Serialize,serde::Deserialize)]
+pub struct Point {pub key:String,pub label:String,pub x:f64,pub y:f64}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Source {Raster(usize),Virtual(usize)}
 pub struct Prepared {

@@ -74,6 +74,15 @@ pub fn coordinates(t: &VirtualTrench, p: Vertex) -> (f64, f64) {
 pub fn edit_axis(t:&mut VirtualTrench,label:String,start:Vertex,end:Vertex,width:f64)
     -> Result<(), String>
 {
+    edit_axis_preserving_order(t,label,start,end,width)?;
+    sort_objects(t);
+    Ok(())
+}
+/// The open editor identifies objects by index until the draft is saved.
+/// Keep that order while updating geometry and explicitly linked depths.
+pub fn edit_axis_preserving_order(t:&mut VirtualTrench,label:String,start:Vertex,end:Vertex,width:f64)
+    -> Result<(), String>
+{
     if is_measured(t) && (t.start!=start || t.end!=end || t.width_meters!=width) {
         return Err("MarXact-grens is gemeten: maak eerst een handmatige kopie om de meetas te veranderen".into());
     }
@@ -82,7 +91,18 @@ pub fn edit_axis(t:&mut VirtualTrench,label:String,start:Vertex,end:Vertex,width
     candidate.start=start;
     candidate.end=end;
     candidate.width_meters=width;
-    sort_objects(&mut candidate);
+    if t.start.z!=start.z {
+        for object in &mut candidate.objects {
+            if crate::virtual_map::point_surface_mode(&object.metadata)!="start" {continue;}
+            let depth=crate::virtual_map::point_depth(&object.metadata,object.position.z);
+            object.position.z=start.z.map(|surface|surface-depth);
+            // Persist the relative depth even when the new height is unknown,
+            // so a later AHN result can restore Z without losing the input.
+            object.metadata["sleufbase_depth_meters"]=serde_json::json!(depth);
+            object.metadata["surface_z"]=serde_json::json!(start.z);
+            object.metadata["surface_status"]=serde_json::json!("start");
+        }
+    }
     check(&candidate)?;
     *t=candidate;
     Ok(())
@@ -453,6 +473,45 @@ mod tests {
         let new_end=new.end;
         edit_axis(&mut new,"Copy".into(),changed,new_end,0.8).unwrap();
         assert_eq!(t.label,"Test");
+    }
+    #[test]
+    fn manual_start_height_recalculates_only_explicitly_linked_depths() {
+        let mut t=trench();
+        t.start.z=Some(5.);
+        let mut linked=sample_object(7.,0.2);
+        linked.position.z=Some(4.25);
+        linked.metadata=serde_json::json!({"surface_mode":"start","surface_z":5.,"sleufbase_depth_meters":0.75,"point_id":"linked"});
+        let mut absolute=sample_object(2.,-0.1);
+        absolute.metadata=serde_json::json!({"surface_mode":"manual","point_id":"measured"});
+        let measured=serde_json::to_value(&absolute).unwrap();
+        t.objects=vec![linked,absolute];
+        let label=t.label.clone();let mut start=t.start;let end=t.end;
+        start.z=Some(8.);
+        edit_axis_preserving_order(&mut t,label.clone(),start,end,0.6).unwrap();
+        assert_eq!(t.objects[0].position.z,Some(7.25));
+        assert_eq!(t.objects[0].metadata["surface_z"],8.);
+        assert_eq!(t.objects[0].metadata["point_id"],"linked");
+        assert_eq!(serde_json::to_value(&t.objects[1]).unwrap(),measured);
+        // An unknown start height cannot leave a stale absolute cable height.
+        start.z=None;
+        edit_axis_preserving_order(&mut t,label.clone(),start,end,0.6).unwrap();
+        assert_eq!(t.objects[0].position.z,None);
+        assert_eq!(t.objects[0].metadata["sleufbase_depth_meters"],0.75);
+        start.z=Some(6.);
+        edit_axis(&mut t,label,start,end,0.6).unwrap();
+        assert_eq!(t.objects[1].position.z,Some(5.25));
+        assert_eq!(serde_json::to_value(&t.objects[0]).unwrap(),measured);
+    }
+    #[test]
+    fn failed_height_edit_preserves_all_object_metadata() {
+        let mut t=trench();t.start.z=Some(5.);
+        let mut object=sample_object(3.,0.);
+        object.metadata=serde_json::json!({"surface_mode":"start","surface_z":5.,"sleufbase_depth_meters":0.6});
+        t.objects.push(object);
+        let before=serde_json::to_vec(&t).unwrap();
+        let mut start=t.start;start.z=Some(9.);let end=t.end;
+        assert!(edit_axis(&mut t,String::new(),start,end,0.6).is_err());
+        assert_eq!(serde_json::to_vec(&t).unwrap(),before);
     }
     #[test]
     fn paste_from_excel_is_atomic_and_roundtrips_to_tsv() {

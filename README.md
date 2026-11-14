@@ -12,6 +12,8 @@ beschrijven de aanvullende tests en opgeloste fouten.
 
 De export ondersteunt een projectnaam en vult de bladdatum automatisch in.
 Cyclomedia-kaartachtergronden en het StreetSmart-venster zijn op verzoek verwijderd.
+Ook de Gemma-AI-functie is verwijderd. Handmatig maaiveldteksten en lijnkleuren
+invullen en AHN-hoogtes aanvullen blijven beschikbaar.
 
 ## Downloaden en starten
 

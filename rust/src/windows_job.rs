@@ -307,7 +307,7 @@ mod tests {
         path::{Path, PathBuf},
         time::{Duration, Instant},
     };
-    const FIXTURE: &str = "vllm_runtime::windows_job::tests::native_tree_fixture";
+    const FIXTURE: &str = "windows_job::tests::native_tree_fixture";
     fn fixture(dir: &Path, role: &str) -> Command {
         let mut c = Command::new(std::env::current_exe().unwrap());
         c.args(["--exact", FIXTURE, "--nocapture"])
@@ -315,7 +315,7 @@ mod tests {
             .env("SLEUFBASE_JOB_FIXTURE_ROLE", role);
         c
     }
-    // A native child of this test executable, never a shell/GPU/model runtime.
+    // A native child of this test executable, with no external runtime.
     #[test]
     fn native_tree_fixture() {
         let Some(dir) = std::env::var_os("SLEUFBASE_JOB_FIXTURE_DIR") else {

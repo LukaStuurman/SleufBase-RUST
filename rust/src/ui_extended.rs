@@ -102,9 +102,6 @@ impl SleufBaseApp {
             if ui.button("TIFF-adressen").clicked() {
                 self.open_tiff_addresses();
             }
-            if ui.button("Maaiveld via Gemma").clicked() {
-                self.open_ai_maaiveld();
-            }
             if ui.button("Export kaarten").clicked() {
                 self.open_map_export();
             }
