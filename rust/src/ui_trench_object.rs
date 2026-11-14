@@ -17,8 +17,9 @@ pub(super) fn show(
     let form = &mut editor.object;
     let length = (editor.end.x - editor.start.x).hypot(editor.end.y - editor.start.y);
     let mut pick = false;
+    ui.strong("Positie en diepte");
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Vanaf beginpunt");
+        ui.label("Vanaf beginpunt");
         ui.add(
             egui::DragValue::new(&mut form.chainage)
                 .custom_parser(parse_decimal)
@@ -40,8 +41,10 @@ pub(super) fn show(
                 .suffix(" m"),
         )
         .on_hover_text("Diepte onder het beginmaaiveld");
-        ui.small(format!("Sleuflengte {:.2} m", length).replace('.', ","));
     });
+    if form.use_depth && editor.start.z.is_none() {
+        ui.small("De diepte wordt bewaard. Een NAP-hoogte volgt zodra de beginmaaiveldhoogte bekend is.");
+    }
     ui.collapsing("Exacte positie of kaartpunt", |ui| {
         pick = ui.button("Kies punt op de kaart").clicked();
         ui.horizontal_wrapped(|ui| {
@@ -63,6 +66,8 @@ pub(super) fn show(
             }
         });
     });
+    ui.add_space(6.);
+    ui.strong("Type en afmetingen");
     ui.group(|ui| {
         ui.horizontal_wrapped(|ui| {
             ui.strong("Type");
@@ -153,6 +158,8 @@ pub(super) fn show(
             {
                 form.update_quantity_attribute();
             }
+        });
+        ui.horizontal_wrapped(|ui| {
             ui.label("Kruishoek");
             // Place the canvas first so changes in the angle text cannot
             // move the drag target or change its center in the next frame.

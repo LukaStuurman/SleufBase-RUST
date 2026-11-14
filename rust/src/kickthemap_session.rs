@@ -10,6 +10,8 @@ use std::{
 
 const PROFILE: &str = "rust-webview-profile";
 const SESSION: &str = "rust-session.dat";
+const ACCOUNT: &str = "rust-account.dat";
+const SIGNED_OUT: &str = "rust-login-disabled";
 
 #[cfg(windows)]
 const MAX_BYTES: usize = 256 * 1024;
@@ -21,7 +23,7 @@ fn path() -> PathBuf {
 // Credentials are optional and live only in a Windows-user DPAPI encrypted file.
 // Never persist an account in project files, snapshots, logs or plaintext settings.
 fn account_path() -> PathBuf {
-    crate::loaded_jobs::kickthemap_cache_dir().join("rust-account.dat")
+    crate::loaded_jobs::kickthemap_cache_dir().join(ACCOUNT)
 }
 
 pub struct Account {
@@ -30,14 +32,75 @@ pub struct Account {
 }
 
 pub fn account_exists() -> bool {
-    account_path().is_file()
+    saved_account_in(&crate::loaded_jobs::kickthemap_cache_dir())
 }
 
-pub fn forget_account() -> io::Result<()> {
-    match fs::remove_file(account_path()) {
+/// Explicit sign-out remains effective even if another process holds the profile.
+/// This marker contains no account data and is removed only after a verified,
+/// opt-in sign-in has successfully persisted its new account or session.
+pub fn automatic_login_disabled() -> bool {
+    login_disabled_in(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn login_disabled_in(root: &Path) -> bool {
+    root.join(SIGNED_OUT).is_file()
+}
+
+fn saved_account_in(root: &Path) -> bool {
+    !login_disabled_in(root) && root.join(ACCOUNT).is_file()
+}
+
+fn saved_session_in(root: &Path) -> bool {
+    !login_disabled_in(root) && (root.join(SESSION).is_file() || root.join(PROFILE).is_dir())
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+
+pub fn sign_out() -> io::Result<()> {
+    sign_out_from(&crate::loaded_jobs::kickthemap_cache_dir())
+}
+
+fn sign_out_from(root: &Path) -> io::Result<()> {
+    let disabled = disable_saved_login(root);
+    // Always attempt both cleanups, including when the opt-out write fails.
+    let session = forget_from(root);
+    let account = remove_if_present(&root.join(ACCOUNT));
+    disabled.and(session).and(account)
+}
+
+fn disable_saved_login(root: &Path) -> io::Result<()> {
+    fs::create_dir_all(root)
+        .and_then(|()| fs::write(root.join(SIGNED_OUT), b"Explicitly signed out\n"))
+}
+
+#[cfg(any(windows,test))]
+fn replace_account_in(root: &Path, write_account: impl FnOnce()->io::Result<()>) -> io::Result<()> {
+    // No older browser/account identity may remain eligible for auto-login if
+    // encryption, cleanup or saving the new verified account fails.
+    sign_out_from(root)?;
+    write_account()?;
+    remove_if_present(&root.join(SIGNED_OUT))
+}
+
+#[cfg(any(windows,test))]
+fn replace_browser_session_in(root: &Path, write_session: impl FnOnce()->io::Result<()>) -> io::Result<()> {
+    // Keep the live browser profile: this process owns it and has just verified
+    // its account. Older cookies and native credentials must not outlive it.
+    let disabled=disable_saved_login(root);
+    let old_session=remove_if_present(&root.join(SESSION));
+    let old_account=remove_if_present(&root.join(ACCOUNT));
+    disabled.and(old_session).and(old_account)?;
+    write_session()?;
+    remove_if_present(&root.join(SIGNED_OUT))
+}
+
+pub fn forget_account() -> io::Result<()> {
+    remove_if_present(&account_path())
 }
 
 #[cfg(windows)]
@@ -50,6 +113,7 @@ fn valid_account(account: &Account) -> bool {
 
 #[cfg(windows)]
 pub fn load_account() -> io::Result<Option<Account>> {
+    if automatic_login_disabled() { return Ok(None); }
     let file = match fs::File::open(account_path()) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -71,21 +135,21 @@ pub fn load_account() -> io::Result<Option<Account>> {
 
 #[cfg(windows)]
 pub fn save_account(account: &Account) -> io::Result<()> {
-    if !valid_account(account) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Ongeldige KickTheMap-inloggegevens"));
-    }
-    let plaintext = serde_json::to_vec(&serde_json::json!({
-        "email": account.email.trim(),
-        "password": account.password,
-    }))?;
-    let encrypted = windows::transform(&plaintext, true)?;
-    let path = account_path();
-    let parent = path.parent().expect("local account directory");
-    fs::create_dir_all(parent)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    file.write_all(&encrypted)?;
-    file.persist(path)?;
-    Ok(())
+    let path=account_path();
+    let parent=path.parent().expect("local account directory");
+    replace_account_in(parent, || {
+        if !valid_account(account) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput,"Ongeldige KickTheMap-inloggegevens"));
+        }
+        let plaintext=serde_json::to_vec(&serde_json::json!({
+            "email":account.email.trim(),"password":account.password,
+        }))?;
+        let encrypted=windows::transform(&plaintext,true)?;
+        let mut file=tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(&encrypted)?;
+        file.persist(&path)?;
+        Ok(())
+    })
 }
 
 #[cfg(not(windows))]
@@ -100,7 +164,7 @@ pub fn save_account(_: &Account) -> io::Result<()> {
 
 
 pub fn exists() -> bool {
-    path().is_file() || browser_profile().is_dir()
+    saved_session_in(&crate::loaded_jobs::kickthemap_cache_dir())
 }
 
 pub(crate) fn browser_profile() -> PathBuf {
@@ -163,6 +227,7 @@ fn logout_clears_only_the_saved_profile_and_session_after_its_owner_exits() {
 
 #[cfg(windows)]
 pub fn load() -> io::Result<Option<Value>> {
+    if automatic_login_disabled() { return Ok(None); }
     let file = match fs::File::open(path()) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -182,24 +247,24 @@ pub fn load() -> io::Result<Option<Value>> {
 
 #[cfg(windows)]
 pub fn save(cookies: Value) -> io::Result<()> {
-    let path = path();
-    let parent = path.parent().expect("local session directory");
-    fs::create_dir_all(parent)?;
-    let plaintext = serde_json::to_vec(&serde_json::json!({
-        "saved_at": now_seconds(),
-        "cookies": cookies,
-    }))?;
-    let encrypted = windows::transform(&plaintext, true)?;
-    if encrypted.len() > MAX_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Ongeldige sessiegrootte",
-        ));
-    }
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    file.write_all(&encrypted)?;
-    file.persist(path)?;
-    Ok(())
+    let path=path();
+    let parent=path.parent().expect("local session directory");
+    replace_browser_session_in(parent, || {
+        if cookies.as_array().is_none_or(|cookies|cookies.is_empty()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,"Geen geldige sessiecookies"));
+        }
+        let plaintext=serde_json::to_vec(&serde_json::json!({
+            "saved_at":now_seconds(),"cookies":cookies,
+        }))?;
+        let encrypted=windows::transform(&plaintext,true)?;
+        if encrypted.len()>MAX_BYTES {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,"Ongeldige sessiegrootte"));
+        }
+        let mut file=tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(&encrypted)?;
+        file.persist(&path)?;
+        Ok(())
+    })
 }
 
 #[cfg(windows)]
@@ -303,5 +368,120 @@ mod windows {
         let middle = encrypted.len() / 2;
         encrypted[middle] ^= 1;
         assert!(transform(&encrypted, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sign_out_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_signout_removes_credentials_and_keeps_optout_after_cleanup() {
+        let root=tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(PROFILE)).unwrap();
+        fs::write(root.path().join(SESSION),b"corrupt session fixture").unwrap();
+        fs::write(root.path().join(ACCOUNT),b"corrupt account fixture").unwrap();
+        sign_out_from(root.path()).unwrap();
+        assert!(login_disabled_in(root.path()));
+        assert!(!root.path().join(PROFILE).exists());
+        assert!(!root.path().join(SESSION).exists());
+        assert!(!root.path().join(ACCOUNT).exists());
+        // Cleanup and subsequent sign-outs must never re-enable automatic login.
+        forget_from(root.path()).unwrap();
+        sign_out_from(root.path()).unwrap();
+        assert!(login_disabled_in(root.path()));
+    }
+
+    #[test]
+    fn native_account_and_browser_session_have_separate_resume_paths() {
+        let root=tempfile::tempdir().unwrap();
+        fs::write(root.path().join(ACCOUNT),b"native account fixture").unwrap();
+        assert!(saved_account_in(root.path()));
+        assert!(!saved_session_in(root.path()));
+        fs::remove_file(root.path().join(ACCOUNT)).unwrap();
+        fs::create_dir(root.path().join(PROFILE)).unwrap();
+        assert!(saved_session_in(root.path()));
+        assert!(!saved_account_in(root.path()));
+        // An opt-out applies even if account/session contents are corrupt.
+        fs::write(root.path().join(ACCOUNT),b"corrupt account").unwrap();
+        fs::write(root.path().join(SESSION),b"corrupt session").unwrap();
+        fs::write(root.path().join(SIGNED_OUT),b"signed out").unwrap();
+        assert!(!saved_account_in(root.path()));
+        assert!(!saved_session_in(root.path()));
+    }
+
+    #[test]
+    fn replacing_native_account_waits_for_cleanup_before_writing_or_enabling() {
+        let root=tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(PROFILE)).unwrap();
+        fs::write(root.path().join(SESSION),b"old browser account").unwrap();
+        fs::write(root.path().join(ACCOUNT),b"old native account").unwrap();
+        let lock=lock_profile_in(root.path()).unwrap();
+        let mut wrote=false;
+        assert!(replace_account_in(root.path(),||{wrote=true;Ok(())}).is_err());
+        assert!(!wrote && login_disabled_in(root.path()));
+        assert!(!saved_session_in(root.path()) && !saved_account_in(root.path()));
+        drop(lock);
+        replace_account_in(root.path(),||{
+            assert!(!root.path().join(PROFILE).exists());
+            assert!(!root.path().join(SESSION).exists());
+            assert!(login_disabled_in(root.path()));
+            fs::write(root.path().join(ACCOUNT),b"new verified native account")
+        }).unwrap();
+        assert!(saved_account_in(root.path()) && !saved_session_in(root.path()));
+        assert!(!login_disabled_in(root.path()));
+    }
+
+    #[test]
+    fn failed_account_or_browser_save_keeps_old_identity_disabled() {
+        for browser in [false,true] {
+            let root=tempfile::tempdir().unwrap();
+            fs::create_dir(root.path().join(PROFILE)).unwrap();
+            fs::write(root.path().join(SESSION),b"old browser account").unwrap();
+            fs::write(root.path().join(ACCOUNT),b"old native account").unwrap();
+            let fail=||Err(io::Error::other("simulated encrypted-write failure"));
+            let result=if browser {replace_browser_session_in(root.path(),fail)}
+                else {replace_account_in(root.path(),fail)};
+            assert!(result.is_err());
+            assert!(login_disabled_in(root.path()));
+            assert!(!saved_session_in(root.path()) && !saved_account_in(root.path()));
+            assert!(!root.path().join(SESSION).exists() && !root.path().join(ACCOUNT).exists());
+        }
+    }
+
+    #[test]
+    fn verified_browser_save_keeps_its_profile_and_removes_old_native_account() {
+        let root=tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(PROFILE)).unwrap();
+        fs::write(root.path().join(ACCOUNT),b"another native account").unwrap();
+        let lock=lock_profile_in(root.path()).unwrap();
+        replace_browser_session_in(root.path(),||{
+            assert!(login_disabled_in(root.path()));
+            assert!(!root.path().join(ACCOUNT).exists());
+            fs::write(root.path().join(SESSION),b"verified current browser session")
+        }).unwrap();
+        assert!(saved_session_in(root.path()) && !saved_account_in(root.path()));
+        assert!(root.path().join(PROFILE).exists());
+        assert!(!login_disabled_in(root.path()));
+        drop(lock);
+    }
+
+    #[test]
+    fn locked_profile_cannot_reenable_automatic_login_after_signout() {
+        let root=tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(PROFILE)).unwrap();
+        fs::write(root.path().join(SESSION),b"existing session fixture").unwrap();
+        fs::write(root.path().join(ACCOUNT),b"existing account fixture").unwrap();
+        let lock=lock_profile_in(root.path()).unwrap();
+        assert!(sign_out_from(root.path()).is_err());
+        assert!(login_disabled_in(root.path()));
+        assert!(root.path().join(PROFILE).exists());
+        assert!(root.path().join(SESSION).exists());
+        assert!(!saved_session_in(root.path()));
+        assert!(!saved_account_in(root.path()));
+        assert!(!root.path().join(ACCOUNT).exists());
+        drop(lock);
+        forget_from(root.path()).unwrap();
+        assert!(login_disabled_in(root.path()));
     }
 }

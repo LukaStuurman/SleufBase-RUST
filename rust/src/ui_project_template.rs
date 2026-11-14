@@ -34,6 +34,77 @@ fn trench_raster(raster:&GeoTiffInfo)->bool{
         || raster.path.file_stem().is_some_and(|name|NAME.is_match(&name.to_string_lossy()))
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ExportSummary {
+    trenches: usize,
+    profiles: usize,
+    empty: usize,
+}
+fn export_summary(options: &Options) -> ExportSummary {
+    let mut summary=ExportSummary::default();
+    for choice in options.choices.iter().filter(|choice|choice.include) {
+        if matches!(choice.source,Source::Empty(_)) {summary.empty+=1;}
+        else {summary.trenches+=1;summary.profiles+=usize::from(choice.profile);}
+    }
+    summary
+}
+fn effective_map_label(options: &Options) -> &'static str {
+    if options.server_mode==sleufbase_rust::template_server::Mode::Offline {
+        "Offline · witte kaart, zonder luchtfoto"
+    } else if options.background==BackgroundKind::Pdok {
+        "Online · PDOK-luchtfoto"
+    } else {
+        "Online · witte kaart"
+    }
+}
+/// Run filesystem checks only when starting an export, never for every UI frame.
+/// The worker validates again because files can disappear after this check.
+pub(super) fn validate_export_sources(options:&Options,jobs:&[Dataset],rasters:&[GeoTiffInfo],trenches:&[VirtualTrench])->Result<(),String>{
+    if !(30..=600).contains(&options.dpi){return Err("Kies een kaartresolutie tussen 30 en 600 DPI.".into());}
+    if !options.scale.is_finite()||!(1. ..=100_000.).contains(&options.scale){return Err("Kies een kaartschaal tussen 1:1 en 1:100000.".into());}
+    sleufbase_rust::dxf_fonts::Catalog::validate_dirs(&options.font_directories)?;
+    options.profile_style.validate()?;
+    let selected=options.choices.iter().filter(|choice|choice.include).collect::<Vec<_>>();
+    if !selected.iter().any(|choice|!matches!(choice.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee; lege vakken alleen zijn niet voldoende.".into());}
+    if selected.len()>template_project::MAX_SLOTS{return Err(format!("Neem maximaal {} proefsleufvakken mee, inclusief lege vakken.",template_project::MAX_SLOTS));}
+    let mut seen=std::collections::HashSet::new();
+    for choice in selected {
+        if matches!(choice.source,Source::Empty(_)){continue;}
+        if !seen.insert(choice.source){return Err(format!("{} is meer dan één keer geselecteerd.",choice.title));}
+        let name=choice.label.as_deref().filter(|label|!label.is_empty()).unwrap_or(&choice.title);
+        match choice.source {
+            Source::Job(index)=>{jobs.get(index).ok_or_else(||format!("{name}: de KickTheMap-bron ontbreekt. Open de export opnieuw."))?;},
+            Source::Virtual(index)=>{
+                let trench=trenches.get(index).ok_or_else(||format!("{name}: de virtuele sleuf ontbreekt. Open de export opnieuw."))?;
+                // Geometry and large point metadata are validated on the export worker.
+                if choice.profile&&(trench.start.z.is_none()||trench.end.z.is_none()){
+                    return Err(format!("{name}: vul de begin- en eindhoogte in de sleufeditor in, of zet Dwarsprofiel voor deze sleuf uit."));
+                }
+            },
+            Source::Raster(_)=>{},Source::Empty(_)=>unreachable!(),
+        }
+        let raster_index=choice.raster.or_else(||if let Source::Raster(index)=choice.source{Some(index)}else{None});
+        if let Some(index)=raster_index{
+            let raster=rasters.get(index).ok_or_else(||format!("{name}: de GeoTIFF-koppeling ontbreekt. Kies de bron opnieuw."))?;
+            if !raster.path.is_file(){return Err(format!("{name}: GeoTIFF ontbreekt: {}",raster.path.display()));}
+            if raster.epsg.is_some_and(|epsg|epsg!=28992){return Err(format!("{name}: de GeoTIFF moet RD-coördinaten (EPSG:28992) gebruiken."));}
+        }else if !matches!(choice.source,Source::Virtual(_)){
+            return Err(format!("{name}: koppel een GeoTIFF of zet Meenemen uit."));
+        }
+        if choice.manual_scale.is_some_and(|scale|!(1..=1_000_000).contains(&scale)){
+            return Err(format!("{name}: kies een profielschaal tussen 1:1 en 1:1000000, of Automatisch."));
+        }
+        sleufbase_rust::template_photo::validate(&choice.photos).map_err(|error|format!("{name}: {error}"))?;
+    }
+    for (label,path) in [("Techbase-logo",&options.logos.techbase),("Opdrachtgeverlogo",&options.logos.client)] {
+        if let Some(path)=path {
+            let photo=sleufbase_rust::template_photo::Photo{path:path.clone(),turns:0,area:Default::default()};
+            sleufbase_rust::template_photo::validate(&[photo]).map_err(|error|format!("{label}: {error}. Kies het bestand opnieuw of verwijder het bij Meer exportinstellingen."))?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct Dialog {
     pub options: Options,
     pub output: Option<PathBuf>,
@@ -83,13 +154,24 @@ impl Dialog {
             trenches:app.virtual_trenches.iter().map(|t|(t.job_id,t.label.clone())).collect(),
         }
     }
+    fn include_all(&mut self,included:bool) {
+        for choice in &mut self.options.choices {
+            if !matches!(choice.source,Source::Empty(_)){choice.include=included;}
+        }
+        self.editor.sync(&self.options.choices);
+    }
+    fn profiles_for_included(&mut self,enabled:bool) {
+        for choice in self.options.choices.iter_mut().filter(|choice|choice.include&&!matches!(choice.source,Source::Empty(_))) {
+            choice.profile=enabled;
+        }
+    }
     fn readiness(&self)->Result<(),String>{
+        let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
+        if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee; vink Meenemen aan bij de gewenste sleuven.".into());}
         if !self.options.template.as_os_str().is_empty()&&!self.options.template.is_file(){return Err("Het eigen DXF-sjabloon ontbreekt. Kies het opnieuw of gebruik het ingebouwde sjabloon.".into());}
         let output=self.output.as_ref().ok_or("Kies eerst een nieuwe uitvoer-DXF.")?;
         if output.extension().is_none_or(|ext|!ext.to_string_lossy().eq_ignore_ascii_case("dxf")){return Err("De uitvoernaam moet eindigen op .dxf.".into());}
         if output.exists(){return Err("Deze uitvoer bestaat al. Kies een nieuwe naam; bestaande bestanden blijven behouden.".into());}
-        let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
-        if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee.".into());}
         if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
         if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de proefsleuflabels van de geselecteerde vakken.".into());}
         if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
@@ -102,6 +184,84 @@ impl Dialog {
             && self.rasters.iter().zip(&app.geotiffs).all(|(key,r)|key.0==r.path && key.1==r.kickthemap_job_id && key.2==r.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64))
             && self.trenches.iter().zip(&app.virtual_trenches).all(|(key,t)|key.0==t.job_id && key.1==t.label)
     }
+}
+
+// On wide windows keep the setup compact so trench selection is visible.
+// These cards share the same controls and values in the stacked layout.
+fn project_output_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
+    theme::card(12,12,10).show(ui,|ui| {
+        ui.set_min_width(ui.available_width());
+        ui.heading("1. Project en uitvoerbestand");
+        let field_width=(ui.available_width()-110.).max(80.);
+        egui::Grid::new("project-template-identity").num_columns(2).min_col_width(90.).show(ui,|ui|{
+            ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));ui.end_row();
+            ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));ui.end_row();
+        });
+        if dialog.options.template.as_os_str().is_empty(){ui.small("Sjabloon: ingebouwd SleufBase-sjabloon");}
+        else{ui.small(format!("Eigen sjabloon: {}",dialog.options.template.file_name().unwrap_or_default().to_string_lossy())).on_hover_text(dialog.options.template.display().to_string());}
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Nieuwe uitvoer-DXF kiezen…").clicked() {
+                if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"])
+                    .set_file_name("SleufBase-Project-Sjabloon-Rust.dxf").save_file(){dialog.output=Some(path);}
+            }
+            if let Some(path)=&dialog.output {
+                ui.label(path.file_name().unwrap_or_default().to_string_lossy()).on_hover_text(path.display().to_string());
+            }else{ui.weak("Nog geen uitvoerbestand gekozen");}
+        });
+        ui.small("De DXF en de bijbehorende afbeeldingen worden samen opgeslagen.");
+    });
+}
+fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
+    theme::card(12,12,10).show(ui,|ui| {
+        ui.set_min_width(ui.available_width());
+        ui.heading("2. Kaarten en profielen");
+        crate::template_dialog::server_mode(ui,&mut dialog.options.server_mode);
+        if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Fresh {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Achtergrond");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::Pdok,"Luchtfoto");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::Blank,"Wit");
+            });
+        }else{
+            ui.small("Kaartachtergrond: wit. Je keuze voor de online luchtfoto blijft bewaard.");
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Kaartkwaliteit");
+            let current=match dialog.options.dpi{150=>"150 DPI · kleiner bestand".into(),300=>"300 DPI · scherp (standaard)".into(),dpi=>format!("{dpi} DPI · aangepast")};
+            egui::ComboBox::from_id_salt("project-template-quality").selected_text(current).show_ui(ui,|ui|{
+                ui.selectable_value(&mut dialog.options.dpi,300,"300 DPI · scherp (standaard)");
+                ui.selectable_value(&mut dialog.options.dpi,150,"150 DPI · kleiner bestand");
+            });
+            ui.checkbox(&mut dialog.options.paired,"Beide kijkrichtingen").on_hover_text("Maakt de normale en de omgekeerde richting. Kies de gewenste versie later in AutoCAD.");
+        });
+        if dialog.options.paired{ui.small("Beide richtingen worden bewaard; kies in AutoCAD met Versie de gewenste richting.");}
+        ui.collapsing("Meer exportinstellingen",|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Kaartresolutie (DPI)");
+                ui.add(egui::DragValue::new(&mut dialog.options.dpi).range(30..=600));
+                ui.label("Kaartschaal 1:");
+                ui.add(egui::DragValue::new(&mut dialog.options.scale).range(1.0..=100_000.).speed(1.));
+            });
+            ui.small("Dit zijn instellingen van de locatiekaart. De grote afbeelding van een virtuele sleuf blijft op hoge detailkwaliteit.");
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut dialog.options.include_bgt,"BGT-ondergrond").on_hover_text("Gebouwen, wegen en andere beschikbare topografie meenemen.");
+                ui.checkbox(&mut dialog.options.include_cadastral,"Perceelgrenzen en -nummers");
+                ui.checkbox(&mut dialog.options.include_cad,"Zichtbare CAD-lagen").on_hover_text("Ook zichtbare lijnen uit geneste DXF-blokken meenemen.");
+            });
+            if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Offline{ui.small("Offline worden alleen al geladen kaartgegevens gebruikt.");}
+            ui.separator();
+            if dialog.options.template.as_os_str().is_empty(){ui.label("Sjabloon: ingebouwd SleufBase-sjabloon");}
+            else{ui.label(format!("Eigen sjabloon: {}",dialog.options.template.display()));}
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Eigen DXF-sjabloon kiezen…").clicked(){
+                    if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"]).pick_file(){dialog.options.template=path;}
+                }
+                if !dialog.options.template.as_os_str().is_empty()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){dialog.options.template=PathBuf::new();}
+            });
+            crate::template_dialog::logos(ui,&mut dialog.options.logos);
+            crate::template_dialog::font_folders(ui,&mut dialog.options.font_directories);
+        });
+    });
 }
 
 impl SleufBaseApp {
@@ -135,78 +295,40 @@ impl SleufBaseApp {
             let mut clicked_row=None;let mut sync_editor=false;let mut edited_label=None;
             egui::Window::new("DXF-sjabloon exporteren")
                 .open(&mut open)
-                .default_width(730.)
-                .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
+                .default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
+                .default_height((ctx.screen_rect().height()-80.).clamp(240.,720.))
                 .constrain_to(ctx.screen_rect().shrink(12.))
                 .resizable(true)
                 .show(ctx, |ui| {
                     settings_ui::control_style(ui);
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                     egui::ScrollArea::vertical().id_salt("project-template-body")
-                        .max_height((ui.available_height()-105.).max(80.)).auto_shrink([false,false]).show(ui, |ui| {
-                        ui.heading("1. Uitvoer en project");
-                        if dialog.options.template.as_os_str().is_empty(){ui.label("Sjabloon: ingebouwd SleufBase-sjabloon");}
-                        else{ui.label(format!("Eigen sjabloon: {}",dialog.options.template.display()));}
-                        ui.collapsing("Eigen DXF-sjabloon gebruiken (optioneel)",|ui|{
-                            ui.small("Voor de standaardexport is geen bestand nodig.");
-                            if ui.button("Eigen DXF-sjabloon kiezen…").clicked(){
-                                if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"]).pick_file(){dialog.options.template=path;}
-                            }
-                            if !dialog.options.template.as_os_str().is_empty()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){dialog.options.template=PathBuf::new();}
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("Nieuwe uitvoer-DXF kiezen…").clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("AutoCAD DXF", &["dxf"])
-                                    .set_file_name("SleufBase-Project-Sjabloon-Rust.dxf")
-                                    .save_file() { dialog.output = Some(path); }
-                            }
-                            if let Some(path) = &dialog.output {
-                                ui.label(path.display().to_string());
-                            }
-                        });
-                        let field_width=(ui.available_width()-110.).max(80.);
-                        egui::Grid::new("project-template-identity").num_columns(2).min_col_width(90.).show(ui,|ui|{
-                            ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));ui.end_row();
-                            ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));ui.end_row();
-                        });
-                        ui.separator();
-                        ui.heading("2. Kaarten en profielen");
-                        crate::template_dialog::font_folders(ui, &mut dialog.options.font_directories);
-                        crate::template_dialog::logos(ui,&mut dialog.options.logos);
-                        crate::template_dialog::server_mode(ui,&mut dialog.options.server_mode);
-                        ui.checkbox(&mut dialog.options.paired,"Beide richtingen (Normaal / Reverse)");
-                        if dialog.options.paired {ui.small("Kies na export in AutoCAD de gewenste richting met Versie.");}
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Resolutie (DPI)");
-                            ui.add(egui::DragValue::new(&mut dialog.options.dpi).range(72..=300));
-                            ui.label("Kaartschaal 1:");
-                            ui.add(egui::DragValue::new(&mut dialog.options.scale).range(1.0..=100_000.).speed(1.));
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.radio_value(&mut dialog.options.background, BackgroundKind::Blank,
-                                "Geen luchtfoto (witte kaart)");
-                            ui.add_enabled_ui(dialog.options.server_mode==sleufbase_rust::template_server::Mode::Fresh,|ui|{ui.radio_value(&mut dialog.options.background, BackgroundKind::Pdok,
-                                "PDOK-luchtfoto (netwerk)");});
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.checkbox(&mut dialog.options.include_bgt, "BGT-gegevens meenemen");
-                            ui.checkbox(&mut dialog.options.include_cadastral,
-                                "Kadaster-gegevens meenemen");
-                            ui.checkbox(&mut dialog.options.include_cad,
-                                "Zichtbare CAD/DXF-lagen (ook geneste blokken)");
-                        });
-                        ui.label("KickTheMap- en virtuele proefsleuven worden samen geëxporteerd. Een virtuele sleuf zonder GeoTIFF verschijnt transparant op de luchtfoto.");
-                        if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Offline {
-                            ui.colored_label(DARK,"Offline export heeft geen luchtfoto: kies de netwerkmodus voor de PDOK-achtergrond.");
+                        .max_height((ui.available_height()-if dialog.error.is_empty(){120.}else{155.}).max(80.)).auto_shrink([false,false]).show(ui, |ui| {
+                        if ui.available_width()>=820. {
+                            ui.columns(2,|columns| {
+                                project_output_card(&mut columns[0],dialog);
+                                project_map_card(&mut columns[1],dialog);
+                            });
+                        }else{
+                            project_output_card(ui,dialog);
+                            ui.add_space(8.);
+                            project_map_card(ui,dialog);
                         }
                         ui.separator();
-                        ui.heading("3. Proefsleufvakken en GeoTIFF-koppelingen");
-                        let included=dialog.options.choices.iter().filter(|c|c.include&&!matches!(c.source,Source::Empty(_))).count();
-                        let empty=dialog.options.choices.iter().filter(|c|matches!(c.source,Source::Empty(_))).count();
-                        ui.label(format!("Meenemen: {included} | Niet meenemen: {} | Lege vakken: {empty}",dialog.options.choices.len()-included-empty));
-                        if included+empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
-                        ui.small("Standaard worden proefsleuven numeriek gesorteerd (PS1, PS2, PS10). Handmatig verplaatsen blijft mogelijk; lege vakken houden hun positie.");
+                        ui.heading("3. Proefsleuven kiezen");
+                        let summary=export_summary(&dialog.options);
+                        let excluded=dialog.options.choices.iter().filter(|choice|!choice.include&&!matches!(choice.source,Source::Empty(_))).count();
+                        ui.label(format!("{} meenemen · {excluded} uitsluiten · {} lege vakken",summary.trenches,summary.empty));
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.small_button("Alles meenemen").clicked(){dialog.include_all(true);}
+                            if ui.small_button("Alles uitsluiten").clicked(){dialog.include_all(false);}
+                            ui.label("Dwarsprofielen voor meegenomen sleuven:");
+                            if ui.small_button("Aan").clicked(){dialog.profiles_for_included(true);}
+                            if ui.small_button("Uit").clicked(){dialog.profiles_for_included(false);}
+                        });
+                        if summary.trenches+summary.empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
+                        ui.small("Vink de gewenste sleuven aan. De volgorde geldt voor het sjabloon; een lege positie blijft behouden.");
+                        ui.collapsing("Volgorde en meerdere sleuven aanpassen",|ui| {
                         let mut requested_sort=dialog.sort_mode;
                         ui.horizontal_wrapped(|ui|{
                             ui.label("Sorteren op");
@@ -236,8 +358,8 @@ impl SleufBaseApp {
                         ui.horizontal_wrapped(|ui|{
                             if ui.small_button("Alle regels selecteren").clicked(){dialog.editor.select_all(&dialog.options.choices,true);}
                             if ui.small_button("Selectie wissen").clicked(){dialog.editor.select_all(&dialog.options.choices,false);}
-                            if ui.small_button("Meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,true);}
-                            if ui.small_button("Niet meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,false);}
+                            if ui.small_button("Selectie meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,true);}
+                            if ui.small_button("Selectie uitsluiten").clicked(){dialog.editor.included(&mut dialog.options.choices,false);}
                             for(label,direction)in[("Omhoog",-1),("Omlaag",1)]{if ui.small_button(label).clicked(){let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);if !swaps.is_empty(){dialog.sort_mode=None;}for(a,b)in swaps{dialog.automatic.swap(a,b);}}}
                             if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
                             if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
@@ -270,10 +392,11 @@ impl SleufBaseApp {
                             dialog.editor.select(&dialog.options.choices,dialog.options.choices.len()-1,false,false);
                             dialog.sort_mode=None;
                         }
-                        ui.small("Pas het proefsleuflabel direct in de rij aan, bijvoorbeeld PS 25-2, 25B of 25EXTENT.");
+                        });
+                        ui.small("Pas het label direct aan, bijvoorbeeld PS 25-2 of PS25B. Open Details voor de bron, schaal of werkfoto's.");
                         for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
                             ui.push_id(idx, |ui| {
-                                ui.group(|ui| {
+                                theme::card(10,10,8).stroke(Stroke::new(1.,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
                                         if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
@@ -286,13 +409,17 @@ impl SleufBaseApp {
                                                 edited_label = Some(idx);
                                             }
                                         }
-                                        ui.label(&slot.title);
+                                        ui.weak(match slot.source{Source::Job(_)=>"KickTheMap",Source::Virtual(_)=>"Virtueel",Source::Raster(_)=>"GeoTIFF",Source::Empty(_)=>"Leeg vak"});
+                                        if !matches!(slot.source,Source::Empty(_)) {
+                                            ui.add_enabled(slot.include,egui::Checkbox::new(&mut slot.profile,"Dwarsprofiel"));
+                                        }
                                     });
-                                    if matches!(slot.source,Source::Empty(_)){return;}
+                                    if matches!(slot.source,Source::Empty(_)){ui.small("Behoudt een lege positie in het sjabloon.");return;}
+                                    ui.small(&slot.title);
                                     if slot.include && slot.raster.is_none() && matches!(slot.source,Source::Job(_)|Source::Raster(_)) {
-                                        ui.colored_label(DARK, "Koppel een GeoTIFF via Vakdetails.");
+                                        ui.colored_label(DARK, "Kies bij Details een GeoTIFF, of zet Meenemen uit.");
                                     }
-                                    ui.collapsing("Vakdetails", |ui| {
+                                    ui.collapsing("Details: bron, schaal en werkfoto’s", |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label("Naam");
                                         ui.text_edit_singleline(&mut slot.title);
@@ -324,7 +451,6 @@ impl SleufBaseApp {
                                                             info.kickthemap_job_id.map_or("?".into(),|id|id.to_string())));
                                                 }
                                             });
-                                        ui.checkbox(&mut slot.profile, "Profiel tekenen");
                                         ui.add_enabled(!dialog.options.paired,egui::Checkbox::new(&mut slot.reverse,"Alleen omgekeerde richting"));
                                     });
                                     ui.add_enabled_ui(slot.profile, |ui| {let previous=slot.manual_scale;template_profile_ui::scale(ui, &mut slot.manual_scale);if previous!=slot.manual_scale{sync_editor=true;}});
@@ -425,13 +551,18 @@ impl SleufBaseApp {
                     });
                         ui.separator();
                         if !dialog.error.is_empty() {
-                            ui.colored_label(DARK, &dialog.error);
+                            ui.add(egui::Label::new(egui::RichText::new(format!("Laatste poging: {}",dialog.error)).color(DARK)).truncate()).on_hover_text(&dialog.error);
                         }
-                        ui.small("De oorspronkelijke jobs, virtuele sleuven en projectbestanden blijven behouden. Een bestaande uitvoer wordt niet overschreven.");
                         if let Some(index)=edited_label {dialog.editor.update_typed_label(&dialog.options.choices,index);}
+                        let summary=export_summary(&dialog.options);
+                        ui.strong(format!("{} sleuven · {} profielen aangevraagd · {}",summary.trenches,summary.profiles,
+                            if dialog.options.paired{"beide kijkrichtingen"}else{"één kijkrichting per sleuf"}));
+                        ui.small(format!("{} · {} DPI · kaart 1:{}",effective_map_label(&dialog.options),dialog.options.dpi,dialog.options.scale));
                         let readiness=dialog.readiness();
                         let ready=readiness.is_ok();
-                        if let Err(reason)=readiness{ui.small(reason);}
+                        if let Err(reason)=readiness{
+                            ui.add(egui::Label::new(egui::RichText::new(&reason).small()).truncate()).on_hover_text(reason);
+                        }else{ui.small("Selectie compleet. Bestanden worden bij starten gecontroleerd.");}
                         if ui.add_enabled(ready, egui::Button::new(egui::RichText::new("Volledige project-sjabloonexport starten").color(Color32::WHITE)).fill(ORANGE)).clicked() {
                             launch = dialog.output.clone();
                         }
@@ -607,4 +738,110 @@ mod flow_audit_tests {
         for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
         let d=app.project_template_dialog.as_ref().expect("rejected launch must retain form");assert_eq!(d.options.project,"Behouden keuze");assert!(d.error.contains("downloads"));assert!(app.template_job.is_none());assert_eq!(app.virtual_trenches.len(),1);
     }
+    #[test]
+    fn bulk_export_actions_preserve_excluded_details_and_empty_positions(){
+        let mut app=app();
+        app.virtual_trenches.push(VirtualTrench::new("PS13".into(),Vertex{x:155020.,y:463000.,z:Some(2.)},Vertex{x:155030.,y:463000.,z:Some(2.)},0.6).unwrap());
+        app.open_project_template_dialog();let d=app.project_template_dialog.as_mut().unwrap();
+        d.options.choices[1].include=false;
+        d.options.choices[1].reverse=true;
+        d.options.choices[1].manual_scale=Some(10_000);
+        d.options.choices[1].comments="Bewaren".into();
+        let mut empty=d.options.choices[0].clone();empty.source=Source::Empty(7);empty.include=true;empty.profile=false;
+        d.options.choices.insert(1,empty);
+        d.editor=sleufbase_rust::template_editor::Editor::new(&mut d.options.choices,&[],&app.virtual_trenches);
+        d.profiles_for_included(false);
+        assert!(!d.options.choices[0].profile);
+        assert!(d.options.choices[2].profile,"excluded source keeps its own profile choice");
+        assert_eq!(export_summary(&d.options),ExportSummary{trenches:1,profiles:0,empty:1});
+        d.include_all(false);
+        assert!(d.options.choices[1].include,"empty layout position must not be removed");
+        assert!(d.readiness().unwrap_err().contains("Neem minimaal één proefsleuf"));
+        d.include_all(true);
+        assert_eq!(export_summary(&d.options),ExportSummary{trenches:2,profiles:1,empty:1});
+        assert_eq!(d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>(),[Source::Virtual(0),Source::Empty(7),Source::Virtual(1)]);
+        assert!(d.options.choices[2].reverse);
+        assert_eq!(d.options.choices[2].manual_scale,Some(10_000));
+        assert_eq!(d.options.choices[2].comments,"Bewaren");
+    }
+    #[test]
+    fn preflight_checks_only_included_sources_and_enabled_virtual_profiles(){
+        let mut app=app();app.virtual_trenches[0].start.z=None;app.virtual_trenches[0].end.z=None;
+        app.open_project_template_dialog();let mut options=app.project_template_dialog.as_ref().unwrap().options.clone();
+        options.choices[0].profile=false;
+        let mut excluded=options.choices[0].clone();excluded.source=Source::Virtual(99);excluded.include=false;
+        excluded.photos.push(sleufbase_rust::template_photo::Photo{path:"missing-excluded-photo.png".into(),turns:0,area:Default::default()});
+        options.choices.push(excluded);
+        assert!(validate_export_sources(&options,&[],&[],&app.virtual_trenches).is_ok());
+        options.choices[0].profile=true;
+        let error=validate_export_sources(&options,&[],&[],&app.virtual_trenches).unwrap_err();
+        assert!(error.contains("PS12")&&error.contains("begin- en eindhoogte"));
+        options.choices[0].profile=false;
+        options.choices[0].photos.push(sleufbase_rust::template_photo::Photo{path:"missing-included-photo.png".into(),turns:0,area:Default::default()});
+        let allocation=app.virtual_trenches.as_ptr();let dir=tempfile::tempdir().unwrap();let output=dir.path().join("invalid.dxf");
+        app.start_project_template_export(options,output.clone());
+        assert!(app.template_job.is_none());assert!(app.project_template_dialog.is_some());
+        assert_eq!(app.virtual_trenches.as_ptr(),allocation);
+        assert!(app.message.contains("PS12")&&app.message.contains("Foto ontbreekt"));
+        assert!(!output.exists());assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(),0);
+    }
+    #[test]
+    fn preflight_reports_missing_rasters_and_optional_logos_before_work_starts(){
+        let mut app=app();app.open_project_template_dialog();let mut options=app.project_template_dialog.as_ref().unwrap().options.clone();
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        options.choices[0].raster=Some(0);
+        assert!(validate_export_sources(&options,&[],&[raster.clone()],&app.virtual_trenches).is_ok());
+        raster.path="missing-linked-source.tiff".into();
+        let error=validate_export_sources(&options,&[],&[raster],&app.virtual_trenches).unwrap_err();
+        assert!(error.contains("PS12")&&error.contains("GeoTIFF ontbreekt"));
+        options.choices[0].raster=None;
+        options.logos.client=Some("missing-client-logo.png".into());
+        assert!(validate_export_sources(&options,&[],&[],&app.virtual_trenches).unwrap_err().contains("Opdrachtgeverlogo"));
+        options.logos.client=None;
+        assert!(validate_export_sources(&options,&[],&[],&app.virtual_trenches).is_ok());
+    }
+    #[test]
+    fn opening_export_controls_preserves_valid_custom_dpi_scale_and_online_preference(){
+        let mut app=app();app.open_project_template_dialog();
+        let d=app.project_template_dialog.as_mut().unwrap();d.options.dpi=600;d.options.scale=225.5;d.options.choices[0].manual_scale=Some(10_000);
+        d.options.server_mode=sleufbase_rust::template_server::Mode::Offline;
+        assert_eq!(effective_map_label(&d.options),"Offline · witte kaart, zonder luchtfoto");
+        assert_eq!(d.options.background,BackgroundKind::Pdok);
+        let ctx=egui::Context::default();
+        let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1500.,930.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
+        for _ in 0..4{frame(&mut app,vec![]);}
+        let out=frame(&mut app,vec![]);
+        assert!(out.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text)if text.galley.text().contains("kaart 1:225.5"))),"summary must not round a fractional map scale");
+        let pos=out.shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Text(text)if text.galley.text()=="Meer exportinstellingen"=>Some(text.pos+text.galley.rect.size()/2.),_=>None}).expect("advanced options remain accessible");
+        for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
+        for _ in 0..4{frame(&mut app,vec![]);}
+        let d=app.project_template_dialog.as_mut().unwrap();
+        assert_eq!(d.options.dpi,600);assert_eq!(d.options.scale,225.5);assert_eq!(d.options.choices[0].manual_scale,Some(10_000));
+        assert_eq!(d.options.background,BackgroundKind::Pdok);
+        d.options.server_mode=sleufbase_rust::template_server::Mode::Fresh;
+        assert_eq!(effective_map_label(&d.options),"Online · PDOK-luchtfoto");
+        for wanted in [1,10_000,1_000_000]{
+            let mut manual=Some(wanted);
+            for _ in 0..3{ctx.run(egui::RawInput::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|template_profile_ui::scale(ui,&mut manual));});}
+            assert_eq!(manual,Some(wanted),"opening scale control must not clamp a valid saved scale");
+        }
+    }
+
+    #[test]
+    fn long_export_error_keeps_the_primary_action_visible_on_a_small_window(){
+        let mut app=app();app.open_project_template_dialog();let dir=tempfile::tempdir().unwrap();
+        let d=app.project_template_dialog.as_mut().unwrap();d.output=Some(dir.path().join("new.dxf"));
+        d.error=format!("PS12: Foto ontbreekt: C:/{}werkfoto.png", "een-lange-projectmap/".repeat(100));
+        let ctx=egui::Context::default();let mut out=None;
+        for _ in 0..4{out=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),..Default::default()},|ctx|app.show_project_template_dialog(ctx)));}
+        let out=out.unwrap();let action=out.shapes.iter().find_map(|shape|match &shape.shape{
+            egui::Shape::Text(text)if text.galley.text()=="Volledige project-sjabloonexport starten"=>Some((shape.clip_rect,egui::Rect::from_min_size(text.pos,text.galley.rect.size()))),_=>None,
+        }).expect("export action must remain drawn");
+        assert!(action.1.min.y>=0.&&action.1.max.y<=420.,"action is outside screen: {:?}",action.1);
+        assert!(action.0.contains_rect(action.1),"action must not be clipped: {action:?}");
+        assert!(app.project_template_dialog.as_ref().unwrap().error.contains(&"een-lange-projectmap/".repeat(100)),"full diagnostic must remain available for hover");
+        assert!(app.template_job.is_none());
+    }
+
 }

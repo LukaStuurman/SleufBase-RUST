@@ -126,6 +126,9 @@ impl SleufBaseApp {
             self.message = "Selecteer minimaal één proefsleufvak".into();
             return;
         }
+        if let Err(error)=project_template_ui::validate_export_sources(&options,&self.datasets,&self.geotiffs,&self.virtual_trenches){
+            self.message=error;return;
+        }
         let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
         use sleufbase_rust::template_project::hydrate;
         let needs_snapshot=requires_live_snapshot(&options,&self.geotiffs);
@@ -324,7 +327,7 @@ impl SleufBaseApp {
         let Some(job) = &self.template_job else { return };
         let (stage, bytes) = job.control.progress();
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Rust-sjabloonexport");
+            ui.heading("DXF-sjabloon exporteren");
             ui.label(job.output.display().to_string());
             ui.label(job.status.as_str());
             ui.label(match stage {
@@ -339,7 +342,7 @@ impl SleufBaseApp {
             if ui.add_enabled(job.control.can_cancel(), egui::Button::new("Annuleren")).clicked() {
                 cancel = true;
             }
-            ui.label("Bij succes vervangt de nieuwe DXF het gekozen uitvoerbestand.");
+            ui.label("De DXF en bijbehorende afbeeldingen worden samen opgeslagen. Een bestaande uitvoer blijft behouden.");
             ui.spinner();
         });
         if cancel {

@@ -33,9 +33,9 @@ pub(crate) fn logos(ui:&mut egui::Ui, logos:&mut sleufbase_rust::template_brandi
 }
 pub(crate) fn server_mode(ui: &mut egui::Ui, mode: &mut sleufbase_rust::template_server::Mode) {
     use sleufbase_rust::template_server::Mode;
-    ui.label("Kaartgegevens en profielcontext");
-    ui.radio_value(mode, Mode::Fresh, "Actuele gegevens ophalen (BGT, Kadaster en wegen)");
-    ui.radio_value(mode, Mode::Offline, "Geladen gegevens gebruiken (offline)");
+    ui.label("Kaartgegevens");
+    ui.radio_value(mode, Mode::Fresh, "Online · actuele kaartgegevens ophalen");
+    ui.radio_value(mode, Mode::Offline, "Offline · alleen al geladen gegevens");
     if *mode==Mode::Offline {ui.small("Offline export gebruikt geladen bronnen en een kaart zonder luchtfoto.");}
 }
 /// Shared persistent CAD support folders for both template export routes.

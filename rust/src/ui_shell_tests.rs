@@ -137,15 +137,36 @@ fn capture(
     app: &mut SleufBaseApp,
     size: [u32; 2],
 ) -> (Vec<(String, egui::Rect)>, image::RgbaImage) {
+    capture_open(app, size, &[])
+}
+
+fn capture_open(
+    app: &mut SleufBaseApp,
+    size: [u32; 2],
+    open_labels: &[&str],
+) -> (Vec<(String, egui::Rect)>, image::RgbaImage) {
     let ctx = egui::Context::default();
     // A new egui context needs the production theme even when reusing an app.
     app.shell.installed=false;
     let mut textures = HashMap::new();
-    let mut result = None;
-    for index in 0..3 {
+    let mut result: Option<egui::FullOutput> = None;
+    let mut pointer = Pos2::ZERO;
+    for index in 0..3 + open_labels.len() * 3 {
         let mut raw = input(size);
         raw.time = Some(index as f64 * 0.2);
         raw.predicted_dt = 0.2;
+        if index >= 3 {
+            let phase = (index - 3) % 3;
+            if phase == 0 {
+                pointer = label_position(result.as_ref().unwrap(), open_labels[(index - 3) / 3]);
+            }
+            if phase < 2 {
+                raw.events = vec![egui::Event::PointerMoved(pointer), egui::Event::PointerButton {
+                    pos: pointer, button: egui::PointerButton::Primary,
+                    pressed: phase == 0, modifiers: egui::Modifiers::NONE,
+                }];
+            }
+        }
         let output = ctx.run(raw, |ctx| app.render(ctx));
         for (id, delta) in &output.textures_delta.set {
             let image = match &delta.image {
@@ -734,9 +755,23 @@ fn interactive_login_error_reaches_the_browser_controls_without_starting_a_brows
 fn polish_visual_review_captures_virtual_and_template_dialogs(){
     let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR") else{return};
     let dir=PathBuf::from(dir);std::fs::create_dir_all(&dir).unwrap();
-    for size in [[680,420],[1200,760]] {
+    for size in [[680,420],[1200,760],[1500,930]] {
         let mut app=SleufBaseApp::default();
-        app.virtual_trenches.push(sleufbase_rust::virtual_trench::VirtualTrench::new("PS12".into(),sleufbase_rust::Vertex{x:155000.,y:463000.,z:Some(2.)},sleufbase_rust::Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
+        let mut trench=VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap();
+        for (name,chainage,depth,diameter,rgb,angle) in [
+            ("LS",1.4,0.7,55.,[214,48,49],0.),
+            ("KPN",3.2,0.55,40.,[76,150,58],0.),
+            ("Water",5.4,0.9,110.,[49,119,206],-20.),
+            ("Gas",7.8,0.8,90.,[225,169,28],15.),
+        ] {
+            trench.objects.push(sleufbase_rust::virtual_trench::TrenchPoint{
+                role:"kabel".into(),object_name:name.into(),source_name:name.into(),
+                attributes:[name.into(),format!("{diameter} mm"),String::new()],
+                position:Vertex{x:trench.start.x+chainage,y:trench.start.y,z:Some(2.-depth)},
+                metadata:serde_json::json!({"surface_mode":"start","surface_z":2.,"sleufbase_depth_meters":depth,"display_rgb":rgb,"crossing_angle_degrees":angle}),
+            });
+        }
+        app.virtual_trenches.push(trench);
         app.open_virtual_editor(0);
         let (_,image)=capture(&mut app,size);image.save(dir.join(format!("virtual-{}x{}.png",size[0],size[1]))).unwrap();
         app.trench_editor=None;app.open_project_template_dialog();
@@ -746,6 +781,12 @@ fn polish_visual_review_captures_virtual_and_template_dialogs(){
         app.geotiffs.push(sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap());
         app.open_template_export();
         let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-mixed-{}x{}.png",size[0],size[1]))).unwrap();
+        if size == [1500,930] {
+            let (_,image)=capture_open(&mut app,size,&["Meer exportinstellingen"]);
+            image.save(dir.join("template-advanced-1500x930.png")).unwrap();
+        }
+        app.project_template_dialog.as_mut().unwrap().error=format!("PS12: werkfoto ontbreekt: C:/Projecten/{}/sleuf-foto.jpg", "Lange projectmap/".repeat(18));
+        let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-error-{}x{}.png",size[0],size[1]))).unwrap();
     }
 }
 
@@ -769,6 +810,12 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
             assert!((label.y-value.y).abs()<3.,"{physical} {size:?}: {label:?} {value:?}");
             label_position(&out,"Sjabloon: ingebouwd SleufBase-sjabloon");
             assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Eigen DXF-sjabloon kiezen…")));
+            if size[0] >= 1200 {
+                let row = out.shapes.iter().find(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Meenemen")).expect("first trench choice");
+                let egui::Shape::Text(text)=&row.shape else{unreachable!()};
+                let bounds=text.galley.rect.translate(text.pos.to_vec2());
+                assert!(row.clip_rect.contains_rect(bounds),"the first trench must be selectable without scrolling at {size:?}: {bounds:?}, clip {:?}",row.clip_rect);
+            }
             assert!(app.template_job.is_none());
         }
     }
