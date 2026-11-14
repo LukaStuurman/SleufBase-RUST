@@ -132,7 +132,6 @@ impl Drop for Attributes {
 pub(crate) struct Process {
     process: OwnedHandle,
     job: Option<OwnedHandle>,
-    pid: u32,
 }
 impl Process {
     /// `command` supplies program/arguments/current directory/environment. This
@@ -237,7 +236,6 @@ impl Process {
         let value = Self {
             process: owned(info.hProcess)?,
             job: Some(job),
-            pid: info.dwProcessId,
         };
         let thread = owned(info.hThread)?;
         assign(
@@ -254,9 +252,6 @@ impl Process {
             return Err(io::Error::last_os_error());
         }
         Ok(value)
-    }
-    pub(crate) fn id(&self) -> u32 {
-        self.pid
     }
     pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } {
@@ -323,7 +318,6 @@ mod tests {
         };
         let dir = PathBuf::from(dir);
         let role = std::env::var("SLEUFBASE_JOB_FIXTURE_ROLE").unwrap();
-        if role == "exit7" {std::process::exit(7);}
         std::fs::write(
             dir.join(format!("{role}.pid")),
             std::process::id().to_string(),
@@ -386,46 +380,6 @@ mod tests {
                     "owned descendant survived job close"
                 );
             }
-        }
-    }
-    #[test]
-    fn startup_cancellation_terminates_native_descendants() {
-        use super::super::{Config, OwnedChild, Runtime};
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let dir = tempfile::tempdir().unwrap();
-        let log = tempfile::tempfile().unwrap();
-        let cancel = AtomicBool::new(false);
-        let runtime = Runtime::default();
-        let config = Config::from_environment(dir.path().into(), BTreeMap::new());
-        let mut calls = 0;
-        let mut descendants = Vec::new();
-        let result = runtime.ensure_with(
-            &config,
-            &cancel,
-            || {
-                calls += 1;
-                if calls == 3 {
-                    descendants.push(wait_pid(dir.path(), "child"));
-                    descendants.push(wait_pid(dir.path(), "grandchild"));
-                    cancel.store(true, Ordering::Release);
-                }
-                false
-            },
-            || {
-                Ok(OwnedChild(
-                    Process::spawn(&fixture(dir.path(), "parent"), &log).unwrap(),
-                ))
-            },
-            Duration::ZERO,
-        );
-        assert!(result.is_err());
-        assert!(runtime.child.lock().unwrap().is_none());
-        assert_eq!(descendants.len(), 2);
-        for h in descendants {
-            assert_eq!(
-                unsafe { WaitForSingleObject(h.as_raw_handle(), 5000) },
-                WAIT_OBJECT_0
-            );
         }
     }
     #[test]

@@ -185,6 +185,7 @@ pub fn font_paths() -> map_text::Paths {
 fn virtual_rd_map_matches_an_actual_tiff_and_keeps_source_precedence_and_orientation() {
     use sleufbase_rust::{template_raster, virtual_raster, virtual_trench::VirtualTrench, Vertex};
     let cancel = AtomicBool::new(false);
+    for quality in [1.,4.] {
     let mut virtual_source = virtual_raster::Source {
         trench: VirtualTrench::new(
             "PS virtueel".into(),
@@ -201,7 +202,7 @@ fn virtual_rd_map_matches_an_actual_tiff_and_keeps_source_precedence_and_orienta
             0.6,
         )
         .unwrap(),
-        quality: 1.,
+        quality,
         reverse: false,
     };
     let info = virtual_raster::layout(&virtual_source.trench, virtual_source.quality).unwrap();
@@ -306,6 +307,46 @@ fn virtual_rd_map_matches_an_actual_tiff_and_keeps_source_precedence_and_orienta
         )
         .unwrap();
     assert_ne!(blank.image, physical_page.image);
+    }
+}
+#[test]
+fn template_virtual_emphasis_respects_opacity_and_keeps_compact_layout() {
+    use sleufbase_rust::{virtual_raster,virtual_trench::{TrenchPoint,VirtualTrench},Vertex};
+    let mut trench=VirtualTrench::new("PS".into(),
+        Vertex{x:155000.,y:463000.,z:Some(2.)},
+        Vertex{x:155003.,y:463000.,z:Some(2.)},0.6).unwrap();
+    trench.objects.push(TrenchPoint{
+        metadata:serde_json::json!({"display_rgb":[250,40,60]}),
+        role:"kabel".into(),object_name:"LS".into(),source_name:"LS".into(),
+        position:Vertex{x:155001.5,y:463000.,z:Some(1.4)},attributes:Default::default(),
+    });
+    let raster=virtual_raster::Source{trench,quality:4.,reverse:false};
+    let bounds=virtual_raster::layout(&raster.trench,raster.quality).unwrap().bounds;
+    let cancel=AtomicBool::new(false);
+    let mut renderer=map_export::Renderer::default();
+    let mut source=map_export::Source{
+        settings:map_page::Settings{dpi:72,scale:100.},
+        background:Background::Solid{color:[25,25,25,255]},
+        fonts:Some(font_paths()),include_tiff:false,..Default::default()
+    };
+    let blank=renderer.render_template_with_raster(&source,bounds,None,None,&cancel).unwrap();
+    source.include_tiff=true;source.tiff_opacity=0.;
+    let invisible=renderer.render_template_with_raster(&source,bounds,
+        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
+    pixels(&invisible.image,&blank.image,"zero opacity hides both raster and template emphasis");
+    source.tiff_opacity=0.5;
+    let partial=renderer.render_template_with_raster(&source,bounds,
+        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
+    source.tiff_opacity=1.;
+    let opaque=renderer.render_template_with_raster(&source,bounds,
+        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
+    assert_eq!(opaque.layout.origin,[56.,56.]);
+    let [x,y]=opaque.layout.screen([155001.5,463000.]);
+    let (x,y)=((x+opaque.layout.origin[0]) as u32,(y+opaque.layout.origin[1]) as u32);
+    assert_eq!(opaque.image.get_pixel(x,y).0,[250,40,60,255]);
+    let transparent=partial.image.get_pixel(x,y).0;
+    assert!(transparent[0]>25&&transparent[0]<250,"partial opacity remains visible without becoming opaque: {transparent:?}");
+    assert_eq!(transparent[3],255);
 }
 #[test]
 fn page_border_preserves_the_map_interior_and_cancel_rejects_before_fetch() {
