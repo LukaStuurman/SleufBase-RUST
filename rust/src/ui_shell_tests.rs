@@ -774,6 +774,10 @@ fn polish_visual_review_captures_virtual_and_template_dialogs(){
         app.virtual_trenches.push(trench);
         app.open_virtual_editor(0);
         let (_,image)=capture(&mut app,size);image.save(dir.join(format!("virtual-{}x{}.png",size[0],size[1]))).unwrap();
+        if size == [1200,760] {
+            let (_,image)=capture_open(&mut app,size,&["Toevoegen en herhalen"]);
+            image.save(dir.join("virtual-repeat-1200x760.png")).unwrap();
+        }
         app.trench_editor=None;app.open_project_template_dialog();
         let (_,image)=capture(&mut app,size);image.save(dir.join(format!("template-{}x{}.png",size[0],size[1]))).unwrap();
         app.project_template_dialog=None;

@@ -48,6 +48,43 @@ fn export_summary(options: &Options) -> ExportSummary {
     }
     summary
 }
+#[derive(Debug, PartialEq, Eq)]
+enum ExportPlacement {
+    Excluded,
+    Empty(usize),
+    Trench { position: usize, label: Option<String> },
+}
+fn invalid_label_hint(choice:&template_project::Choice)->&'static str {
+    match choice.label.as_deref() {
+        None=>"Vul een proefsleuflabel in, bijvoorbeeld PS25B.",
+        Some(label) if label.trim().is_empty()=>"Vul een proefsleuflabel in, bijvoorbeeld PS25B.",
+        Some(label) if label.trim().chars().any(char::is_control)=>"Het proefsleuflabel bevat niet-ondersteunde tekens. Pas het aan.",
+        Some(_)=>"Het proefsleuflabel is te lang. Kort het in.",
+    }
+}
+fn placement_caption(ui:&mut egui::Ui,placement:&ExportPlacement,choice:&template_project::Choice) {
+    ui.horizontal_wrapped(|ui| {
+        let exported_label=match placement {
+            ExportPlacement::Excluded=>{ui.weak("Niet in export");None},
+            ExportPlacement::Empty(position)=>{
+                ui.small(format!("Exportvak {position} · leeg"))
+                    .on_hover_text("Dit vak blijft leeg in het sjabloon. Verwijder het bij Volgorde en meerdere sleuven aanpassen om de volgende sleuven te laten aansluiten.");
+                None
+            },
+            ExportPlacement::Trench{position,label:Some(label)}=>{
+                ui.small(format!("Exportvak {position} · {label}"));
+                Some(label.as_str())
+            },
+            ExportPlacement::Trench{position,label:None}=>{
+                ui.colored_label(DARK,format!("Exportvak {position} · {}",invalid_label_hint(choice)));
+                None
+            },
+        };
+        if !matches!(choice.source,Source::Empty(_)) && Some(choice.title.as_str())!=exported_label {
+            ui.weak(format!("Naam: {}",choice.title));
+        }
+    });
+}
 fn effective_map_label(options: &Options) -> &'static str {
     if options.server_mode==sleufbase_rust::template_server::Mode::Offline {
         "Offline · witte kaart, zonder luchtfoto"
@@ -165,6 +202,16 @@ impl Dialog {
             choice.profile=enabled;
         }
     }
+    fn placements(&self)->Vec<ExportPlacement> {
+        let (labels,_)=self.editor.preview(&self.options.choices);
+        let mut position=0;
+        self.options.choices.iter().zip(labels).map(|(choice,label)| {
+            if !choice.include{return ExportPlacement::Excluded;}
+            position+=1;
+            if matches!(choice.source,Source::Empty(_)){ExportPlacement::Empty(position)}
+            else{ExportPlacement::Trench{position,label}}
+        }).collect()
+    }
     /// In-memory readiness only: network paths must not be probed every frame.
     /// Availability and overwrite checks run on the explicit export action.
     fn readiness(&self)->Result<(),String>{
@@ -173,7 +220,9 @@ impl Dialog {
         let output=self.output.as_ref().ok_or("Kies eerst een nieuwe uitvoer-DXF.")?;
         if output.extension().is_none_or(|ext|!ext.to_string_lossy().eq_ignore_ascii_case("dxf")){return Err("De uitvoernaam moet eindigen op .dxf.".into());}
         if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
-        if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de proefsleuflabels van de geselecteerde vakken.".into());}
+        if let Some(&index)=self.editor.preview(&self.options.choices).1.first(){
+            return Err(format!("Regel {:02}: {} Of zet Meenemen uit.",index+1,invalid_label_hint(&self.options.choices[index])));
+        }
         if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
         Ok(())
     }
@@ -327,8 +376,9 @@ impl SleufBaseApp {
                             if ui.small_button("Uit").clicked(){dialog.profiles_for_included(false);}
                         });
                         if summary.trenches+summary.empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
-                        ui.small("Vink de gewenste sleuven aan. De volgorde geldt voor het sjabloon; een lege positie blijft behouden.");
+                        ui.small("Meenemen bepaalt wat wordt geëxporteerd. Uitgesloten sleuven krijgen geen vak; lege vakken blijven behouden.");
                         ui.collapsing("Volgorde en meerdere sleuven aanpassen",|ui| {
+                        ui.small("Klik op een regelnummer om regels te verplaatsen of samen aan te passen. Ctrl/Cmd selecteert losse regels, Shift een reeks. De oranje selectie verandert niet wat wordt geëxporteerd.");
                         let mut requested_sort=dialog.sort_mode;
                         ui.horizontal_wrapped(|ui|{
                             ui.label("Sorteren op");
@@ -394,12 +444,17 @@ impl SleufBaseApp {
                         }
                         });
                         ui.small("Pas het label direct aan, bijvoorbeeld PS 25-2 of PS25B. Open Details voor de bron, schaal of werkfoto's.");
-                        for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
+                        let mut placements=dialog.placements();
+                        for idx in 0..dialog.options.choices.len() {
                             ui.push_id(idx, |ui| {
                                 theme::card(10,10,8).stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
+                                    let mut placement_changed=false;
                                     ui.horizontal_wrapped(|ui| {
-                                        if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
-                                        if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
+                                        let slot=&mut dialog.options.choices[idx];
+                                        if ui.selectable_label(dialog.editor.selected[idx],format!("Regel {:02}",idx+1))
+                                            .on_hover_text("Selecteer voor verplaatsen of samen aanpassen. Ctrl/Cmd: losse regels; Shift: een reeks. Meenemen bepaalt wat wordt geëxporteerd.")
+                                            .clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
+                                        if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;placement_changed=true;}}
                                         if !matches!(slot.source, Source::Empty(_)) {
                                             let label = slot.label.get_or_insert_with(String::new);
                                             if ui.add(egui::TextEdit::singleline(label)
@@ -407,6 +462,7 @@ impl SleufBaseApp {
                                                 .desired_width(150.)
                                                 .char_limit(256)).changed() {
                                                 edited_label = Some(idx);
+                                                placement_changed=true;
                                             }
                                         }
                                         ui.weak(match slot.source{Source::Job(_)=>"KickTheMap",Source::Virtual(_)=>"Virtueel",Source::Raster(_)=>"GeoTIFF",Source::Empty(_)=>"Leeg vak"});
@@ -414,8 +470,12 @@ impl SleufBaseApp {
                                             ui.add_enabled(slot.include,egui::Checkbox::new(&mut slot.profile,"Dwarsprofiel"));
                                         }
                                     });
-                                    if matches!(slot.source,Source::Empty(_)){ui.small("Behoudt een lege positie in het sjabloon.");return;}
-                                    ui.small(&slot.title);
+                                    // Refresh after this row's controls so later positions and AUTO
+                                    // variants already reflect the changed inclusion in this frame.
+                                    if placement_changed{placements=dialog.placements();}
+                                    let slot=&mut dialog.options.choices[idx];
+                                    placement_caption(ui,&placements[idx],slot);
+                                    if matches!(slot.source,Source::Empty(_)){return;}
                                     if slot.include && slot.raster.is_none() && matches!(slot.source,Source::Job(_)|Source::Raster(_)) {
                                         ui.colored_label(DARK, "Kies bij Details een GeoTIFF, of zet Meenemen uit.");
                                     }
@@ -729,6 +789,13 @@ mod flow_audit_tests {
         let d=app.project_template_dialog.as_mut().unwrap();assert!(d.readiness().unwrap_err().contains("uitvoer-DXF"));
         d.output=Some(dir.path().join("wrong.txt"));assert!(d.readiness().unwrap_err().contains(".dxf"));
         d.output=Some(dir.path().join("correct.dxf"));assert!(d.readiness().is_ok());
+        for (label,hint) in [("   ".to_owned(),"Vul een proefsleuflabel"),("é".repeat(129),"te lang"),("PS12\u{7}".to_owned(),"niet-ondersteunde tekens")] {
+            d.options.choices[0].label=Some(label.clone());
+            let error=d.readiness().unwrap_err();
+            assert!(error.contains("Regel 01")&&error.contains(hint),"{error}");
+            assert_eq!(d.options.choices[0].label.as_deref(),Some(label.as_str()));
+        }
+        d.options.choices[0].label=Some("PS12".into());assert!(d.readiness().is_ok());
         d.output=Some(dir.path().join("new.dxf"));d.options.project="Behouden keuze".into();app.live_busy=true;
         let ctx=egui::Context::default();
         let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
@@ -825,6 +892,77 @@ mod flow_audit_tests {
         assert!(d.options.choices[2].reverse);
         assert_eq!(d.options.choices[2].manual_scale,Some(10_000));
         assert_eq!(d.options.choices[2].comments,"Bewaren");
+    }
+    #[test]
+    fn export_placement_preview_tracks_mixed_sources_empty_slots_and_auto_labels(){
+        use ExportPlacement::{Empty,Excluded,Trench};
+        let mut app=app();app.open_project_template_dialog();
+        let d=app.project_template_dialog.as_mut().unwrap();
+        let original=d.options.choices[0].clone();
+        d.options.choices=[
+            (Source::Job(0),false,"PS12AUTO"),
+            (Source::Virtual(0),true,"PS12AUTO"),
+            (Source::Empty(7),true,""),
+            (Source::Raster(0),true,"PS12AUTO"),
+            (Source::Empty(8),false,""),
+            (Source::Virtual(1),true,"Werkvak west"),
+        ].into_iter().map(|(source,include,label)| {
+            let mut choice=original.clone();choice.source=source;choice.include=include;
+            choice.label=Some(label.into());choice
+        }).collect();
+        d.editor=sleufbase_rust::template_editor::Editor::new(&mut d.options.choices,&[],&[]);
+        let before=format!("{:?}",d.options.choices);
+        assert_eq!(d.placements(),vec![Excluded,
+            Trench{position:1,label:Some("PS12B".into())},Empty(2),
+            Trench{position:3,label:Some("PS12C".into())},Excluded,
+            Trench{position:4,label:Some("Werkvak west".into())}]);
+        assert_eq!(format!("{:?}",d.options.choices),before,"preview must not replace stored AUTO labels or source details");
+        d.include_all(true);
+        d.editor.select(&d.options.choices,3,false,false);
+        d.editor.move_selected(&mut d.options.choices,-1);
+        d.editor.move_selected(&mut d.options.choices,-1);
+        assert_eq!(d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>(),
+            [Source::Job(0),Source::Raster(0),Source::Virtual(0),Source::Empty(7),Source::Empty(8),Source::Virtual(1)]);
+        assert_eq!(d.placements(),vec![Trench{position:1,label:Some("PS12B".into())},
+            Trench{position:2,label:Some("PS12C".into())},Trench{position:3,label:Some("PS12D".into())},
+            Empty(4),Excluded,Trench{position:5,label:Some("Werkvak west".into())}]);
+        d.options.choices[0].include=false;d.options.choices[0].label=Some("".into());
+        d.options.choices[2].label=Some("".into());
+        assert_eq!(d.placements(),vec![Excluded,Trench{position:1,label:Some("PS12B".into())},
+            Trench{position:2,label:None},Empty(3),Excluded,Trench{position:4,label:Some("Werkvak west".into())}]);
+        d.output=Some("preview.dxf".into());
+        assert!(d.readiness().unwrap_err().starts_with("Regel 03: Vul een proefsleuflabel"),
+            "validation must identify the editable row, not its compacted export position");
+    }
+    #[test]
+    fn export_placement_updates_in_the_same_frame_as_inclusion_without_changing_edit_selection(){
+        let mut app=app();
+        app.virtual_trenches.push(VirtualTrench::new("PS13".into(),Vertex{x:155020.,y:463000.,z:Some(2.)},Vertex{x:155030.,y:463000.,z:Some(2.)},0.6).unwrap());
+        app.open_project_template_dialog();
+        let d=app.project_template_dialog.as_mut().unwrap();
+        for choice in &mut d.options.choices{choice.label=Some("PS12AUTO".into());}
+        let selected=d.editor.selected.clone();
+        let sources=d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>();
+        let ctx=egui::Context::default();
+        let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1500.,930.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
+        for _ in 0..4{frame(&mut app,vec![]);}
+        let out=frame(&mut app,vec![]);
+        let pos=out.shapes.iter().find_map(|shape|match &shape.shape{
+            egui::Shape::Text(text) if text.galley.text()=="Meenemen"=>Some(text.pos+text.galley.rect.size()/2.),_=>None,
+        }).expect("the first inclusion checkbox remains visible");
+        frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
+        let out=frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
+        let labels=out.shapes.iter().filter_map(|shape|match &shape.shape{
+            egui::Shape::Text(text)=>Some(text.galley.text().to_owned()),_=>None,
+        }).collect::<Vec<_>>();
+        assert!(labels.iter().any(|text|text=="Niet in export"));
+        assert!(labels.iter().any(|text|text=="Exportvak 1 · PS12B"));
+        assert!(!labels.iter().any(|text|text=="Exportvak 2 · PS12C"));
+        let d=app.project_template_dialog.as_ref().unwrap();
+        assert!(!d.options.choices[0].include);assert!(d.options.choices[1].include);
+        assert_eq!(d.editor.selected,selected,"Meenemen must not change the orange edit selection");
+        assert_eq!(d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>(),sources);
+        assert!(d.options.choices.iter().all(|choice|choice.label.as_deref()==Some("PS12AUTO")));
     }
     #[test]
     fn preflight_checks_only_included_sources_and_enabled_virtual_profiles(){

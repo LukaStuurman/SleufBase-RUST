@@ -12,9 +12,8 @@ impl SleufBaseApp {
         self.shell.login_focus = true;
         #[cfg(not(test))]
         {
-            if !already_open {
-                self.shell.login_remember |= stored::account_exists() || stored::exists();
-            }
+            // The initial choice is set by the shell. Reopening the form must
+            // not override an explicit choice to sign in for this session only.
             if self.shell.login_email.is_empty() {
                 if let Ok(Some(account)) = stored::load_account() {
                     // Show only the email, never the decrypted password.
@@ -24,12 +23,25 @@ impl SleufBaseApp {
         }
     }
 
+    fn kickthemap_account_owner(&self)->Option<&sleufbase_rust::jobs_cache::SnapshotOwner> {
+        if self.browser_ui.capturing.is_some()||(self.shell.login_is_native&&self.live_rx.is_some()) {
+            return None;
+        }
+        if let Some(session)=&self.live_session {return Some(session.snapshot_owner());}
+        if !self.live_busy {return None;}
+        if let Some(refresh)=&self.live_refresh {
+            return (self.live_jobs_owner.as_ref()==Some(&refresh.owner)).then_some(&refresh.owner);
+        }
+        if self.live_download_rx.is_some() {self.live_jobs_owner.as_ref()} else {None}
+    }
+
     pub(super) fn show_kickthemap_login(&mut self, ctx: &egui::Context) {
         if !self.shell.login_open { return; }
         let busy = self.live_operation_busy();
         let connecting = self.browser_ui.capturing.is_some();
         let signing_in=connecting||(self.shell.login_is_native&&self.live_rx.is_some());
-        let connected = self.live_session.is_some();
+        let account_owner=self.kickthemap_account_owner().cloned();
+        let connected=account_owner.is_some();
         #[cfg(not(test))]
         let saved = stored::account_exists();
         #[cfg(test)]
@@ -53,9 +65,10 @@ impl SleufBaseApp {
                             if connected {
                                 ui.heading("Je bent verbonden");
                                 ui.label("Open je jobs om proefsleuven en bestanden op te halen.");
-                                if !self.shell.login_email.is_empty() {
-                                    ui.small(&self.shell.login_email);
-                                }
+                                if let Some(email)=account_owner.as_ref().and_then(|owner|owner.email()) {
+                                    ui.small(email);
+                                }else{ui.small("Aangemeld via de KickTheMap-pagina");}
+                                ui.small("Uitloggen verwijdert ook de bewaarde aanmelding op dit apparaat.");
                             } else {
                                 ui.heading("Je KickTheMap-account");
                                 ui.label("Meld je aan om je jobs in SleufBase te gebruiken.");
@@ -84,9 +97,14 @@ impl SleufBaseApp {
                                 ui.add_space(8.);
                                 ui.add_enabled(!busy,egui::Checkbox::new(&mut self.shell.login_remember,
                                     "Inloggegevens onthouden en automatisch aanmelden"));
-                                ui.small("Je aanmelding blijft versleuteld op dit apparaat. Uitloggen zet automatisch aanmelden uit en verwijdert de bewaarde aanmelding.");
+                                ui.small(if self.shell.login_remember {
+                                    "Na een geslaagde aanmelding wordt deze versleuteld bewaard. SleufBase probeert je bij de volgende start automatisch aan te melden."
+                                }else{
+                                    "Na een geslaagde aanmelding gebruik je KickTheMap alleen voor deze sessie. Eerder bewaarde inloggegevens worden dan verwijderd."
+                                });
+                                ui.small("Uitloggen zet automatisch aanmelden uit en verwijdert de bewaarde aanmelding.");
                                 if saved && self.shell.login_password.is_empty() {
-                                    ui.small("Vul alleen een nieuw wachtwoord in als je het bewaarde wachtwoord wilt vervangen.");
+                                    ui.small("Een bewaard wachtwoord werkt alleen met hetzelfde e-mailadres. Vul bij een ander account het bijbehorende wachtwoord in.");
                                 }
                             }
                         });
@@ -95,9 +113,11 @@ impl SleufBaseApp {
                             ui.horizontal_wrapped(|ui| {
                                 ui.spinner();
                                 ui.label(if self.live_refresh.is_some() { "Je jobs worden vernieuwd…" }
+                                    else if self.live_download_rx.is_some() { "Je KickTheMap-bestanden worden opgehaald…" }
                                     else if self.browser_ui.restoring_login { "Je bewaarde aanmelding herstellen…" }
                                     else if connecting { "Rond je aanmelding af in SleufBase…" }
-                                    else { "Aanmelden en jobs ophalen…" });
+                                    else if signing_in { "Aanmelden en jobs ophalen…" }
+                                    else { "KickTheMap is bezig…" });
                             });
                         }
                         if !self.browser_ui.status.is_empty() {
@@ -529,5 +549,118 @@ mod edited_login_tests {
         click_login(&mut app,&ctx);
         assert_eq!(app.browser_ui.launch_requests,1);
         assert!(app.live_rx.is_none()&&!app.shell.login_is_native);
+    }
+}
+
+#[cfg(test)]
+mod account_options_ui_tests {
+    use super::*;
+
+    fn session()->KickTheMapLiveClient {
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{
+            name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),
+            path:"/".into(),secure:true,
+        };
+        KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap()
+    }
+
+    fn frame(app:&mut SleufBaseApp,ctx:&egui::Context,size:[f32;2],events:Vec<egui::Event>)->egui::FullOutput {
+        ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(size[0],size[1]))),events,..Default::default()},|ctx|app.show_kickthemap_login(ctx))
+    }
+
+    fn settled(app:&mut SleufBaseApp,ctx:&egui::Context,size:[f32;2])->egui::FullOutput {
+        for _ in 0..4{frame(app,ctx,size,vec![]);}
+        frame(app,ctx,size,vec![])
+    }
+
+    fn contains(output:&egui::FullOutput,text:&str)->bool {
+        output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(value) if value.galley.text().contains(text)))
+    }
+
+    fn click(app:&mut SleufBaseApp,ctx:&egui::Context,size:[f32;2],label:&str)->egui::FullOutput {
+        let output=frame(app,ctx,size,vec![]);
+        let position=output.shapes.iter().find_map(|shape|match &shape.shape{
+            egui::Shape::Text(value) if value.galley.text()==label=>{
+                let rect=value.galley.rect.translate(value.pos.to_vec2());
+                assert!(shape.clip_rect.contains_rect(rect),"{label} must stay visible");Some(rect.center())
+            },_=>None,
+        }).unwrap_or_else(||panic!("Missing action {label}"));
+        for pressed in [true,false] {
+            frame(app,ctx,size,vec![egui::Event::PointerMoved(position),egui::Event::PointerButton{
+                pos:position,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+            }]);
+        }
+        frame(app,ctx,size,vec![])
+    }
+
+    #[test]
+    fn account_card_remains_connected_while_owned_jobs_run_without_an_unverified_email() {
+        for size in [[680.,420.],[1200.,760.]] {
+        for operation in ["connected","refresh","download"] {
+            let mut app=SleufBaseApp::default();let session=session();
+            let owner=session.snapshot_owner().clone();app.live_jobs_owner=Some(owner.clone());
+            app.shell.login_email="not-verified@example.test".into();
+            let (refresh_tx,refresh_rx)=mpsc::channel();
+            let (download_tx,download_rx)=mpsc::channel();
+            match operation {
+                "refresh"=>{app.live_refresh=Some(LiveJobsRefresh{owner,events:refresh_rx});app.live_busy=true;},
+                "download"=>{app.live_download_rx=Some(download_rx);app.live_busy=true;},
+                _=>app.live_session=Some(session),
+            }
+            app.open_kickthemap_login();let ctx=egui::Context::default();theme::install(&ctx);
+            let output=settled(&mut app,&ctx,size);
+            assert!(contains(&output,"Je bent verbonden"),"{operation}");
+            assert!(contains(&output,"Aangemeld via de KickTheMap-pagina"));
+            assert!(!contains(&output,"not-verified@example.test")&&!contains(&output,"E-mailadres"));
+            if operation!="connected" {
+                assert!(contains(&output,if operation=="refresh"{"Je jobs worden vernieuwd…"}else{"Je KickTheMap-bestanden worden opgehaald…"}));
+                click(&mut app,&ctx,size,"Open jobs");
+                assert!(app.shell.login_open&&!app.browser_ui.open,"busy account action must stay disabled");
+                click(&mut app,&ctx,size,"Sluiten");
+                assert!(!app.shell.login_open&&app.live_operation_busy(),"closing the account window must not cancel its worker");
+            }
+            drop((refresh_tx,download_tx));
+        }
+        }
+    }
+
+    #[test]
+    fn account_card_needs_a_verified_owner_and_never_masks_a_replacement_login() {
+        for operation in ["native-login","browser-login","different-refresh-owner","unowned-download"] {
+            let mut app=SleufBaseApp::default();let live_session=session();
+            let owner=live_session.snapshot_owner().clone();app.live_jobs_owner=Some(owner);
+            let (login_tx,login_rx)=mpsc::channel();let (browser_tx,browser_rx)=mpsc::channel();
+            let (refresh_tx,refresh_rx)=mpsc::channel();let (download_tx,download_rx)=mpsc::channel();
+            app.live_busy=true;
+            match operation {
+                "native-login"=>{app.live_session=Some(live_session);app.live_rx=Some(login_rx);app.shell.login_is_native=true;},
+                "browser-login"=>{app.live_session=Some(live_session);app.browser_ui.capturing=Some(browser_rx);},
+                "different-refresh-owner"=>{let other=session();app.live_refresh=Some(LiveJobsRefresh{owner:other.snapshot_owner().clone(),events:refresh_rx});},
+                _=>{app.live_jobs_owner=None;app.live_download_rx=Some(download_rx);},
+            }
+            app.open_kickthemap_login();let ctx=egui::Context::default();theme::install(&ctx);
+            let output=settled(&mut app,&ctx,[1200.,760.]);
+            assert!(contains(&output,"Je KickTheMap-account"),"{operation}");
+            assert!(!contains(&output,"Je bent verbonden"),"{operation}");
+            drop((login_tx,browser_tx,refresh_tx,download_tx));
+        }
+    }
+
+    #[test]
+    fn remember_explanation_follows_the_choice_and_reopening_keeps_session_only() {
+        let mut app=SleufBaseApp::default();let ctx=egui::Context::default();theme::install(&ctx);
+        assert!(app.shell.login_remember,"keep the existing initial automatic-login choice");
+        app.open_kickthemap_login();let size=[1200.,760.];let output=settled(&mut app,&ctx,size);
+        assert!(contains(&output,"probeert je bij de volgende start automatisch aan te melden"));
+        let output=click(&mut app,&ctx,size,"Inloggegevens onthouden en automatisch aanmelden");
+        assert!(!app.shell.login_remember);
+        assert!(contains(&output,"alleen voor deze sessie"));
+        assert!(!contains(&output,"probeert je bij de volgende start automatisch aan te melden"));
+        click(&mut app,&ctx,size,"Sluiten");app.open_kickthemap_login();
+        let output=settled(&mut app,&ctx,size);
+        assert!(!app.shell.login_remember&&contains(&output,"alleen voor deze sessie"));
+        let output=click(&mut app,&ctx,size,"Inloggegevens onthouden en automatisch aanmelden");
+        assert!(app.shell.login_remember&&contains(&output,"probeert je bij de volgende start automatisch aan te melden"));
+        assert!(app.live_rx.is_none()&&app.live_refresh.is_none()&&app.browser_ui.capturing.is_none());
     }
 }

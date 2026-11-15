@@ -1,7 +1,45 @@
 //! Responsive overview and cable entry for the staged trench editor.
 use super::*;
 
+#[cfg(test)]
+#[path = "ui_trench_workspace_tests.rs"]
+mod tests;
+
 impl Editor {
+    pub(super) fn show_entry_actions(&mut self, ui: &mut egui::Ui) {
+        let can_store = self.prepared_entry.is_none() || self.entry_changed();
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(can_store, egui::Button::new(if self.selected.is_some() {
+                "Wijzig kabel/leiding"
+            } else {
+                "Kabel/leiding toevoegen"
+            })).on_hover_text("Bewaar deze invoer in de proefsleuf. Met Opslaan in project bewaar je daarna de hele proefsleuf.").clicked() {
+                match self.add_or_replace() {
+                    Ok(()) => {
+                        self.error.clear();
+                        self.notice = "Kabel/leiding toegevoegd aan het concept. Voeg er nog een toe of klik op Opslaan in project.".into();
+                    }
+                    Err(error) => self.error = error,
+                }
+            }
+            if ui.add_enabled(can_store, egui::Button::new(if self.selected.is_some() {
+                "Bewaren en herhalen"
+            } else {
+                "Toevoegen en herhalen"
+            })).on_hover_text("Bewaar deze kabel of leiding en zet dezelfde eigenschappen klaar voor de volgende. Kies daarna een nieuwe positie.").clicked() {
+                if let Err(error) = self.add_and_repeat() { self.error = error; }
+            }
+            let can_reset = self.entry_changed() || self.prepared_entry.is_some();
+            if ui.add_enabled(can_reset, egui::Button::new(if self.selected.is_some() {
+                "Wijzigingen herstellen"
+            } else {
+                "Invoer wissen"
+            })).on_hover_text("Herstel alleen de huidige invoer. Eerder toegevoegde kabels en leidingen blijven in het concept.").clicked() {
+                self.reset_entry();
+            }
+        });
+    }
+
     pub(super) fn show_objects_workspace(
         &mut self,
         ui: &mut egui::Ui,
@@ -111,6 +149,10 @@ impl Editor {
                     let detail = format!("{along:.2} m vanaf begin · diepte {}", depth.map(|d| format!("{d:.2} m")).unwrap_or_else(|| "onbekend".into())).replace('.', ",");
                     ui.push_id(index, |ui| {
                         ui.horizontal(|ui| {
+                            let rgb = sleufbase_rust::virtual_raster::display_rgb(&object.metadata)
+                                .unwrap_or([37, 99, 235]);
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(10., 20.), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4., Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.small_button("×").on_hover_text("Verwijder deze kabel/leiding uit het concept").clicked() {
                                     remove = Some(index);

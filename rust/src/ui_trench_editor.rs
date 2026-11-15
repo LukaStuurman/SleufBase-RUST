@@ -121,6 +121,7 @@ impl ObjectForm {
 }
 
 pub(super) struct Editor {
+    entry_settings:Option<std::sync::Arc<MigratedSettings>>,
     ahn_job:Option<ahn_fill::Job>,
     pub index:usize,
     original:VirtualTrench,
@@ -157,6 +158,7 @@ enum Action {Save,Copy,Remove}
 impl Editor {
     fn new(index:usize,source:&VirtualTrench)->Self {
         Self{
+            entry_settings:None,
             ahn_job:None,
             index,original:source.clone(),draft:source.clone(),
             label:source.label.clone(),start:source.start,
@@ -237,6 +239,30 @@ impl Editor {
             self.entry_started||self.object.has_pending_entry()
         }
     }
+    fn add_and_repeat(&mut self)->Result<(),String> {
+        // An unchanged selected measurement must keep its original metadata.
+        // A new entry is explicit, but an unused repeat template is not a cable.
+        if self.selected.is_none() {
+            if self.prepared_entry.is_some()&&!self.entry_changed(){
+                return Err("Kies eerst een positie voor de volgende kabel of leiding".into());
+            }
+            self.add_or_replace()?;
+        }
+        self.prepare_similar_entry()
+    }
+    fn reset_entry(&mut self) {
+        self.object=self.selected.and_then(|index|self.draft.objects.get(index))
+            .map(|object|ObjectForm::from_object(&self.draft,object)).unwrap_or_default();
+        self.prepared_entry=None;
+        self.entry_started=false;
+        self.section_drag=None;
+        self.error.clear();
+        self.notice=if self.selected.is_some(){
+            "De invoer van deze kabel of leiding is hersteld. Eerdere conceptwijzigingen blijven bewaard."
+        }else{
+            "Invoer gewist. Klik in de doorsnede voor een nieuwe kabel of leiding."
+        }.into();
+    }
     fn prepare_similar_entry(&mut self)->Result<(),String> {
         let template=if self.selected.is_some()||self.entry_changed(){
             self.object.for_new_entry()
@@ -260,6 +286,7 @@ impl Editor {
         self.object=ObjectForm::from_object(&self.draft,&self.draft.objects[index]);
         self.entry_started=false;
         self.error.clear();
+        self.notice.clear();
         true
     }
     fn sync_axis(&mut self)->Result<(),String>{
@@ -377,13 +404,24 @@ impl SleufBaseApp {
             return;
         }
         if let Some(t)=self.virtual_trenches.get(index) {
-            self.trench_editor=Some(Editor::new(index,t));
+            match self.project_export_settings() {
+                Ok(settings)=>{
+                    let mut editor=Editor::new(index,t);
+                    editor.entry_settings=Some(std::sync::Arc::new(settings));
+                    self.trench_editor=Some(editor);
+                },
+                Err(error)=>self.message=format!("Controleer de projectinstellingen: {error}"),
+            }
         }
     }
     pub(super) fn show_virtual_editor(&mut self,ctx:&egui::Context) {
         let Some(mut editor)=self.trench_editor.take() else{return};
         if editor.index>=self.virtual_trenches.len() {return;}
         editor.poll_ahn();
+        // Resolve project (including legacy) choices once when opening; sharing
+        // this snapshot avoids cloning every rule during each UI frame.
+        let entry_settings=editor.entry_settings.clone();
+        let settings=entry_settings.as_deref().unwrap_or(&self.migrated_settings);
         if editor.picking_object {
             let mut cancel=false;
             egui::Window::new("Kabel/leiding op de kaart plaatsen").collapsible(false).resizable(false)
@@ -397,7 +435,7 @@ impl SleufBaseApp {
         let mut open=true;
         let mut action=None;
         egui::Window::new("Proefsleuf bewerken").id(egui::Id::new("virtual-trench-editor"))
-            .open(&mut open).default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
+            .open(&mut open).collapsible(false).default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
             .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
             .constrain_to(ctx.screen_rect().shrink(12.))
             .resizable(true).show(ctx,|ui|{
@@ -405,6 +443,7 @@ impl SleufBaseApp {
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                 theme::card(10,12,8).show(ui,|ui|{
+                    ui.set_min_width(ui.available_width());
                     ui.horizontal_wrapped(|ui|{
                         ui.heading(&editor.label);
                         ui.weak(format!("{:.2} m lang  ·  {:.2} m breed  ·  {} kabels / leidingen",
@@ -428,7 +467,7 @@ impl SleufBaseApp {
                     ui.weak("Plaatsen en bewerken · wijzigingen blijven in concept tot je opslaat");
                 });
                 let scroll=egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
-                    .max_height((ui.available_height()-110.).max(60.)).auto_shrink([false,false]);
+                    .max_height((ui.available_height()-if editor.objects_tab{160.}else{124.}).max(40.)).auto_shrink([false,false]);
                 let scroll=if reset_scroll{scroll.vertical_scroll_offset(0.)}else{scroll};
                 scroll.show(ui,|ui|{
                     if !editor.objects_tab||editor.ahn_job.is_some(){editor.ahn_controls(ui,ctx);}
@@ -574,7 +613,7 @@ impl SleufBaseApp {
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
                     }else{
-                    pick_requested=editor.show_objects_workspace(ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
+                    pick_requested=editor.show_objects_workspace(ui,&settings.object_rules,&settings.kickthemap_material_choices);
                     ui.collapsing("Excel: meerdere meetobjecten importeren / kopiëren",|ui|{
                         ui.small("Plak tab-gescheiden cellen uit Excel: Rol, Object, Bron, Kettingmaat, Dwarsafstand, optionele Z en 3 attributen. Komma als decimaalteken is toegestaan.");
                         ui.add(egui::TextEdit::multiline(&mut editor.paste)
@@ -609,15 +648,15 @@ impl SleufBaseApp {
                     });
                 });
                     ui.separator();
-                    if !editor.error.is_empty() {
-                        ui.colored_label(DARK,&editor.error);
+                    if !editor.error.is_empty()||!editor.notice.is_empty() {
+                        egui::ScrollArea::vertical().id_salt("virtual-editor-feedback").max_height(44.).show(ui,|ui|{
+                            if !editor.error.is_empty(){ui.colored_label(DARK,&editor.error);}
+                            else{ui.small(&editor.notice);}
+                        });
                     }
-                    if !editor.notice.is_empty() {ui.small(&editor.notice);}
                     ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
+                    if editor.objects_tab{editor.show_entry_actions(ui);}
                     ui.horizontal_wrapped(|ui|{
-                        if ui.add_enabled(editor.objects_tab,egui::Button::new(if editor.selected.is_some(){"Wijzig kabel/leiding"}else{"Kabel/leiding toevoegen"})).clicked(){
-                            match editor.add_or_replace(){Ok(())=>{editor.error.clear();editor.notice="Kabel/leiding bewaard in dit concept. Voeg er nog een toe of sla de proefsleuf op.".into();},Err(e)=>editor.error=e}
-                        }
                         if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
                         if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
                     });
@@ -653,8 +692,9 @@ impl SleufBaseApp {
                             self.trench_markers.clear();
                             self.dirty=true;
                             self.message="Handmatige kopie gemaakt; de originele MarXact-meting is behouden".into();
-                            self.trench_editor=Some(Editor::new(self.virtual_trenches.len()-1,
-                                self.virtual_trenches.last().unwrap()));
+                            let mut next=Editor::new(self.virtual_trenches.len()-1,self.virtual_trenches.last().unwrap());
+                            next.entry_settings=editor.entry_settings.clone();
+                            self.trench_editor=Some(next);
                             return;
                         },
                         Err(e)=>editor.error=e,
