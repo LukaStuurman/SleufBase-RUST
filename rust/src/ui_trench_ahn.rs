@@ -29,7 +29,9 @@ impl Editor {
     }
     pub(crate) fn receive_map_ahn(&mut self,axis:[Vertex;2],metadata:[serde_json::Value;2],heights:[Option<Option<f64>>;2])->Result<bool,String>{
         if axis!=[self.start,self.end]||metadata!=[self.draft.start_metadata.clone(),self.draft.end_metadata.clone()]{return Ok(false);}
-        let mut candidate=self.build()?;
+        // A late map response may arrive while an object is selected. Its
+        // index and pending form must still refer to the same draft object.
+        let mut candidate=self.build_preserving_order()?;
         for (target,height) in [MapPoint::Start,MapPoint::End].into_iter().zip(heights){if let Some(height)=height{virtual_map::apply_surface_height(&mut candidate,target,height)?;}}
         edit::check(&candidate)?;self.start=candidate.start;self.end=candidate.end;self.draft=candidate;
         self.notice="AHN-hoogtes ontvangen. Klik op Opslaan in project om het concept te bewaren.".into();Ok(true)
@@ -82,7 +84,7 @@ impl Editor {
             if job.axis!=[self.start,self.end]||job.metadata!=[self.draft.start_metadata.clone(),self.draft.end_metadata.clone()] {
                 return Err("De eindpunten zijn gewijzigd; vraag de AHN-hoogtes opnieuw op".into());
             }
-            let mut candidate=self.build()?;
+            let mut candidate=self.build_preserving_order()?;
             for (target,height) in [MapPoint::Start,MapPoint::End].into_iter().zip(heights){
                 if let Some(height)=height {virtual_map::apply_surface_height(&mut candidate,target,height)?;}
             }
@@ -123,6 +125,54 @@ mod tests {
         pending(&mut editor).send(Ok([Some(Some(4.)),Some(Some(5.))])).unwrap();editor.poll_ahn();
         assert_eq!(editor.start.z,Some(4.));assert_eq!(editor.end.z,Some(5.));assert_eq!(editor.draft.objects[0].position.z,Some(3.));
         assert_eq!(serde_json::to_value(&editor.original).unwrap(),original);
+    }
+    #[test]
+    fn late_ahn_keeps_unsorted_selection_and_pending_depth_edits(){
+        for local_worker in [false,true] {
+            let mut source=draft().draft;
+            source.objects[0].position.x=155008.;
+            source.objects[0].metadata["point_id"]=serde_json::json!("original-8");
+            let mut editor=Editor::new(0,&source);
+            let original=serde_json::to_vec(&editor.original).unwrap();
+            editor.object=ObjectForm{name:"Nieuwe waterleiding".into(),source:"water".into(),
+                role:"leiding".into(),chainage:2.,use_depth:true,depth:0.6,..Default::default()};
+            editor.add_or_replace().unwrap();
+            // Open drafts retain their order; the earlier new cable is last.
+            assert_eq!(editor.draft.objects[0].position.x,155008.);
+            assert_eq!(editor.draft.objects[1].position.x,155002.);
+            assert!(editor.select_object(0));
+            editor.object.name="Aangepaste LS".into();
+            editor.object.chainage=7.;editor.object.depth=1.25;
+            let pending_form=editor.object.clone();
+            let heights=[Some(Some(5.)),Some(Some(6.))];
+            if local_worker {
+                pending(&mut editor).send(Ok(heights)).unwrap();
+                editor.poll_ahn();
+                assert!(editor.ahn_job.is_none());assert!(editor.error.is_empty());
+            } else {
+                let axis=[editor.start,editor.end];
+                let metadata=[editor.draft.start_metadata.clone(),editor.draft.end_metadata.clone()];
+                assert!(editor.receive_map_ahn(axis,metadata,heights).unwrap());
+            }
+            assert_eq!(editor.selected,Some(0));
+            assert!(editor.object==pending_form,"late AHN must retain the active form");
+            assert_eq!(editor.draft.objects[0].metadata["point_id"],"original-8");
+            assert_eq!(editor.draft.objects[0].position.x,155008.);
+            assert_eq!(editor.draft.objects[1].position.x,155002.);
+            let saved=editor.completed_draft().unwrap();
+            assert_eq!(saved.objects.len(),2);
+            assert_eq!(saved.objects[0].source_name,"water");
+            assert_eq!(saved.objects[0].position.x,155002.);
+            assert!((saved.objects[0].position.z.unwrap()-4.4).abs()<1e-10);
+            assert!(saved.objects[0].metadata.get("point_id").is_none());
+            assert_eq!(saved.objects[1].object_name,"Aangepaste LS");
+            assert_eq!(saved.objects[1].position.x,155007.);
+            assert_eq!(saved.objects[1].position.z,Some(3.75));
+            assert_eq!(saved.objects[1].metadata["point_id"],"original-8");
+            assert_eq!(saved.objects[1].metadata["sleufbase_depth_meters"],1.25);
+            assert_eq!(saved.objects[1].metadata["surface_z"],5.);
+            assert_eq!(serde_json::to_vec(&editor.original).unwrap(),original);
+        }
     }
     #[test]
     fn cancelled_stale_failed_or_disconnected_work_keeps_draft(){

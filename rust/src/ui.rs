@@ -127,6 +127,29 @@ enum ProjectAction { New, ClearLayers, Open(PathBuf), OpenInput(PathBuf), Restor
 
 struct DxfSelection {overlay:usize,feature:usize,details:Vec<(String,String)>}
 
+struct LiveJobsRefreshResult {
+    session:KickTheMapLiveClient,
+    jobs:Result<Vec<Job>,String>,
+}
+
+struct LiveJobsRefresh {
+    owner:sleufbase_rust::jobs_cache::SnapshotOwner,
+    events:Receiver<LiveJobsRefreshResult>,
+}
+
+fn kickthemap_login_required(error:&str)->bool {
+    error==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED
+        ||error.to_ascii_lowercase().contains("sessie verlopen")
+}
+
+fn live_refresh_fallback_error(original:String,fallback:String)->String {
+    // A failed browser fallback must not turn an expired session into a
+    // seemingly temporary connection error.
+    if kickthemap_login_required(&original) {original}
+    else if kickthemap_login_required(&fallback) {fallback}
+    else {format!("{original}; browser: {fallback}")}
+}
+
 pub struct SleufBaseApp {
     maaiveld_ui:maaiveld_ui::State,
     shell:shell_ui::State,
@@ -193,6 +216,7 @@ pub struct SleufBaseApp {
     live_jobs:Vec<Job>,
     live_jobs_owner:Option<sleufbase_rust::jobs_cache::SnapshotOwner>,
     live_rx:Option<Receiver<Result<(KickTheMapLiveClient,Vec<Job>),String>>>,
+    live_refresh:Option<LiveJobsRefresh>,
     live_download_rx:Option<Receiver<(KickTheMapLiveClient,Result<(RemoteFileKind,PathBuf),String>)>>,
     live_busy:bool,
     jobs_query:String,
@@ -298,6 +322,7 @@ impl Default for SleufBaseApp {
             live_jobs:Vec::new(),
             live_jobs_owner:None,
             live_rx:None,
+            live_refresh:None,
             live_download_rx:None,
             live_busy:false,
             jobs_query:String::new(),
@@ -853,23 +878,86 @@ impl SleufBaseApp {
 
     fn refresh_live_jobs(&mut self) {
         if self.live_operation_busy()||self.browser_ui.batch_mode {return;}
+        if self.live_session.as_ref().is_some_and(|session|
+            self.live_jobs_owner.as_ref()!=Some(session.snapshot_owner())) {
+            self.live_session=None;
+            self.browser_ui.status="De joblijst hoort niet bij de actieve aanmelding. Meld je opnieuw aan.".into();
+            self.message=self.browser_ui.status.clone();
+            self.open_kickthemap_login();
+            return;
+        }
         let Some(mut session)=self.live_session.take() else {
             self.message="Log eerst in bij KickTheMap".into();return;
         };
         session.observe_existing_jobs(&self.live_jobs);
         let (tx,rx)=mpsc::channel();
-        self.live_rx=Some(rx);
+        self.live_refresh=Some(LiveJobsRefresh{owner:session.snapshot_owner().clone(),events:rx});
         self.live_busy=true;
-        self.message="KickTheMap jobs vernieuwen...".into();
+        self.browser_ui.status="Jobs vernieuwen… De huidige joblijst blijft zichtbaar.".into();
+        self.message=self.browser_ui.status.clone();
         let browser=self.browser_ui.browser.as_ref().map(|browser|browser.channel());
         std::thread::spawn(move || {
             let result=session.fetch_jobs().or_else(|original|{
                 if let Some(browser)=browser {
                     session.fetch_jobs_from_browser(||browser.browser_job_payload())
+                        .map_err(|fallback|live_refresh_fallback_error(original,fallback))
                 }else{Err(original)}
             });
-            let _=tx.send(result.map(|jobs|(session,jobs)));
+            // Keep the authenticated client and its previous download identities
+            // available when refreshing fails without invalidating the login.
+            let _=tx.send(LiveJobsRefreshResult{session,jobs:result});
         });
+    }
+
+    fn poll_live_jobs_refresh(&mut self) {
+        let event=self.live_refresh.as_ref().map(|refresh|refresh.events.try_recv());
+        match event {
+            Some(Ok(result))=>{
+                let refresh=self.live_refresh.take().unwrap();
+                if self.live_jobs_owner.as_ref()!=Some(&refresh.owner)
+                    ||result.session.snapshot_owner()!=&refresh.owner
+                    ||self.live_session.is_some()||self.live_rx.is_some()||self.live_download_rx.is_some()
+                    ||self.browser_ui.capturing.is_some()||self.browser_ui.is_opening_job() {
+                    // An earlier account or signed-out session may never install
+                    // a late job list, restore a login or overwrite a new session.
+                    return;
+                }
+                self.live_busy=false;
+                match result.jobs {
+                    Ok(jobs)=>{
+                        self.live_session=Some(result.session);
+                        self.live_jobs=jobs;
+                        if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() {self.dirty=true;}
+                        self.message=format!("{} KickTheMap jobs vernieuwd",self.live_jobs.len());
+                        self.browser_ui.status=self.message.clone();
+                        self.save_live_cache();
+                    }
+                    Err(error) if kickthemap_login_required(&error)=>{
+                        self.browser_ui.status=error.clone();
+                        self.message=format!("KickTheMap: {error}");
+                        // A browser snapshot cannot prove that a separately
+                        // saved native account belongs to this expired session.
+                        self.open_kickthemap_login();
+                    }
+                    Err(error)=>{
+                        self.live_session=Some(result.session);
+                        self.browser_ui.status=format!("Jobs vernieuwen mislukt: {error}. Je aanmelding en vorige joblijst zijn behouden. Probeer Vernieuwen opnieuw.");
+                        self.message=self.browser_ui.status.clone();
+                    }
+                }
+            }
+            Some(Err(TryRecvError::Disconnected))=>{
+                let refresh=self.live_refresh.take().unwrap();
+                if self.live_jobs_owner.as_ref()!=Some(&refresh.owner)||self.live_session.is_some()
+                    ||self.live_rx.is_some()||self.live_download_rx.is_some()
+                    ||self.browser_ui.capturing.is_some()||self.browser_ui.is_opening_job(){return;}
+                self.live_busy=false;
+                self.browser_ui.status="Jobs vernieuwen is onderbroken. De vorige joblijst is behouden; meld je opnieuw aan.".into();
+                self.message=self.browser_ui.status.clone();
+                self.open_kickthemap_login();
+            }
+            _=>{}
+        }
     }
 
 
@@ -981,6 +1069,7 @@ impl SleufBaseApp {
     }
 
     fn poll_live_jobs(&mut self) {
+        self.poll_live_jobs_refresh();
         let event=self.live_rx.as_ref().map(|rx|rx.try_recv());
         match event {
             Some(Ok(Ok((session,jobs))))=>{

@@ -67,3 +67,31 @@ fn native_project_roundtrips_saved_template_preferences_and_old_v3_files() {
     let recovered = project::read_project(&old).unwrap();
     assert!(recovered.template_preferences.is_none());
 }
+
+#[test]
+fn windows_comments_remain_exportable_and_roundtrip_through_project_storage() {
+    use sleufbase_rust::{template_project, virtual_trench::VirtualTrench, Vertex};
+    let mut project=NativeProject::default();
+    project.virtual_trenches.push(VirtualTrench::new("PS12".into(),
+        Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
+    let mut options=Options{choices:template_project::suggest(&[],&[],&project.virtual_trenches),..Default::default()};
+    let original="Eerste regel\r\nWater\t63 mm\rVolgende regel\u{b}Nog een regel\u{c}Nieuwe sectie\u{1c}A\u{1d}B\u{1e}C";
+    options.choices[0].comments=original.into();
+    project.template_preferences=Some(TemplatePreferences::capture(&options,&[],&[],&project.virtual_trenches));
+    project.template_preferences.as_ref().unwrap().validate().unwrap();
+    let dir=tempfile::tempdir().unwrap();let path=dir.path().join("windows-comments.json");
+    project::save_project_new(&path,&project).unwrap();
+    let recovered=project::read_project(&path).unwrap();
+    let restored=recovered.template_preferences.as_ref().unwrap().restore(&[],&[],&recovered.virtual_trenches);
+    assert_eq!(restored.choices[0].comments,original,"saving must preserve exact user text");
+    let rendered=sleufbase_rust::template_workflow::comments(
+        sleufbase_rust::Bounds{min_x:155000.,min_y:463000.,max_x:155010.,max_y:463001.},&[],&restored.choices[0].comments);
+    assert!(rendered.contains("Eerste regel\\PWater\t63 mm\\PVolgende regel"));
+
+    // Other controls are still rejected with a useful source/field diagnostic.
+    options.choices[0].comments="Ongeldig\0teken".into();
+    options.choices[0].label=Some(String::new()); // Fall back to the usable source title.
+    let invalid=TemplatePreferences::capture(&options,&[],&[],&project.virtual_trenches);
+    let error=invalid.validate().unwrap_err();
+    assert!(error.contains("PS12")&&error.contains("opmerkingen"),"{error}");
+}

@@ -41,17 +41,36 @@ pub(super) struct Drag {
     section: Section,
     start: Pos2,
     grab: Vec2,
+    initial_chainage: f64,
+    initial_use_depth: bool,
+    initial_depth: f64,
 }
 
 impl Drag {
+    fn new(section: Section, start: Pos2, grab: Vec2, form: &ObjectForm) -> Self {
+        Self {
+            section,
+            start,
+            grab,
+            initial_chainage: form.chainage,
+            initial_use_depth: form.use_depth,
+            initial_depth: form.depth,
+        }
+    }
+
     fn apply(&self, pointer: Pos2, form: &mut ObjectForm) {
         let (along, depth) = self.section.coordinates(pointer - self.grab);
-        if (pointer.x - self.start.x).abs() > 0.5 {
-            form.chainage = along;
-        }
+        form.chainage = if (pointer.x - self.start.x).abs() > 0.5 {
+            along
+        } else {
+            self.initial_chainage
+        };
         if (pointer.y - self.start.y).abs() > 0.5 {
             form.use_depth = true;
             form.depth = depth;
+        } else {
+            form.use_depth = self.initial_use_depth;
+            form.depth = self.initial_depth;
         }
     }
 }
@@ -304,11 +323,7 @@ impl Editor {
         if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(((_, index, point), start)) = hit.zip(origin) {
                 if index.is_none_or(|index| self.select_object(index)) {
-                    self.section_drag = Some(Drag {
-                        section,
-                        start,
-                        grab: start - point,
-                    });
+                    self.section_drag = Some(Drag::new(section, start, start - point, &self.object));
                 }
             }
         }
@@ -355,11 +370,7 @@ mod tests {
             offset: 0.2,
             ..Default::default()
         };
-        let drag = Drag {
-            section,
-            start,
-            grab: Vec2::ZERO,
-        };
+        let drag = Drag::new(section, start, Vec2::ZERO, &form);
         drag.apply(section.point(5., Some(0.5)), &mut form);
         assert_eq!(form.chainage, 5.);
         assert!(!form.use_depth);
@@ -369,5 +380,105 @@ mod tests {
             (form.depth, form.angle, form.diameter, form.offset),
             (1.25, -35., 125., 0.2)
         );
+    }
+
+    #[test]
+    fn returning_each_axis_restores_its_initial_value_and_height_mode() {
+        let section = Section {
+            plot: egui::Rect::from_min_size(egui::pos2(10., 50.), egui::vec2(400., 160.)),
+            length: 8.,
+            max_depth: 2.,
+        };
+        let original = ObjectForm {
+            chainage: 2.,
+            depth: 0.7,
+            has_elevation: true,
+            elevation: 1.5,
+            offset: 0.2,
+            angle: -35.,
+            ..Default::default()
+        };
+        let mut form = original.clone();
+        let grab = egui::vec2(2., 3.);
+        let start = section.point(2., Some(0.5)) + grab;
+        let drag = Drag::new(section, start, grab, &form);
+        drag.apply(section.point(5., Some(1.25)) + grab, &mut form);
+        assert_eq!(form.chainage, 5.);
+        assert!(form.use_depth);
+        assert_eq!(form.depth, 1.25);
+        // Return vertically while retaining the deliberate horizontal move.
+        drag.apply(section.point(5., Some(0.5)) + grab, &mut form);
+        assert_eq!(form.chainage, 5.);
+        assert!(!form.use_depth);
+        assert_eq!(form.depth, original.depth);
+        assert_eq!(form.elevation, original.elevation);
+        // Each axis returns independently, including the small dead zone.
+        drag.apply(section.point(2., Some(1.25)) + grab, &mut form);
+        assert_eq!(form.chainage, original.chainage);
+        assert!(form.use_depth);
+        drag.apply(start + egui::vec2(0.25, -0.25), &mut form);
+        assert!(form == original);
+    }
+
+    #[test]
+    fn returning_to_clipped_point_preserves_exact_out_of_plot_values() {
+        let section = Section {
+            plot: egui::Rect::from_min_size(egui::pos2(10., 50.), egui::vec2(400., 160.)),
+            length: 8.,
+            max_depth: 2.,
+        };
+        for (chainage, use_depth, displayed_depth) in [(10., true, 3.), (-2., false, -3.)] {
+            let original = ObjectForm {
+                chainage,
+                use_depth,
+                depth: if use_depth { displayed_depth } else { 0.7 },
+                has_elevation: true,
+                elevation: 2. - displayed_depth,
+                ..Default::default()
+            };
+            let mut form = original.clone();
+            let start = section.point(chainage, Some(displayed_depth));
+            let drag = Drag::new(section, start, Vec2::ZERO, &form);
+            drag.apply(section.point(3., Some(1.)), &mut form);
+            assert_eq!(form.chainage, 3.);
+            assert!(form.use_depth);
+            drag.apply(start, &mut form);
+            assert!(form == original, "drawing bounds must not normalize stored values");
+        }
+    }
+
+    #[test]
+    fn round_trip_drag_preserves_manual_measurement_when_saved() {
+        let mut trench = VirtualTrench::new(
+            "PS12".into(),
+            Vertex { x: 155000., y: 463000., z: Some(2.) },
+            Vertex { x: 155008., y: 463000., z: Some(2.) },
+            0.6,
+        ).unwrap();
+        trench.objects.push(TrenchPoint {
+            role: "kabel".into(),
+            object_name: "Gemeten LS".into(),
+            source_name: "ls".into(),
+            position: Vertex { x: 155002., y: 463000.2, z: Some(1.5) },
+            attributes: ["Al".into(), "50".into(), String::new()],
+            metadata: serde_json::json!({"point_id":"measurement-17","surface_mode":"manual"}),
+        });
+        let original = serde_json::to_value(&trench.objects[0]).unwrap();
+        let mut editor = Editor::new(0, &trench);
+        assert!(editor.select_object(0));
+        let section = Section {
+            plot: egui::Rect::from_min_size(egui::pos2(10., 50.), egui::vec2(400., 160.)),
+            length: 8.,
+            max_depth: 2.,
+        };
+        let start = section.point(2., Some(0.5));
+        let drag = Drag::new(section, start, Vec2::ZERO, &editor.object);
+        drag.apply(section.point(5., Some(1.25)), &mut editor.object);
+        assert!(editor.entry_changed());
+        drag.apply(start, &mut editor.object);
+        assert!(!editor.entry_changed());
+        let saved = editor.completed_draft().unwrap();
+        assert_eq!(saved.objects.len(), 1);
+        assert_eq!(serde_json::to_value(&saved.objects[0]).unwrap(), original);
     }
 }
