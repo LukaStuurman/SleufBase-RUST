@@ -55,11 +55,19 @@ impl SleufBaseApp {
             .id(egui::Id::new("kickthemap-account-login"))
             .open(&mut open).collapsible(false).resizable(false)
             .default_width(470.)
+            .default_height((ctx.screen_rect().height()-180.).clamp(160.,520.)+64.)
             .constrain_to(ctx.screen_rect().shrink(12.))
             .show(ctx, |ui| {
                 settings_ui::control_style(ui);
+                // The window starts with egui's current Resize budget, which can
+                // be smaller than the screen. Keep the actions inside that budget
+                // even while a new font or a long status changes the body height.
+                let footer_height=(ui.text_style_height(&egui::TextStyle::Button)
+                    +2.*ui.spacing().button_padding.y+3.*ui.spacing().item_spacing.y+14.).max(64.);
+                let body_height=(ctx.screen_rect().height()-180.).clamp(160.,520.)
+                    .min((ui.available_height()-footer_height).max(0.));
                 egui::ScrollArea::vertical().id_salt("kickthemap-login-body")
-                    .max_height((ctx.screen_rect().height()-180.).clamp(160.,520.))
+                    .max_height(body_height).min_scrolled_height(body_height.min(64.))
                     .show(ui, |ui| {
                         theme::card(12,14,12).show(ui, |ui| {
                             if connected {

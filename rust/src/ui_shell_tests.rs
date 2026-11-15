@@ -740,16 +740,56 @@ fn menu_hover_paints_a_clear_background_for_top_and_submenu_buttons(){
 }
 #[test]
 fn interactive_login_error_reaches_the_browser_controls_without_starting_a_browser(){
-    let mut app=SleufBaseApp::default();let (tx,rx)=mpsc::channel();
-    app.live_busy=true;app.live_rx=Some(rx);
-    tx.send(Err(sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED.into())).unwrap();
-    app.poll_live_jobs();assert!(app.shell.login_open);assert!(!app.live_busy);
-    let ctx=egui::Context::default();frame(&mut app,&ctx,vec![]);
-    let out=frame(&mut app,&ctx,vec![]);
-    label_position(&out,"Inloggen");
-    label_position(&out,"Inloggegevens onthouden en automatisch aanmelden");
-    assert!(app.browser_ui.browser.is_none());assert!(!app.live_operation_busy());
-    assert!(!app.message.contains("nog in Rust"));
+    for size in [[680,420],[1200,760],[1500,930]] {
+    for font_scale in [1.,1.5] {
+        let mut app=SleufBaseApp::default();let (tx,rx)=mpsc::channel();
+        app.live_busy=true;app.live_rx=Some(rx);
+        tx.send(Err(sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED.into())).unwrap();
+        app.poll_live_jobs();assert!(app.shell.login_open);assert!(!app.live_busy);
+        let ctx=egui::Context::default();
+        let render=|app:&mut SleufBaseApp,events| {
+            let mut raw=input(size);raw.events=events;
+            ctx.run(raw,|ctx| {
+                // Install inside the first render, like production: Windows
+                // fonts become active on the following frame. Larger metrics
+                // also exercise that height change on other platforms.
+                if !app.shell.installed {
+                    theme::install(ctx);app.shell.installed=true;
+                    ctx.style_mut(|style|for font in style.text_styles.values_mut(){font.size*=font_scale;});
+                }
+                app.render(ctx)
+            })
+        };
+        // egui deliberately hides a new window's first sizing frame. Its very
+        // next frame must already show the actions, without waiting for growth.
+        render(&mut app,vec![]);
+        let out=render(&mut app,vec![]);
+        let screen=egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(size[0] as f32,size[1] as f32));
+        for label in ["Inloggen","Sluiten"] {
+            let (rect,clip)=out.shapes.iter().find_map(|shape|match &shape.shape{
+                egui::Shape::Text(text) if text.galley.text()==label=>
+                    Some((text.galley.rect.translate(text.pos.to_vec2()),shape.clip_rect)),
+                _=>None,
+            }).unwrap_or_else(||panic!("Missing {label} at {size:?}, font scale {font_scale}"));
+            assert!(screen.contains_rect(rect)&&clip.contains_rect(rect),
+                "{label} must be visible immediately at {size:?}, font scale {font_scale}: {rect:?}, clip {clip:?}");
+        }
+        if size[1]>=760&&font_scale==1. {
+            label_position(&out,"Inloggegevens onthouden en automatisch aanmelden");
+        }
+        assert!(app.browser_ui.browser.is_none());assert!(!app.live_operation_busy());
+        assert_eq!(app.browser_ui.launch_requests,0,"an interactive challenge must not launch automatically");
+        assert!(!app.message.contains("nog in Rust"));
+        let pos=label_position(&out,"Inloggen");
+        for pressed in [true,false] {
+            render(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                pos,button:egui::PointerButton::Primary,pressed,modifiers:egui::Modifiers::NONE,
+            }]);
+        }
+        assert_eq!(app.browser_ui.launch_requests,1,"the visible action must accept an explicit click");
+        assert!(app.browser_ui.browser.is_none(),"tests never start a real browser");
+    }
+    }
 }
 #[test]
 fn polish_visual_review_captures_virtual_and_template_dialogs(){

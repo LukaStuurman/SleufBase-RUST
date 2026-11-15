@@ -22,6 +22,7 @@
 - De getoonde identiteit komt uit de bevestigde sessie. Bij een browsersessie vermeldt het venster dat je via de KickTheMap-pagina bent aangemeld.
 - De uitleg bij **Inloggegevens onthouden en automatisch aanmelden** volgt de gekozen optie. Sluiten en heropenen schakelt een bewust uitgevinkte keuze niet opnieuw in.
 - De wachtwoordhulp legt uit dat een bewaard wachtwoord alleen bij hetzelfde e-mailadres hoort.
+- Het formulier reserveert ruimte voor de aanmeldknoppen, ook bij een extra beveiligingscontrole, grotere tekst en een klein venster.
 
 ### Downloaden
 
