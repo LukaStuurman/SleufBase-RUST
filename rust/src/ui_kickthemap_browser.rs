@@ -88,6 +88,8 @@ pub(super) struct BrowserUi {
     pub(super) status:String,
 }
 impl BrowserUi {
+    pub(super) fn is_opening_job(&self)->bool {self.opening_job.is_some()}
+
     fn select_row(&mut self, ordered:&[u64], position:usize, extend:bool) {
         let id=ordered[position];
         if extend {
@@ -318,7 +320,7 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.opening_job.is_some()
+        self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.opening_job.is_some()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
         self.browser_ui.open=true;
@@ -602,6 +604,9 @@ impl SleufBaseApp {
         let cache=self.jobs_cache.as_ref().map(|c|c.jobs.as_slice()).unwrap_or(&[]);
         let live=self.live_session.is_some()||(self.live_busy&&self.live_jobs_owner.is_some());
         let busy=self.live_operation_busy();
+        let refreshing=self.live_refresh.is_some();
+        let downloading=self.live_download_rx.is_some()||self.browser_ui.batch_mode;
+        let signing_in=self.browser_ui.capturing.is_some()||(self.live_rx.is_some()&&self.shell.login_is_native);
         let source=if live {jobs.as_slice()} else {cache};
         let browser=&mut self.browser_ui;
         let mut indices=(0..source.len()).filter(|&i|{
@@ -658,8 +663,15 @@ impl SleufBaseApp {
                     ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
                     });
                     if busy||browser.batch_mode{ui.horizontal_wrapped(|ui|{
-                        ui.spinner();if browser.batch_mode{ui.label(format!("{} klaar, {} in wachtrij",browser.completed,browser.queue.len()));}
-                        if ui.button("Download annuleren").clicked(){action=Some("cancel");}
+                        ui.spinner();
+                        if downloading {
+                            if browser.batch_mode{ui.label(format!("{} klaar, {} in wachtrij",browser.completed,browser.queue.len()));}
+                            else{ui.label("Bestand downloaden…");}
+                            if ui.button("Download annuleren").clicked(){action=Some("cancel");}
+                        }else if refreshing{ui.label("Jobs vernieuwen…");}
+                        else if signing_in{ui.label("Aanmelden bij KickTheMap…");}
+                        else if browser.opening_job.is_some(){ui.label("Jobvenster openen…");}
+                        else{ui.label("Lopende KickTheMap-taak afronden…");}
                     });}
                     if !browser.failures.is_empty(){
                         ui.menu_button(format!("Downloadfouten: {}",browser.failures.len()),|ui|{
@@ -1063,6 +1075,42 @@ mod workflow_ui_tests{
         let mut baseline=None;
         for i in 0..16{let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1200.,760.))),events:vec![egui::Event::PointerMoved(egui::pos2(50.+i as f32*3.,50.+i as f32*2.))],..Default::default()},|ctx|app.show_kickthemap_workspace(ctx));let pos=button(&output);if i==4{baseline=Some(pos);}if i>4{assert!((pos-baseline.unwrap()).length()<1.,"hover must not grow the jobs window");}}
 
+    }
+
+    #[test]
+    fn busy_jobs_window_only_offers_download_cancellation_for_downloads() {
+        for operation in ["refresh","login","download"] {
+            let mut app=app();let session=app.live_session.take().unwrap();app.live_busy=true;
+            let (refresh_tx,refresh_rx)=mpsc::channel();
+            let (login_tx,login_rx)=mpsc::channel();
+            let (download_tx,download_rx)=mpsc::channel();
+            match operation {
+                "refresh"=>app.live_refresh=Some(LiveJobsRefresh{owner:session.snapshot_owner().clone(),events:refresh_rx}),
+                "login"=>{app.live_rx=Some(login_rx);app.shell.login_is_native=true;},
+                _=>app.live_download_rx=Some(download_rx),
+            }
+            let ctx=egui::Context::default();theme::install(&ctx);let mut output=None;
+            for _ in 0..4 {
+                output=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),..Default::default()},|ctx|app.show_kickthemap_workspace(ctx)));
+            }
+            let output=output.unwrap();
+            let visible=|label:&str|output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.text()==label));
+            assert_eq!(visible("Download annuleren"),operation=="download","{operation}");
+            assert!(visible(match operation{"refresh"=>"Jobs vernieuwen…","login"=>"Aanmelden bij KickTheMap…",_=>"Bestand downloaden…"}));
+            assert!(visible("PS42"));
+            if operation=="refresh" {
+                app.open_kickthemap_login();let ctx=egui::Context::default();theme::install(&ctx);
+                let mut output=None;
+                for _ in 0..4 {
+                    output=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),..Default::default()},|ctx|app.show_kickthemap_login(ctx)));
+                }
+                let output=output.unwrap();
+                let visible=|label:&str|output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.text()==label));
+                assert!(visible("Sluiten")&&visible("Je jobs worden vernieuwd…"));
+                assert!(!visible("Annuleren"));
+            }
+            drop((refresh_tx,login_tx,download_tx,session));
+        }
     }
 }
 

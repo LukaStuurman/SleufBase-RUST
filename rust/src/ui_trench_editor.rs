@@ -168,10 +168,15 @@ impl Editor {
             dekband_start_depth:0.,dekband_end_depth:0.,
         }
     }
-    fn build(&self)->Result<VirtualTrench,String> {
+    fn build_preserving_order(&self)->Result<VirtualTrench,String> {
         let mut result=self.draft.clone();
-        edit::edit_axis(&mut result,self.label.clone(),self.start,self.end,self.width)?;
+        edit::edit_axis_preserving_order(&mut result,self.label.clone(),self.start,self.end,self.width)?;
         edit::check(&result)?;
+        Ok(result)
+    }
+    fn build(&self)->Result<VirtualTrench,String> {
+        let mut result=self.build_preserving_order()?;
+        edit::sort_objects(&mut result);
         Ok(result)
     }
     fn add_or_replace(&mut self)->Result<(),String> {

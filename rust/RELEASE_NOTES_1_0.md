@@ -1,32 +1,27 @@
-## SleufBase Rust 1.0.3 voor Windows
+## SleufBase Rust 1.0.4 voor Windows
 
-### KickTheMap-aanmelding onthouden en herstellen
+### KickTheMap: betrouwbaarder vernieuwen en aanmelden
 
-- Bij het starten probeert SleufBase een onthouden KickTheMap-sessie op de achtergrond te herstellen. Een geslaagde automatische aanmelding opent geen extra jobsvenster.
-- Zonder opgeslagen browsersessie kan SleufBase de bewaarde rechtstreekse aanmelding gebruiken. Na mislukt sessieherstel blijft duidelijk welk account de gebruiker opnieuw moet bevestigen; de app wisselt niet stilzwijgend naar een ander opgeslagen account.
-- Annuleren en een onderbroken verbinding laten geen vastgelopen aanmeldstatus achter.
-- Uitloggen schakelt automatisch aanmelden blijvend uit, ook als een ander SleufBase-venster het browserprofiel nog gebruikt. De app meldt duidelijk wanneer opgeslagen gegevens niet volledig konden worden opgeruimd.
-- De aanmeldopties en foutmeldingen zijn in gewone taal beschreven. Een verplichte beveiligingscontrole van KickTheMap blijft beschikbaar in de ingebouwde websiteweergave.
+- Een tijdelijke fout bij het vernieuwen van de joblijst behoudt de actieve sessie, de bestaande jobs en de selectie. Je kunt opnieuw vernieuwen zonder onnodig opnieuw aan te melden.
+- Een aantoonbaar verlopen aanmelding krijgt een duidelijke melding om opnieuw in te loggen. Verouderde resultaten kunnen een latere aanmelding niet vervangen.
+- De knop **Download annuleren** verschijnt alleen tijdens een download. Andere lopende activiteiten krijgen een passende voortgangsmelding.
+- Na een beveiligingscontrolemelding kan gewijzigde accountinvoer weer een gewone aanmeldpoging starten. Een oude melding overschrijft die nieuwe invoer niet.
 
-### Overzichtelijker virtuele proefsleuven bewerken
+### Virtuele proefsleuf: behoud van kabels en meetgegevens
 
-- Een brede editor toont de doorsnede en kabels-/leidingenlijst naast de invoer. Op smallere vensters staan deze onderdelen onder elkaar.
-- De kop toont de sleufnaam, lengte, breedte en het aantal kabels en leidingen.
-- Positie en diepte, type en afmetingen zijn gegroepeerd. De kruishoek blijft direct visueel instelbaar; aanvullende brongegevens staan onder uitklappers.
-- Met **Zelfde type toevoegen** worden gebruikerseigenschappen klaargezet voor een volgende kabel. Kies daarna een nieuwe plek. Alleen de voorinvulling openen maakt geen extra kabel aan.
-- Herhalen neemt geen absolute hoogte, RD-positie, meetidentiteit of bronreferenties over. Gemeten objecten blijven behouden.
+- Een later ontvangen AHN-antwoord behoudt de geselecteerde kabel, de volgorde in het open concept en nog niet opgeslagen invoer. Zo kan de hoogteactualisatie geen andere kabel laten overschrijven.
+- De definitieve sleuf wordt bij het opslaan nog steeds op afstand gesorteerd.
+- Een kabel wegslepen en terugbrengen herstelt nu de exacte oorspronkelijke positie en diepte. Ook de keuze tussen een ingemeten absolute hoogte en relatieve diepte blijft behouden.
 
-### Duidelijkere DXF-sjabloonexport
+### DXF-sjabloonexport: duidelijke fouten zonder verlies van projectinstellingen
 
-- Het gecombineerde exportvenster groepeert projectgegevens, kaarten/profielen en proefsleufkeuze. Aanvullende instellingen staan onder **Meer exportinstellingen**.
-- Directe acties nemen alle sleuven mee of sluiten ze uit en zetten dwarsprofielen voor meegenomen sleuven aan of uit.
-- De vaste samenvatting toont het aantal sleuven/profielen, de gebruikte kaartachtergrond, kaartkwaliteit en uitvoer.
-- Offline export toont duidelijk dat geen luchtfoto wordt opgehaald, terwijl de online achtergrondvoorkeur behouden blijft.
-- Ontbrekende geselecteerde bronnen, werkfoto's en logo's en ongeldige instellingen worden vóór het starten van de export gemeld. Uitgesloten sleuven blokkeren de export niet.
-- Het openen van het venster verandert geen opgeslagen DPI- of schaalwaarden. De invoer ondersteunt hetzelfde bereik als het projectformaat.
+- Exportvoorkeuren worden gevalideerd voordat ze in het project worden bewaard en voordat de exporttaak start. Ongeldige tekst kan het latere opslaan van het project daardoor niet blokkeren.
+- Fouten noemen het betreffende veld of proefsleufvak en geven aan wat je kunt aanpassen. Het formulier, de projectgegevens en eerder opgeslagen voorkeuren blijven beschikbaar.
+- Opmerkingen met Windows-regeleinden en tabs blijven ongewijzigd bruikbaar bij export en bij het opslaan en opnieuw laden van het project.
+- Het open exportvenster controleert sjabloon-, uitvoer- en fotopaden niet langer bij ieder schermbeeld. De bestandscontroles blijven bij het expliciet starten van de export plaatsvinden.
 
-### Beschikbare functies
+### Downloaden
 
-Handmatig maaiveld invullen, AHN, de scherpe sjabloondetails en de verbeteringen aan kabelinvoer en Python-projectuitwisseling blijven behouden. Gemma is verwijderd.
+De Windows-installer en portable ZIP hebben ieder een SHA-256-controlebestand. Sluit SleufBase voor het bijwerken. Pak de portable ZIP volledig uit voordat je het programma start.
 
-Gebruik de Windows-installer of portable ZIP. Beide downloads hebben een SHA-256-controlebestand.
+De Gemma-AI-functie blijft verwijderd. De vernieuwde schermindeling uit versie 1.0.3 blijft beschikbaar.

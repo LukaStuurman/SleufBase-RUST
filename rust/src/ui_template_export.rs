@@ -112,10 +112,12 @@ impl SleufBaseApp {
             self.message = "Er is al een lopende taak of projectkeuze".into();
             return;
         }
-        if (!options.template.as_os_str().is_empty() && !options.template.is_file()) ||
-            output.extension().is_none_or(|ext| !ext.to_string_lossy().eq_ignore_ascii_case("dxf"))
-        {
-            self.message = "Kies een geldig DXF-sjabloon en een uitvoer-DXF".into();
+        if output.extension().is_none_or(|ext| !ext.to_string_lossy().eq_ignore_ascii_case("dxf")) {
+            self.message = "De uitvoernaam moet eindigen op .dxf.".into();
+            return;
+        }
+        if !options.template.as_os_str().is_empty() && !options.template.is_file() {
+            self.message = "Het eigen DXF-sjabloon ontbreekt. Kies het opnieuw of gebruik het ingebouwde sjabloon.".into();
             return;
         }
         if output.exists() {
@@ -126,6 +128,12 @@ impl SleufBaseApp {
             self.message = "Selecteer minimaal één proefsleufvak".into();
             return;
         }
+        // Validate the exact preferences before publishing them into the project.
+        // A later worker error must never leave an unsaveable project behind.
+        let saved=sleufbase_rust::template_prefs::TemplatePreferences::capture(
+            &options,&self.datasets,&self.geotiffs,&self.virtual_trenches
+        );
+        if let Err(error)=saved.validate(){self.message=error;return;}
         if let Err(error)=project_template_ui::validate_export_sources(&options,&self.datasets,&self.geotiffs,&self.virtual_trenches){
             self.message=error;return;
         }
@@ -145,9 +153,6 @@ impl SleufBaseApp {
             }
         }
         let browser=self.browser_ui.browser.as_ref().map(|browser|browser.channel());
-        let saved=sleufbase_rust::template_prefs::TemplatePreferences::capture(
-            &options,&self.datasets,&self.geotiffs,&self.virtual_trenches
-        );
         // Move the large datasets instead of deep-cloning every feature and
         // geometry. They are returned by the worker on both success and error.
         let inputs = self.take_export_inputs();
@@ -384,7 +389,8 @@ mod tests {
         let metadata=t.metadata.clone();let mut app=SleufBaseApp{virtual_trenches:vec![t],..Default::default()};
         let pointer=app.virtual_trenches.as_ptr();let objects=app.virtual_trenches[0].objects.as_ptr();
         let dir=tempfile::tempdir().unwrap();let output=dir.path().join("virtual.dxf");
-        let options=Options{server_mode:sleufbase_rust::template_server::Mode::Offline,template:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/cadastral_template.dxf"),paired:false,dpi:96,include_bgt:false,include_cadastral:false,include_cad:false,choices:vec![Choice{label:None,legacy_slot:None,source:Source::Virtual(0),raster:None,include:true,title:"PS12".into(),profile:true,manual_scale:None,reverse:false,comments:String::new(),photos:Vec::new()}],..Default::default()};
+        let comments="Handmatige notitie\r\nWater\t63 mm";
+        let options=Options{server_mode:sleufbase_rust::template_server::Mode::Offline,template:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/cadastral_template.dxf"),paired:false,dpi:96,include_bgt:false,include_cadastral:false,include_cad:false,choices:vec![Choice{label:None,legacy_slot:None,source:Source::Virtual(0),raster:None,include:true,title:"PS12".into(),profile:true,manual_scale:None,reverse:false,comments:comments.into(),photos:Vec::new()}],..Default::default()};
         app.start_project_template_export(options,output.clone());assert!(app.template_job.is_some());assert!(app.virtual_trenches.is_empty());
         let ctx=egui::Context::default();
         // The 96 DPI setting applies to the map, not the 4x detail raster.
@@ -404,6 +410,9 @@ mod tests {
         }
         assert_eq!(app.virtual_trenches.as_ptr(),pointer);assert_eq!(app.virtual_trenches[0].objects.as_ptr(),objects);assert_eq!(app.virtual_trenches[0].metadata,metadata);assert!(output.is_file(),"{}",app.message);
         let doc=sleufbase_rust::dxf_document::Document::load(&output,&std::sync::atomic::AtomicBool::new(false)).unwrap();assert!(doc.records().any(|r|r.kind()=="LEADER"));assert!(doc.records().any(|r|r.kind()=="MTEXT"&&r.first(1).is_some_and(|s|s.contains("Bronnotitie"))));
+        assert!(doc.records().any(|r|r.kind()=="MTEXT"&&r.first(1).is_some_and(|s|s.contains("Handmatige notitie"))));
+        let preferences=app.template_preferences.as_ref().unwrap();preferences.validate().unwrap();
+        assert_eq!(preferences.restore(&[],&[],&app.virtual_trenches).choices[0].comments,comments);
     }
 
     #[test]

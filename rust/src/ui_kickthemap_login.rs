@@ -28,12 +28,13 @@ impl SleufBaseApp {
         if !self.shell.login_open { return; }
         let busy = self.live_operation_busy();
         let connecting = self.browser_ui.capturing.is_some();
+        let signing_in=connecting||(self.shell.login_is_native&&self.live_rx.is_some());
         let connected = self.live_session.is_some();
         #[cfg(not(test))]
         let saved = stored::account_exists();
         #[cfg(test)]
         let saved = false;
-        let needs_verification=self.browser_ui.status==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED;
+        let mut needs_verification=self.browser_ui.status==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED;
         let submit_pressed=ctx.input(|i|i.key_pressed(egui::Key::Enter));
         let mut form_has_focus=false;
         let mut open=true;
@@ -73,6 +74,11 @@ impl SleufBaseApp {
                                         .password(!self.browser_ui.show_password)
                                         .hint_text(if saved { "Leeg laten om het bewaarde wachtwoord te gebruiken" } else { "Wachtwoord" })
                                         .desired_width(f32::INFINITY));
+                                if !busy&&needs_verification&&(email.changed()||password.changed()) {
+                                    needs_verification=false;
+                                    self.browser_ui.status="Aanmeldgegevens aangepast. Klik op Inloggen om opnieuw te proberen.".into();
+                                    self.message=self.browser_ui.status.clone();
+                                }
                                 form_has_focus=email.has_focus()||email.lost_focus()||password.has_focus()||password.lost_focus();
                                 ui.add_enabled(!busy,egui::Checkbox::new(&mut self.browser_ui.show_password,"Toon wachtwoord"));
                                 ui.add_space(8.);
@@ -88,7 +94,8 @@ impl SleufBaseApp {
                             ui.add_space(8.);
                             ui.horizontal_wrapped(|ui| {
                                 ui.spinner();
-                                ui.label(if self.browser_ui.restoring_login { "Je bewaarde aanmelding herstellen…" }
+                                ui.label(if self.live_refresh.is_some() { "Je jobs worden vernieuwd…" }
+                                    else if self.browser_ui.restoring_login { "Je bewaarde aanmelding herstellen…" }
                                     else if connecting { "Rond je aanmelding af in SleufBase…" }
                                     else { "Aanmelden en jobs ophalen…" });
                             });
@@ -122,7 +129,7 @@ impl SleufBaseApp {
                             if needs_verification { browser=true; } else { login=true; }
                         }
                     }
-                    close=ui.button(if busy { "Annuleren" } else { "Sluiten" }).clicked();
+                    close=ui.button(if signing_in { "Annuleren" } else { "Sluiten" }).clicked();
                 });
             });
         if !open || close {
@@ -328,5 +335,199 @@ mod login_lifecycle_tests {
         assert!(app.browser_ui.startup_login_checked);
         assert!(!app.browser_ui.show_password);
         assert!(app.browser_ui.status.contains("Automatisch aanmelden staat uit"));
+    }
+}
+
+#[cfg(test)]
+mod refresh_lifecycle_tests {
+    use super::*;
+
+    fn session()->KickTheMapLiveClient {
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{
+            name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),
+            path:"/".into(),secure:true,
+        };
+        KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap()
+    }
+
+    fn job(id:u64)->Job {
+        Job{job_id:id,title:format!("PS{id}"),address:String::new(),municipality:String::new(),
+            coordinates:String::new(),client_date:String::new(),status:9,downloadable:true,prefix:String::new()}
+    }
+
+    fn app()->SleufBaseApp {
+        let session=session();
+        let mut app=SleufBaseApp::default();
+        app.live_jobs_owner=Some(session.snapshot_owner().clone());
+        app.live_session=Some(session);app.live_jobs=vec![job(42)];
+        app.browser_ui.selected.insert(42);app.save_live_cache();
+        app
+    }
+
+    fn start_reply(app:&mut SleufBaseApp)->(KickTheMapLiveClient,mpsc::Sender<LiveJobsRefreshResult>) {
+        let session=app.live_session.take().unwrap();let (tx,rx)=mpsc::channel();
+        app.live_refresh=Some(LiveJobsRefresh{owner:session.snapshot_owner().clone(),events:rx});
+        app.live_busy=true;(session,tx)
+    }
+
+    #[test]
+    fn temporary_refresh_error_keeps_session_jobs_selection_and_cache() {
+        let mut app=app();let owner=app.live_jobs_owner.clone();
+        let allocation=app.live_jobs.as_ptr();
+        let cache=app.jobs_cache.as_ref().unwrap().source_path.clone();
+        let cached=std::fs::read(&cache).unwrap();
+        let (session,tx)=start_reply(&mut app);
+        assert!(app.live_operation_busy());
+        tx.send(LiveJobsRefreshResult{session,jobs:Err("Tijdelijke verbindingstoring".into())}).ok().unwrap();
+        app.poll_live_jobs();
+        assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
+        assert_eq!(app.live_jobs_owner,owner);assert_eq!(app.live_jobs.as_ptr(),allocation);
+        assert_eq!(app.live_jobs[0].job_id,42);assert!(app.browser_ui.selected.contains(&42));
+        assert_eq!(std::fs::read(&cache).unwrap(),cached);
+        assert!(!app.live_operation_busy()&&!app.shell.login_open);
+        assert!(app.browser_ui.status.contains("Jobs vernieuwen mislukt"));
+        assert!(app.browser_ui.status.contains("Probeer Vernieuwen opnieuw"));
+    }
+
+    #[test]
+    fn successful_refresh_replaces_jobs_and_cache_for_the_same_owner() {
+        let mut app=app();let owner=app.live_jobs_owner.clone();let (session,tx)=start_reply(&mut app);
+        tx.send(LiveJobsRefreshResult{session,jobs:Ok(vec![job(42),job(43)])}).ok().unwrap();
+        app.poll_live_jobs();
+        assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
+        assert_eq!(app.live_jobs.iter().map(|job|job.job_id).collect::<Vec<_>>(),vec![42,43]);
+        assert_eq!(app.jobs_cache.as_ref().unwrap().jobs.len(),2);
+        assert!(!app.live_operation_busy()&&!app.shell.login_open);
+        assert!(app.browser_ui.status.contains("2 KickTheMap jobs vernieuwd"));
+    }
+
+    #[test]
+    fn expired_refresh_still_requires_login_when_browser_fallback_also_fails() {
+        for error in ["KickTheMap-sessie verlopen (HTTP 401)",sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED] {
+            let mut app=app();let cache=app.jobs_cache.as_ref().unwrap().source_path.clone();
+            let cached=std::fs::read(&cache).unwrap();let (session,tx)=start_reply(&mut app);
+            let error=live_refresh_fallback_error(error.into(),"Browser kon job-API niet opvragen".into());
+            tx.send(LiveJobsRefreshResult{session,jobs:Err(error.clone())}).ok().unwrap();
+            app.poll_live_jobs();
+            assert!(app.live_session.is_none()&&app.shell.login_open);
+            assert!(!app.live_operation_busy());assert_eq!(app.browser_ui.status,error);
+            assert!(app.live_rx.is_none()&&!app.shell.login_is_native);
+            assert_eq!(app.browser_ui.launch_requests,0);
+            assert_eq!(app.live_jobs[0].job_id,42);assert!(app.browser_ui.selected.contains(&42));
+            assert_eq!(std::fs::read(&cache).unwrap(),cached);
+        }
+    }
+
+    #[test]
+    fn disconnected_refresh_returns_to_login_without_clearing_previous_jobs() {
+        let mut app=app();let (session,tx)=start_reply(&mut app);drop(session);drop(tx);
+        app.poll_live_jobs();
+        assert!(app.live_session.is_none()&&app.shell.login_open);
+        assert!(!app.live_operation_busy());assert_eq!(app.live_jobs[0].job_id,42);
+        assert!(app.browser_ui.status.contains("vernieuwen is onderbroken"));
+    }
+
+    #[test]
+    fn late_refresh_cannot_restore_a_signed_out_or_replaced_account() {
+        for state in ["signed-out","replaced","newer-download","same-owner-download","same-owner-browser-login"] {
+        for disconnected in [false,true] {
+            let mut previous=app();let (session,tx)=start_reply(&mut previous);
+            let refresh=previous.live_refresh.take().unwrap();previous.live_busy=false;
+            previous.logout_live_jobs();
+            let mut current=if state=="signed-out"{previous}
+                else if state.starts_with("same-owner-") {
+                    // Native account identity is stable across sign-ins. A new
+                    // worker for that owner must still reject an older refresh.
+                    previous.live_jobs_owner=Some(refresh.owner.clone());
+                    previous.live_jobs=vec![job(42)];
+                    previous.browser_ui.status="Nieuw bestand downloaden…".into();
+                    previous
+                }else{app()};
+            let (download_tx,download_rx)=mpsc::channel();
+            let (browser_tx,browser_rx)=mpsc::channel();
+            let downloading=matches!(state,"newer-download"|"same-owner-download");
+            let browser_login=state=="same-owner-browser-login";
+            let newer_session=if downloading {
+                current.live_download_rx=Some(download_rx);current.live_busy=true;
+                current.live_session.take()
+            }else{None};
+            if browser_login {
+                current.browser_ui.capturing=Some(browser_rx);current.shell.login_open=true;
+                current.browser_ui.status="Nieuwe browseraanmelding…".into();
+            }
+            let expected_owner=current.live_jobs_owner.clone();
+            let expected_session=current.live_session.as_ref().map(|session|session.snapshot_owner().clone());
+            let expected_ids=current.live_jobs.iter().map(|job|job.job_id).collect::<Vec<_>>();
+            let expected_status=current.browser_ui.status.clone();
+            current.live_refresh=Some(refresh);
+            if disconnected{drop(session);drop(tx);}
+            else{tx.send(LiveJobsRefreshResult{session,jobs:Ok(vec![job(999)])}).ok().unwrap();}
+            current.poll_live_jobs();
+            assert_eq!(current.live_jobs_owner,expected_owner);
+            assert_eq!(current.live_session.as_ref().map(|session|session.snapshot_owner()),expected_session.as_ref());
+            assert_eq!(current.live_jobs.iter().map(|job|job.job_id).collect::<Vec<_>>(),expected_ids);
+            assert_eq!(current.browser_ui.status,expected_status);
+            assert_eq!(current.shell.login_open,browser_login);
+            assert_eq!(current.browser_ui.capturing.is_some(),browser_login);
+            assert!(current.live_refresh.is_none());
+            assert_eq!(current.live_busy,downloading);
+            assert_eq!(current.live_operation_busy(),downloading||browser_login);
+            drop((download_tx,browser_tx,newer_session));
+        }
+        }
+    }
+}
+
+#[cfg(test)]
+mod edited_login_tests {
+    use super::*;
+
+    fn frame(app:&mut SleufBaseApp,ctx:&egui::Context,events:Vec<egui::Event>)->egui::FullOutput {
+        ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),events,..Default::default()},|ctx|app.show_kickthemap_login(ctx))
+    }
+
+    fn click_login(app:&mut SleufBaseApp,ctx:&egui::Context) {
+        let out=frame(app,ctx,vec![]);
+        let pos=out.shapes.iter().find_map(|shape|match &shape.shape{
+            egui::Shape::Text(text) if text.galley.text()=="Inloggen"=>Some(text.pos+text.galley.rect.size()/2.),_=>None,
+        }).unwrap();
+        for pressed in [true,false] {
+            frame(app,ctx,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{
+                pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+            }]);
+        }
+    }
+
+    #[test]
+    fn editing_email_or_password_retries_native_login_after_an_old_challenge() {
+        for password in [false,true] {
+            let mut app=SleufBaseApp::default();let ctx=egui::Context::default();theme::install(&ctx);
+            app.shell.login_email="fixture@example.test".into();app.shell.login_password="test-only".into();
+            app.browser_ui.status=sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED.into();
+            app.open_kickthemap_login();for _ in 0..4{frame(&mut app,&ctx,vec![]);}
+            if password {
+                frame(&mut app,&ctx,vec![egui::Event::Key{key:egui::Key::Tab,physical_key:None,pressed:true,repeat:false,modifiers:Default::default()}]);
+                frame(&mut app,&ctx,vec![egui::Event::Key{key:egui::Key::Tab,physical_key:None,pressed:false,repeat:false,modifiers:Default::default()}]);
+            }
+            frame(&mut app,&ctx,vec![egui::Event::Text("x".into())]);
+            if password{assert_ne!(app.shell.login_password,"test-only");}
+            else{assert_ne!(app.shell.login_email,"fixture@example.test");}
+            assert_ne!(app.browser_ui.status,sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED);
+            click_login(&mut app,&ctx);
+            assert!(app.shell.login_is_native&&app.live_rx.is_some());
+            assert_eq!(app.browser_ui.launch_requests,0);
+            assert!(app.shell.login_password.is_empty());
+        }
+    }
+
+    #[test]
+    fn unchanged_challenge_keeps_the_explicit_browser_route() {
+        let mut app=SleufBaseApp::default();let ctx=egui::Context::default();theme::install(&ctx);
+        app.shell.login_email="fixture@example.test".into();
+        app.browser_ui.status=sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED.into();
+        app.open_kickthemap_login();for _ in 0..4{frame(&mut app,&ctx,vec![]);}
+        click_login(&mut app,&ctx);
+        assert_eq!(app.browser_ui.launch_requests,1);
+        assert!(app.live_rx.is_none()&&!app.shell.login_is_native);
     }
 }

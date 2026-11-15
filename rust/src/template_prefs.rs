@@ -115,21 +115,42 @@ impl TemplatePreferences {
         self.profile_style.validate()?;
         crate::dxf_fonts::Catalog::validate_dirs(&self.font_directories)?;
         if self.choices.len()>20_000 {return Err("Te veel sjabloonvoorkeuren".into());}
-        if self.project.len()>2048 || self.drawn_by.len()>2048
-            || !self.scale.is_finite() || !(1. ..=100_000.).contains(&self.scale)
+        if self.project.len()>2048 {return Err("Projectnaam is te lang. Kort de projectnaam in.".into());}
+        if self.drawn_by.len()>2048 {return Err("Naam van de tekenaar is te lang. Kort de naam in.".into());}
+        if !self.scale.is_finite() || !(1. ..=100_000.).contains(&self.scale)
             || !(30..=600).contains(&self.dpi)
         {return Err("Ongeldige sjabloonvoorkeuren".into());}
-        for item in &self.choices {
-            if item.label.as_ref().is_some_and(|s|s.len()>256||s.chars().any(char::is_control)){return Err("Ongeldig opgeslagen proefsleufnummer".into());}
-            if item.manual_scale.is_some_and(|s|!(1..=1_000_000).contains(&s)){return Err("Ongeldige opgeslagen profielschaal".into());}
+        for (index,item) in self.choices.iter().enumerate() {
+            let error=|detail:&str| {
+                let usable=|text:&str|!text.is_empty()&&text.len()<=256&&!text.chars().any(char::is_control);
+                let name=item.label.as_deref().filter(|text|usable(text))
+                    .or_else(||usable(&item.title).then_some(item.title.as_str()));
+                match name {
+                    Some(name)=>format!("Vak {} ({name}): {detail}",index+1),
+                    None=>format!("Vak {}: {detail}",index+1),
+                }
+            };
+            if item.label.as_ref().is_some_and(|s|s.len()>256||s.chars().any(char::is_control)){
+                return Err(error("het proefsleuflabel is ongeldig of te lang. Gebruik een kort label op één regel."));
+            }
+            if item.manual_scale.is_some_and(|s|!(1..=1_000_000).contains(&s)){
+                return Err(error("kies een profielschaal tussen 1:1 en 1:1000000, of Automatisch."));
+            }
             if item.photos.len()>crate::template_photo::MAX_PHOTOS_PER_SLOT
                 || item.photos.iter().any(|p|p.turns>3) {
-                return Err("Te veel of ongeldig gedraaide projectfoto's".into());
+                return Err(error("er zijn te veel of ongeldig gedraaide werkfoto's."));
             }
-            if item.title.len()>256 || item.comments.len()>4096
-                || item.title.chars().any(char::is_control)
-                || item.comments.chars().any(|c|c.is_control()&&c!='\n')
-            {return Err("Ongeldige opgeslagen sjabloontekst".into());}
+            if item.title.len()>256 || item.title.chars().any(char::is_control){
+                return Err(error("de naam is te lang of bevat niet-ondersteunde tekens. Gebruik een korte naam op één regel."));
+            }
+            if item.comments.len()>4096 {
+                return Err(error("de opmerkingen zijn te lang. Kort de opmerkingen in."));
+            }
+            // Keep the same text contract as template_project: Windows line
+            // endings, tabs and supported line separators roundtrip unchanged.
+            if item.comments.chars().any(|c|c.is_control()&&!matches!(c,'\n'|'\r'|'\t'|'\u{b}'|'\u{c}'|'\u{1c}'..='\u{1e}')){
+                return Err(error("de opmerkingen bevatten niet-ondersteunde tekens."));
+            }
         }
         Ok(())
     }

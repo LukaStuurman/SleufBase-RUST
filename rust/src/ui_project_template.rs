@@ -165,13 +165,13 @@ impl Dialog {
             choice.profile=enabled;
         }
     }
+    /// In-memory readiness only: network paths must not be probed every frame.
+    /// Availability and overwrite checks run on the explicit export action.
     fn readiness(&self)->Result<(),String>{
         let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
         if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee; vink Meenemen aan bij de gewenste sleuven.".into());}
-        if !self.options.template.as_os_str().is_empty()&&!self.options.template.is_file(){return Err("Het eigen DXF-sjabloon ontbreekt. Kies het opnieuw of gebruik het ingebouwde sjabloon.".into());}
         let output=self.output.as_ref().ok_or("Kies eerst een nieuwe uitvoer-DXF.")?;
         if output.extension().is_none_or(|ext|!ext.to_string_lossy().eq_ignore_ascii_case("dxf")){return Err("De uitvoernaam moet eindigen op .dxf.".into());}
-        if output.exists(){return Err("Deze uitvoer bestaat al. Kies een nieuwe naam; bestaande bestanden blijven behouden.".into());}
         if selected.len()>template_project::MAX_SLOTS{return Err("Er zijn te veel exportvakken. Verminder de selectie.".into());}
         if !self.editor.preview(&self.options.choices).1.is_empty(){return Err("Controleer de proefsleuflabels van de geselecteerde vakken.".into());}
         if let Some(choice)=selected.iter().find(|c|c.raster.is_none()&&!matches!(c.source,Source::Virtual(_)|Source::Empty(_))){return Err(format!("Koppel een GeoTIFF aan {} of zet Meenemen uit.",choice.title));}
@@ -510,13 +510,14 @@ impl SleufBaseApp {
                                                 }
                                             }
                                         }
+                                        if !slot.photos.is_empty(){ui.small("De gekozen fotobestanden worden bij het starten gecontroleerd.");}
                                         let mut remove=None;
                                         for (photo_index,photo) in slot.photos.iter_mut().enumerate() {
                                             ui.push_id(photo_index,|ui|{
                                                 ui.horizontal(|ui|{
                                                     ui.label(photo.path.file_name()
                                                         .map(|s|s.to_string_lossy().to_string())
-                                                        .unwrap_or_else(||"Werkfoto".into()));
+                                                        .unwrap_or_else(||"Werkfoto".into())).on_hover_text(photo.path.display().to_string());
                                                     egui::ComboBox::from_id_salt("rotate")
                                                         .selected_text(format!("{}°",u32::from(photo.turns)*90))
                                                         .show_ui(ui,|ui|{
@@ -536,7 +537,6 @@ impl SleufBaseApp {
                                                         });
                                                     if ui.small_button("Verwijder").clicked(){remove=Some(photo_index);}
                                                 });
-                                                if !photo.path.is_file(){ui.colored_label(DARK,"Fotobestand ontbreekt");}
                                             });
                                         }
                                         if let Some(index)=remove {slot.photos.remove(index);}
@@ -729,7 +729,6 @@ mod flow_audit_tests {
         let d=app.project_template_dialog.as_mut().unwrap();assert!(d.readiness().unwrap_err().contains("uitvoer-DXF"));
         d.output=Some(dir.path().join("wrong.txt"));assert!(d.readiness().unwrap_err().contains(".dxf"));
         d.output=Some(dir.path().join("correct.dxf"));assert!(d.readiness().is_ok());
-        std::fs::write(d.output.as_ref().unwrap(),b"existing drawing").unwrap();assert!(d.readiness().unwrap_err().contains("bestaat al"));
         d.output=Some(dir.path().join("new.dxf"));d.options.project="Behouden keuze".into();app.live_busy=true;
         let ctx=egui::Context::default();
         let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
@@ -737,6 +736,69 @@ mod flow_audit_tests {
         let out=frame(&mut app,vec![]);let pos=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="Volledige project-sjabloonexport starten"=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).unwrap();assert!(pos.y<420.);
         for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
         let d=app.project_template_dialog.as_ref().expect("rejected launch must retain form");assert_eq!(d.options.project,"Behouden keuze");assert!(d.error.contains("downloads"));assert!(app.template_job.is_none());assert_eq!(app.virtual_trenches.len(),1);
+    }
+    #[test]
+    fn invalid_export_text_keeps_the_form_sources_and_previous_project_preferences(){
+        for field in ["opmerkingen","uitgesloten opmerkingen","projectnaam","tekenaar"] {
+            let dir=tempfile::tempdir().unwrap();let output=dir.path().join("never.dxf");
+            let mut app=app();
+            app.virtual_trenches.push(VirtualTrench::new("PS13".into(),Vertex{x:155020.,y:463000.,z:Some(2.)},Vertex{x:155030.,y:463000.,z:Some(2.)},0.6).unwrap());
+            app.open_project_template_dialog();
+            let initial=&app.project_template_dialog.as_ref().unwrap().options;
+            app.template_preferences=Some(sleufbase_rust::template_prefs::TemplatePreferences::capture(initial,&[],&[],&app.virtual_trenches));
+            app.template_state=Some(Default::default());app.dirty=false;
+            let saved=serde_json::to_value(&app.template_preferences).unwrap();
+            let sources=serde_json::to_value(&app.virtual_trenches).unwrap();
+            let allocation=app.virtual_trenches.as_ptr();
+            let d=app.project_template_dialog.as_mut().unwrap();d.output=Some(output.clone());
+            match field {
+                "opmerkingen"=>d.options.choices[0].comments="x".repeat(4097),
+                "uitgesloten opmerkingen"=>{d.options.choices[1].include=false;d.options.choices[1].comments="x".repeat(4097);},
+                "projectnaam"=>d.options.project="x".repeat(2049),
+                "tekenaar"=>d.options.drawn_by="x".repeat(2049),
+                _=>unreachable!(),
+            }
+            let options=d.options.clone();
+            app.start_project_template_export(options,output.clone());
+            assert!(app.template_job.is_none(),"invalid {field} must not start a worker");
+            assert!(app.project_template_dialog.is_some(),"the reviewed form must stay available");
+            assert_eq!(serde_json::to_value(&app.template_preferences).unwrap(),saved);
+            assert_eq!(serde_json::to_value(&app.virtual_trenches).unwrap(),sources);
+            assert_eq!(app.virtual_trenches.as_ptr(),allocation);
+            assert!(app.template_state.is_some());assert!(!app.dirty);assert!(!output.exists());
+            let message=app.message.to_lowercase();
+            assert!(message.contains(field.strip_prefix("uitgesloten ").unwrap_or(field)),"{field}: {}",app.message);
+            if field.contains("opmerkingen"){assert!(app.message.contains(if field.starts_with("uitgesloten"){"PS13"}else{"PS12"}));}
+            // The failed attempt must not poison the next ordinary project save.
+            sleufbase_rust::project::save_project_new(&dir.path().join("project.json"),&app.snapshot()).unwrap();
+            let draft=&app.project_template_dialog.as_ref().unwrap().options;
+            match field {
+                "opmerkingen"=>assert_eq!(draft.choices[0].comments.len(),4097),
+                "uitgesloten opmerkingen"=>assert_eq!(draft.choices[1].comments.len(),4097),
+                "projectnaam"=>assert_eq!(draft.project.len(),2049),
+                "tekenaar"=>assert_eq!(draft.drawn_by.len(),2049),
+                _=>unreachable!(),
+            }
+        }
+    }
+    #[test]
+    fn file_availability_is_checked_when_starting_and_keeps_the_reviewed_form(){
+        let dir=tempfile::tempdir().unwrap();let mut app=app();app.open_project_template_dialog();
+        let output=dir.path().join("existing.dxf");
+        let d=app.project_template_dialog.as_mut().unwrap();
+        d.output=Some(output.clone());d.options.template=dir.path().join("missing-template.dxf");
+        assert!(d.readiness().is_ok(),"drawing the form must not probe the template path");
+        let options=d.options.clone();let allocation=app.virtual_trenches.as_ptr();
+        app.start_project_template_export(options,output.clone());
+        assert!(app.template_job.is_none());assert!(app.project_template_dialog.is_some());
+        assert!(app.message.contains("eigen DXF-sjabloon ontbreekt"));
+        let d=app.project_template_dialog.as_mut().unwrap();d.options.template=PathBuf::new();
+        std::fs::write(&output,b"keep existing drawing").unwrap();
+        assert!(d.readiness().is_ok(),"output availability is checked only on the export action");
+        let options=d.options.clone();app.start_project_template_export(options,output.clone());
+        assert!(app.template_job.is_none());assert!(app.project_template_dialog.is_some());
+        assert!(app.message.contains("bestaat al"));assert_eq!(std::fs::read(output).unwrap(),b"keep existing drawing");
+        assert_eq!(app.virtual_trenches.as_ptr(),allocation);assert!(app.template_preferences.is_none());
     }
     #[test]
     fn bulk_export_actions_preserve_excluded_details_and_empty_positions(){
