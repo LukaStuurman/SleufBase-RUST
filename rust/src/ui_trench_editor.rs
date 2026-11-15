@@ -12,6 +12,8 @@ mod ahn_fill;
 mod object_ui;
 #[path="ui_trench_section.rs"]
 mod section;
+#[path="ui_trench_workspace.rs"]
+mod workspace;
 
 #[derive(Clone,PartialEq)]
 struct ObjectForm {
@@ -80,6 +82,14 @@ impl ObjectForm {
             depth:object.metadata.get("sleufbase_depth_meters").and_then(serde_json::Value::as_f64).unwrap_or(0.7),
         }
     }
+    /// Reuse only editable cable properties, never coordinates, absolute Z or
+    /// the source object's measurement/reference metadata.
+    fn for_new_entry(&self)->Self {
+        Self {role:self.role.clone(),name:self.name.clone(),source:self.source.clone(),
+            attributes:self.attributes.clone(),diameter:self.diameter,quantity:self.quantity,
+            angle:self.angle,rgb:self.rgb,use_depth:self.use_depth,depth:self.depth,
+            ..Default::default()}
+    }
     fn has_pending_entry(&self)->bool{let mut empty=Self::default();empty.from_end=self.from_end;self!=&empty}
     fn distance(&self,length:f64)->f64{if self.from_end{length-self.chainage}else{self.chainage}}
     fn set_distance(&mut self,length:f64,distance:f64)->Result<(),String>{
@@ -126,6 +136,8 @@ pub(super) struct Editor {
     pub(super) picking_object:bool,
     entry_started:bool,
     object:ObjectForm,
+    prepared_entry:Option<ObjectForm>,
+    last_entry:Option<ObjectForm>,
     confirm_delete:bool,
     error:String,
     paste:String,
@@ -149,7 +161,7 @@ impl Editor {
             index,original:source.clone(),draft:source.clone(),
             label:source.label.clone(),start:source.start,
             end:source.end,width:source.width_meters,
-            selected:None,section_drag:None,jump_to_objects:Some(true),objects_tab:true,picking_object:false,entry_started:false,object:ObjectForm::default(),
+            selected:None,section_drag:None,jump_to_objects:Some(true),objects_tab:true,picking_object:false,entry_started:false,object:ObjectForm::default(),prepared_entry:None,last_entry:None,
             confirm_delete:false,error:String::new(),paste:String::new(),notice:String::new(),shift_x:0.,shift_y:0.,
             dekband_start:0.,dekband_end:source.length(),
             dekband_name:"Dekband".into(),dekband_rgb:[17,24,39],
@@ -187,6 +199,8 @@ impl Editor {
         }
         edit::check(&next)?;
         self.draft=next;
+        self.last_entry=Some(self.object.for_new_entry());
+        self.prepared_entry=None;
         self.selected=None;
         self.object=ObjectForm::default();self.entry_started=false;
         Ok(())
@@ -197,6 +211,7 @@ impl Editor {
         if self.entry_changed(){self.add_or_replace()?;}
         self.selected=None;
         self.object=ObjectForm::default();
+        self.prepared_entry=None;
         self.entry_started=false;
         self.section_drag=None;
         Ok(())
@@ -210,9 +225,25 @@ impl Editor {
             let mut original=ObjectForm::from_object(&self.draft,&self.draft.objects[index]);
             original.from_end=self.object.from_end;
             self.object!=original
+        }else if let Some(template)=&self.prepared_entry {
+            let mut baseline=template.clone();baseline.from_end=self.object.from_end;
+            self.entry_started||self.object!=baseline
         }else{
             self.entry_started||self.object.has_pending_entry()
         }
+    }
+    fn prepare_similar_entry(&mut self)->Result<(),String> {
+        let template=if self.selected.is_some()||self.entry_changed(){
+            self.object.for_new_entry()
+        }else{
+            self.prepared_entry.clone().or_else(||self.last_entry.clone()).ok_or("Selecteer eerst een kabel of voeg er een toe")?
+        };
+        self.finish_entry()?;
+        self.object=template.clone();
+        self.prepared_entry=Some(template);
+        self.notice="Eigenschappen overgenomen. Klik een nieuwe plek in de doorsnede of vul een andere positie in.".into();
+        self.error.clear();
+        Ok(())
     }
     fn select_object(&mut self,index:usize)->bool {
         if self.selected==Some(index){return true;}
@@ -220,6 +251,7 @@ impl Editor {
             if let Err(error)=self.add_or_replace(){self.error=error;return false;}
         }
         self.selected=Some(index);
+        self.prepared_entry=None;
         self.object=ObjectForm::from_object(&self.draft,&self.draft.objects[index]);
         self.entry_started=false;
         self.error.clear();
@@ -360,13 +392,20 @@ impl SleufBaseApp {
         let mut open=true;
         let mut action=None;
         egui::Window::new("Proefsleuf bewerken").id(egui::Id::new("virtual-trench-editor"))
-            .open(&mut open).default_width(730.)
+            .open(&mut open).default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
             .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
             .constrain_to(ctx.screen_rect().shrink(12.))
             .resizable(true).show(ctx,|ui|{
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                theme::card(10,12,8).show(ui,|ui|{
+                    ui.horizontal_wrapped(|ui|{
+                        ui.heading(&editor.label);
+                        ui.weak(format!("{:.2} m lang  ·  {:.2} m breed  ·  {} kabels / leidingen",
+                            (editor.end.x-editor.start.x).hypot(editor.end.y-editor.start.y),editor.width,editor.draft.objects.len()).replace('.',","));
+                    });
+                });
                 ui.horizontal_wrapped(|ui|{
                     if ui.selectable_label(editor.objects_tab,"Doorsnede").clicked()&&!editor.objects_tab{
                         match editor.sync_axis(){
@@ -381,10 +420,10 @@ impl SleufBaseApp {
                             Err(error)=>editor.error=error,
                         }
                     }
-                    ui.small(&editor.label);
+                    ui.weak("Plaatsen en bewerken · wijzigingen blijven in concept tot je opslaat");
                 });
                 let scroll=egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
-                    .max_height((ui.available_height()-100.).max(80.)).auto_shrink([false,false]);
+                    .max_height((ui.available_height()-110.).max(60.)).auto_shrink([false,false]);
                 let scroll=if reset_scroll{scroll.vertical_scroll_offset(0.)}else{scroll};
                 scroll.show(ui,|ui|{
                     if !editor.objects_tab||editor.ahn_job.is_some(){editor.ahn_controls(ui,ctx);}
@@ -530,50 +569,7 @@ impl SleufBaseApp {
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
                     }else{
-                    editor.show_section(ui);
-                    ui.heading(if editor.selected.is_some(){"Kabel of leiding bewerken"}else{"Nieuwe kabel of leiding"});
-                    pick_requested=object_ui::show(&mut editor,ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
-                    if editor.selected.is_some()&&ui.button("Nieuwe kabel/leiding").clicked(){
-                        let result=editor.finish_entry();
-                        match result{
-                            Ok(())=>editor.error.clear(),
-                            Err(error)=>editor.error=error,
-                        }
-                    }
-                    ui.collapsing(format!("Objectenlijst ({})",editor.draft.objects.len()),|ui|{
-                    let mut remove=None;
-                    egui::ScrollArea::vertical().max_height(190.)
-                        .show_rows(ui,64.,editor.draft.objects.len(),|ui,rows|{
-                            for index in rows {
-                                let obj=&editor.draft.objects[index];
-                                let (c,o)=edit::coordinates(&editor.draft,obj.position);
-                                let description=format!("{:>3}  {} · Ø{} mm · {}× · {:.2} m / {:+.2} m",
-                                    index+1,obj.object_name,if obj.attributes[1].is_empty(){"?"}else{&obj.attributes[1]},object_quantity(obj),c,o);
-                                ui.vertical(|ui|{
-                                    ui.add(egui::Label::new(description).truncate());
-                                    ui.horizontal(|ui|{
-                                    if ui.small_button("Bewerk").clicked() {
-                                        editor.select_object(index);
-                                    }
-                                    if ui.small_button("Verwijder").clicked(){remove=Some(index);}
-                                    });
-                                });
-                            }
-                        });
-                    if let Some(index)=remove {
-                        match edit::remove_object(&mut editor.draft,index) {
-                            Ok(()) if editor.selected==Some(index)=>{
-                                editor.selected=None;
-                                editor.object=ObjectForm::default();
-                                editor.entry_started=false;
-                            }
-                            Ok(())=>{
-                                editor.selected=editor.selected.map(|selected|selected-usize::from(index<selected));
-                            }
-                            Err(error)=>editor.error=error,
-                        }
-                    }
-                    });
+                    pick_requested=editor.show_objects_workspace(ui,&self.migrated_settings.object_rules,&self.migrated_settings.kickthemap_material_choices);
                     ui.collapsing("Excel: meerdere meetobjecten importeren / kopiëren",|ui|{
                         ui.small("Plak tab-gescheiden cellen uit Excel: Rol, Object, Bron, Kettingmaat, Dwarsafstand, optionele Z en 3 attributen. Komma als decimaalteken is toegestaan.");
                         ui.add(egui::TextEdit::multiline(&mut editor.paste)
@@ -615,7 +611,7 @@ impl SleufBaseApp {
                     ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
                     ui.horizontal_wrapped(|ui|{
                         if ui.add_enabled(editor.objects_tab,egui::Button::new(if editor.selected.is_some(){"Wijzig kabel/leiding"}else{"Kabel/leiding toevoegen"})).clicked(){
-                            match editor.add_or_replace(){Ok(())=>{editor.error.clear();editor.notice="Toegevoegd aan concept. Klik op Opslaan in project om te bewaren.".into();},Err(e)=>editor.error=e}
+                            match editor.add_or_replace(){Ok(())=>{editor.error.clear();editor.notice="Kabel/leiding bewaard in dit concept. Voeg er nog een toe of sla de proefsleuf op.".into();},Err(e)=>editor.error=e}
                         }
                         if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
                         if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
@@ -1004,5 +1000,90 @@ mod draft_snapshot_tests {
         assert_eq!(saved.objects[0].position.z,Some(4.2));
         assert_eq!(saved.objects[1].position.z,Some(4.4));
         assert_eq!(saved.objects[1].metadata["surface_z"],5.);
+    }
+}
+
+#[cfg(test)]
+mod repeated_entry_tests {
+    use super::*;
+    fn trench()->VirtualTrench {
+        VirtualTrench::new("PS12".into(),
+            Vertex{x:155000.,y:463000.,z:Some(3.)},
+            Vertex{x:155010.,y:463000.,z:Some(3.)},0.6).unwrap()
+    }
+    #[test]
+    fn repeating_properties_waits_for_input_and_never_adds_an_unused_template() {
+        let mut editor=Editor::new(0,&trench());
+        editor.object.name="Waterleiding".into();editor.object.source="water".into();
+        editor.object.role="leiding".into();editor.object.attributes=["PE".into(),"110".into(),"2 mantelbuis".into()];
+        editor.object.diameter=110.;editor.object.quantity=2;editor.object.angle=25.;
+        editor.object.use_depth=true;editor.object.depth=0.8;editor.object.chainage=4.;
+        editor.add_or_replace().unwrap();
+        editor.prepare_similar_entry().unwrap();
+        assert_eq!((editor.object.name.as_str(),editor.object.diameter,editor.object.quantity,editor.object.angle),("Waterleiding",110.,2,25.));
+        assert_eq!(editor.object.chainage,0.);
+        assert!(!editor.entry_changed());
+        // Merely changing the distance anchor is not a new cable either.
+        editor.object.from_end=true;assert!(!editor.entry_changed());
+        let saved=editor.completed_draft().unwrap();
+        assert_eq!(saved.objects.len(),1);
+        assert_eq!(saved.objects[0].position.x,155004.);
+        assert_eq!(saved.objects[0].position.z,Some(2.2));
+        editor.prepare_similar_entry().unwrap();
+        editor.pick_object_position([155007.,463000.]).unwrap();
+        assert!(editor.entry_changed());
+        let saved=editor.completed_draft().unwrap();
+        assert_eq!(saved.objects.len(),2);
+        assert_eq!(saved.objects[1].position.x,155007.);
+        assert_eq!(saved.objects[1].position.z,Some(2.2));
+    }
+    #[test]
+    fn repeating_a_prepared_selection_keeps_that_type_instead_of_the_last_added_type() {
+        let mut source=trench();
+        source.objects.push(ObjectForm{name:"Bestaande LS".into(),source:"ls".into(),chainage:2.,diameter:50.,attributes:[String::new(),"50".into(),String::new()],..Default::default()}.to_object(&source).unwrap());
+        let mut editor=Editor::new(0,&source);
+        editor.object.name="Waterleiding".into();editor.object.source="water".into();
+        editor.object.diameter=110.;editor.object.chainage=4.;editor.add_or_replace().unwrap();
+        assert_eq!(editor.last_entry.as_ref().unwrap().source,"water");
+        assert!(editor.select_object(0));editor.prepare_similar_entry().unwrap();
+        assert_eq!(editor.object.name,"Bestaande LS");
+        assert!(!editor.entry_changed());
+        editor.prepare_similar_entry().unwrap();
+        assert_eq!(editor.object.name,"Bestaande LS");
+        assert_eq!(editor.object.source,"ls");
+        assert_eq!(editor.object.diameter,50.);
+        assert!(!editor.entry_changed());
+        assert_eq!(editor.completed_draft().unwrap().objects.len(),2);
+    }
+    #[test]
+    fn repeating_a_measured_object_does_not_copy_position_height_or_identity() {
+        let mut source=trench();
+        source.objects.push(TrenchPoint{
+            role:"kabel".into(),object_name:"LS".into(),source_name:"ls".into(),
+            attributes:["Al".into(),"50".into(),"".into()],
+            position:Vertex{x:155002.,y:463000.3,z:Some(1.1)},
+            metadata:serde_json::json!({"point_id":"measurement-17","surface_mode":"manual","template_reference_point":{"x":155001.,"y":463001.},"crossing_angle_degrees":-15.,"quantity":1,"display_rgb":[255,160,0]}),
+        });
+        let original=serde_json::to_vec(&source.objects[0]).unwrap();
+        let mut editor=Editor::new(0,&source);
+        assert!(editor.select_object(0));editor.prepare_similar_entry().unwrap();
+        assert!(!editor.object.has_elevation);
+        assert_eq!((editor.object.chainage,editor.object.offset,editor.object.elevation),(0.,0.,0.));
+        assert_eq!(editor.object.rgb,Some([255,160,0]));
+        editor.pick_object_position([155006.,463000.]).unwrap();
+        let saved=editor.completed_draft().unwrap();
+        assert_eq!(serde_json::to_vec(&saved.objects[0]).unwrap(),original);
+        let added=&saved.objects[1];
+        assert_eq!(added.position,Vertex{x:155006.,y:463000.,z:None});
+        assert_eq!(added.attributes,["Al","50",""]);
+        assert_eq!(added.metadata["crossing_angle_degrees"],-15.);
+        assert!(added.metadata.get("point_id").is_none());
+        assert!(added.metadata.get("template_reference_point").is_none());
+        assert!(added.metadata.get("surface_mode").is_none());
+        editor.object.angle=81.;
+        let before=serde_json::to_vec(&editor.draft).unwrap();
+        assert!(editor.prepare_similar_entry().is_err());
+        assert_eq!(serde_json::to_vec(&editor.draft).unwrap(),before);
+        assert_eq!(editor.object.angle,81.);
     }
 }

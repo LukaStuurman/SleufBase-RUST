@@ -1,31 +1,32 @@
-## SleufBase Rust 1.0.2 voor Windows
+## SleufBase Rust 1.0.3 voor Windows
 
-### Gemma verwijderd en proefsleufinvoer verbeterd
+### KickTheMap-aanmelding onthouden en herstellen
 
-- De Gemma-AI-functie, het AI-menu en de bijbehorende modelruntime zijn verwijderd.
-- Handmatige maaiveldteksten, lijnkleuren en AHN-aanvulling blijven beschikbaar.
-- Een kabel of leiding die nog in het invoerveld staat, wordt nu ook meegenomen bij een handmatige kopie en bij kopiëren naar Excel.
-- Excel-import maakt geen dubbele kabel meer nadat een bestaande kabel is geselecteerd.
-- Bij het aanpassen van de beginhoogte worden alleen kabelhoogtes die expliciet aan het beginmaaiveld gekoppeld zijn opnieuw berekend. Hun ingevoerde diepte blijft behouden; gemeten en absolute hoogtes blijven intact.
-- Geïmporteerde Python-projecten behouden hun oorspronkelijke kaartinstellingen en kunnen weer verliesvrij worden teruggeschreven. Bewaar bewust gekozen hogere resoluties in een Rust-project.
-- De extra kabelaccenten zijn beperkt tot sjabloonexports. Gewone kaartuitvoer behoudt de gekozen rasterkwaliteit en de oorspronkelijke TIFF-weergave.
-- Extra sjabloonmarkeringen volgen de ingestelde dekking en verdwijnen volledig wanneer de rasterlaag onzichtbaar is.
-- Het versienummer van de Windows-installer komt overeen met de applicatieversie.
+- Bij het starten probeert SleufBase een onthouden KickTheMap-sessie op de achtergrond te herstellen. Een geslaagde automatische aanmelding opent geen extra jobsvenster.
+- Zonder opgeslagen browsersessie kan SleufBase de bewaarde rechtstreekse aanmelding gebruiken. Na mislukt sessieherstel blijft duidelijk welk account de gebruiker opnieuw moet bevestigen; de app wisselt niet stilzwijgend naar een ander opgeslagen account.
+- Annuleren en een onderbroken verbinding laten geen vastgelopen aanmeldstatus achter.
+- Uitloggen schakelt automatisch aanmelden blijvend uit, ook als een ander SleufBase-venster het browserprofiel nog gebruikt. De app meldt duidelijk wanneer opgeslagen gegevens niet volledig konden worden opgeruimd.
+- De aanmeldopties en foutmeldingen zijn in gewone taal beschreven. Een verplichte beveiligingscontrole van KickTheMap blijft beschikbaar in de ingebouwde websiteweergave.
 
-### Scherpere en duidelijkere DXF-sjabloonexport
+### Overzichtelijker virtuele proefsleuven bewerken
 
-- De luchtfotokaart in het DXF-sjabloon krijgt compactere witte randen, terwijl RD-coördinaten, schaalbalk, legenda en noordpijl behouden blijven.
-- Nieuwe Rust-projecten gebruiken standaard 300 DPI in plaats van 150 DPI: viermaal zoveel kaartpixels.
-- Virtuele proefsleuven worden voor de detailafbeelding met kwaliteitsfactor 4 gerenderd, wat ongeveer zestienmaal zoveel detailpixels geeft.
-- Kabel- en leidingpunten van virtuele proefsleuven krijgen duidelijke, kleurgecodeerde markers met contrastrand op de luchtfoto, ook als de sleuf zelf erg klein in beeld is.
-- De grote detailafbeelding wordt niet opnieuw in volledige resolutie opgebouwd voor de kaart, om geheugen en exporttijd te beperken.
-- De zelfstandige A4-kaartenexport behoudt de oorspronkelijke paginamarges; de compactere opmaak geldt alleen voor DXF-sjablonen.
+- Een brede editor toont de doorsnede en kabels-/leidingenlijst naast de invoer. Op smallere vensters staan deze onderdelen onder elkaar.
+- De kop toont de sleufnaam, lengte, breedte en het aantal kabels en leidingen.
+- Positie en diepte, type en afmetingen zijn gegroepeerd. De kruishoek blijft direct visueel instelbaar; aanvullende brongegevens staan onder uitklappers.
+- Met **Zelfde type toevoegen** worden gebruikerseigenschappen klaargezet voor een volgende kabel. Kies daarna een nieuwe plek. Alleen de voorinvulling openen maakt geen extra kabel aan.
+- Herhalen neemt geen absolute hoogte, RD-positie, meetidentiteit of bronreferenties over. Gemeten objecten blijven behouden.
 
-### Eerdere wijzigingen (v1.0.1)
+### Duidelijkere DXF-sjabloonexport
 
-- Eén uniform exportvenster voor KickTheMap-jobs, GeoTIFF- en virtuele proefsleuven, ongeacht de volgorde van toevoegen.
-- Virtuele proefsleuven blijven in de selectielijst staan na het herstellen van oude sjablooninstellingen.
-- Nieuwe online exports gebruiken standaard PDOK-luchtfoto's, offline exports blijven zonder online achtergrond.
-- Native KickTheMap-inloggen met beveiligd opgeslagen aanmeldgegevens, betere GeoTIFF-coördinaten en stabiele kabeloriëntatie.
+- Het gecombineerde exportvenster groepeert projectgegevens, kaarten/profielen en proefsleufkeuze. Aanvullende instellingen staan onder **Meer exportinstellingen**.
+- Directe acties nemen alle sleuven mee of sluiten ze uit en zetten dwarsprofielen voor meegenomen sleuven aan of uit.
+- De vaste samenvatting toont het aantal sleuven/profielen, de gebruikte kaartachtergrond, kaartkwaliteit en uitvoer.
+- Offline export toont duidelijk dat geen luchtfoto wordt opgehaald, terwijl de online achtergrondvoorkeur behouden blijft.
+- Ontbrekende geselecteerde bronnen, werkfoto's en logo's en ongeldige instellingen worden vóór het starten van de export gemeld. Uitgesloten sleuven blokkeren de export niet.
+- Het openen van het venster verandert geen opgeslagen DPI- of schaalwaarden. De invoer ondersteunt hetzelfde bereik als het projectformaat.
 
-Gebruik de Windows-installer of portable ZIP. Vergelijk de downloads met de SHA-256-bestanden indien gewenst.
+### Beschikbare functies
+
+Handmatig maaiveld invullen, AHN, de scherpe sjabloondetails en de verbeteringen aan kabelinvoer en Python-projectuitwisseling blijven behouden. Gemma is verwijderd.
+
+Gebruik de Windows-installer of portable ZIP. Beide downloads hebben een SHA-256-controlebestand.

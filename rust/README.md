@@ -119,8 +119,10 @@ Installeer Rust via https://rustup.rs en voer in PowerShell uit:
     cargo build --release
     .\target\release\sleufbase-rust.exe
 
-Of download bij GitHub Actions in workflow 'Rust preview - Windows' het artifact
-'SleufBase-Rust-Windows-preview' van een geslaagde build. Dit is geen stable release.
+De [laatste release](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest)
+bevat een Windows-installer en portable ZIP. Ontwikkelbuilds staan bij GitHub Actions
+in **Rust Windows**, als **SleufBase-Rust-Windows-portable-preview**
+en **SleufBase-Rust-Windows-installer-preview**.
 
 ### Werkfoto's in native sjabloon-DXF (PNG/JPEG)
 

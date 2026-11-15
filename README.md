@@ -17,11 +17,20 @@ invullen en AHN-hoogtes aanvullen blijven beschikbaar.
 
 ## Downloaden en starten
 
-Open [Actions](https://github.com/LukaStuurman/SleufBase-RUST/actions), kies een
-geslaagde **Rust Windows**-build en download **SleufBase-Rust-Windows-portable-preview**.
-Pak de volledige ZIP uit en start `sleufbase-rust.exe`.
-Dezelfde build levert een afzonderlijke Windows-previewinstaller.
+Download de [Windows-installer](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-Setup.exe)
+of de [portable ZIP](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-portable.zip)
+van de [laatste release](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest).
+Sluit SleufBase voor het bijwerken. Pak bij de portable versie de volledige ZIP uit
+en start `sleufbase-rust.exe`.
+Ontwikkelbuilds staan bij [Actions](https://github.com/LukaStuurman/SleufBase-RUST/actions)
+in de workflow **Rust Windows**.
 Zie [de gebruiksinstructies](rust/PORTABLE.md).
+
+## Dagelijks gebruik
+
+- **KickTheMap:** open **KickTheMap → Inloggen**, meld je aan en laat **Inloggegevens onthouden en automatisch aanmelden** aangevinkt als je de aanmelding op dit apparaat wilt bewaren. Een bewaarde aanmelding wordt bij het starten op de achtergrond hersteld. Bij een verplichte beveiligingscontrole gebruik je de ingebouwde websiteweergave. **Uitloggen** schakelt automatisch aanmelden uit.
+- **Virtuele proefsleuf:** teken de sleuf op de kaart en open de editor. Klik in de doorsnede om een positie te kiezen, vul type en afmetingen in en kies **Kabel/leiding toevoegen**. Met **Zelfde type toevoegen** zet je de eigenschappen klaar voor de volgende kabel; kies daarna de nieuwe positie. **Opslaan in project** bewaart de volledige sleuf, inclusief actieve invoer. **Sluiten zonder opslaan** verwerpt het concept.
+- **DXF-sjabloon:** kies projectgegevens en een nieuwe uitvoer-DXF, vink de gewenste sleuven aan en controleer de samenvatting. De standaardkaart gebruikt een luchtfoto; offline wordt een witte achtergrond met al geladen gegevens gebruikt. Exacte schaal, resolutie, eigen sjabloon, logo's en lettertypen staan onder **Meer exportinstellingen**. Bronkeuze, profielschaal, foto's en opmerkingen zijn per sleuf beschikbaar.
 
 ## Zelf bouwen
 

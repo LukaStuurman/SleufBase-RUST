@@ -9,7 +9,7 @@ pub(super) fn scale(ui: &mut egui::Ui, scale: &mut Option<i64>) {
         }
         if let Some(value) = scale {
             ui.label("1:");
-            ui.add(egui::DragValue::new(value).range(20..=5000).speed(5.));
+            ui.add(egui::DragValue::new(value).range(1..=1_000_000).speed(5.));
         }
     });
 }

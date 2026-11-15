@@ -126,6 +126,9 @@ impl SleufBaseApp {
             self.message = "Selecteer minimaal één proefsleufvak".into();
             return;
         }
+        if let Err(error)=project_template_ui::validate_export_sources(&options,&self.datasets,&self.geotiffs,&self.virtual_trenches){
+            self.message=error;return;
+        }
         let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
         use sleufbase_rust::template_project::hydrate;
         let needs_snapshot=requires_live_snapshot(&options,&self.geotiffs);
@@ -324,7 +327,7 @@ impl SleufBaseApp {
         let Some(job) = &self.template_job else { return };
         let (stage, bytes) = job.control.progress();
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Rust-sjabloonexport");
+            ui.heading("DXF-sjabloon exporteren");
             ui.label(job.output.display().to_string());
             ui.label(job.status.as_str());
             ui.label(match stage {
@@ -339,7 +342,7 @@ impl SleufBaseApp {
             if ui.add_enabled(job.control.can_cancel(), egui::Button::new("Annuleren")).clicked() {
                 cancel = true;
             }
-            ui.label("Bij succes vervangt de nieuwe DXF het gekozen uitvoerbestand.");
+            ui.label("De DXF en bijbehorende afbeeldingen worden samen opgeslagen. Een bestaande uitvoer blijft behouden.");
             ui.spinner();
         });
         if cancel {
@@ -479,13 +482,41 @@ mod tests {
         assert!(doc.records().any(|record| record.kind() == "IMAGEDEF"));
     }
     #[test]
+    fn missing_job_raster_is_rejected_before_sources_leave_the_app() {
+        let dir=tempfile::tempdir().unwrap();let output=dir.path().join("missing-raster.dxf");
+        let mut app=SleufBaseApp::default();
+        app.datasets.push(sleufbase_rust::parse_job_features(
+            include_str!("../tests/fixtures/jobFeatures.json"),42,"PS42").unwrap());
+        let expected=serde_json::to_value(&app.datasets).unwrap();
+        let datasets_ptr=app.datasets.as_ptr();let features_ptr=app.datasets[0].features.as_ptr();
+        let options=sleufbase_rust::template_project::Options{
+            server_mode:sleufbase_rust::template_server::Mode::Offline,
+            choices:sleufbase_rust::template_project::suggest(&app.datasets,&[],&[]),
+            ..Default::default()
+        };
+        app.start_project_template_export(options,output.clone());
+        assert!(app.template_job.is_none());
+        assert!(app.template_preferences.is_none());assert!(!app.dirty);
+        assert_eq!(serde_json::to_value(&app.datasets).unwrap(),expected);
+        assert_eq!(app.datasets.as_ptr(),datasets_ptr);
+        assert_eq!(app.datasets[0].features.as_ptr(),features_ptr);
+        assert!(app.message.contains("PS42")&&app.message.contains("koppel een GeoTIFF"),"{}",app.message);
+        assert!(!output.exists());assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(),0);
+    }
+    #[test]
     fn project_bound_worker_restores_owned_datasets_when_mapping_fails() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = SleufBaseApp::default();
         app.datasets.push(sleufbase_rust::parse_job_features(
             include_str!("../tests/fixtures/jobFeatures.json"), 42, "PS42").unwrap());
+        let path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+        let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+        raster.kickthemap_job_id=Some(42);
+        app.geotiffs.push(raster);
         let expected = serde_json::to_value(&app.datasets).unwrap();
+        let datasets_ptr = app.datasets.as_ptr();
         let ptr = app.datasets[0].features.as_ptr();
+        let rasters_ptr = app.geotiffs.as_ptr();
         app.dirty = true;
         let template = dir.path().join("template.dxf");
         std::fs::write(&template, b"not needed for validation").unwrap();
@@ -493,11 +524,18 @@ mod tests {
             server_mode:sleufbase_rust::template_server::Mode::Offline,
             paired:false,
             template,
-            choices: sleufbase_rust::template_project::suggest(&app.datasets, &[], &[]),
+            choices: sleufbase_rust::template_project::suggest(&app.datasets, &app.geotiffs, &[]),
             ..Default::default()
         };
+        assert_eq!(opts.choices[0].raster,Some(0));
+        // The TIFF exists and passes the cheap UI preflight. Invalid map bounds
+        // are diagnosed on the worker after it has taken ownership of sources.
+        app.geotiffs[0].bounds.max_x=app.geotiffs[0].bounds.min_x;
+        let expected_rasters=serde_json::to_value(&app.geotiffs).unwrap();
+        assert!(project_template_ui::validate_export_sources(&opts,&app.datasets,&app.geotiffs,&[]).is_ok());
         app.start_project_template_export(opts, dir.path().join("never.dxf"));
         assert!(app.datasets.is_empty(), "inputs must be owned by the export worker");
+        assert!(app.geotiffs.is_empty(), "raster inputs must also be owned by the worker");
         assert!(app.template_job.is_some());
         let ctx = egui::Context::default();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -507,9 +545,13 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(serde_json::to_value(&app.datasets).unwrap(), expected);
+        assert_eq!(app.datasets.as_ptr(), datasets_ptr);
         assert_eq!(app.datasets[0].features.as_ptr(), ptr);
+        assert_eq!(serde_json::to_value(&app.geotiffs).unwrap(),expected_rasters);
+        assert_eq!(app.geotiffs.as_ptr(),rasters_ptr);
         assert!(app.dirty);
         assert!(app.message.contains("niet opgeslagen"));
+        assert!(app.message.contains("Ongeldige GeoTIFF-kaartgrenzen"),"{}",app.message);
         assert!(!dir.path().join("never.dxf").exists());
     }
     #[test]
