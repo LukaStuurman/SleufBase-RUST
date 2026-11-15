@@ -396,7 +396,7 @@ impl SleufBaseApp {
                         ui.small("Pas het label direct aan, bijvoorbeeld PS 25-2 of PS25B. Open Details voor de bron, schaal of werkfoto's.");
                         for (idx, slot) in dialog.options.choices.iter_mut().enumerate() {
                             ui.push_id(idx, |ui| {
-                                theme::card(10,10,8).stroke(Stroke::new(1.,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
+                                theme::card(10,10,8).stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(dialog.editor.selected[idx],format!("{:02}",idx+1)).clicked(){let modifiers=ui.input(|i|i.modifiers);clicked_row=Some((idx,modifiers.ctrl||modifiers.command,modifiers.shift));}
                                         if !matches!(slot.source,Source::Empty(_)){if ui.checkbox(&mut slot.include,"Meenemen").changed(){sync_editor=true;}}
@@ -823,7 +823,7 @@ mod flow_audit_tests {
         assert_eq!(effective_map_label(&d.options),"Online · PDOK-luchtfoto");
         for wanted in [1,10_000,1_000_000]{
             let mut manual=Some(wanted);
-            for _ in 0..3{ctx.run(egui::RawInput::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|template_profile_ui::scale(ui,&mut manual));});}
+            for _ in 0..3{let _=ctx.run(egui::RawInput::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|template_profile_ui::scale(ui,&mut manual));});}
             assert_eq!(manual,Some(wanted),"opening scale control must not clamp a valid saved scale");
         }
     }
