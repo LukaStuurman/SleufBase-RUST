@@ -266,6 +266,7 @@ pub fn with_project_overrides(base:&MigratedSettings,payload:&Value)->Result<Mig
         out.map_export.background=background.into();
     }
     if let Some(value)=source.get("kickthemap_object_layer_rules"){out.object_rules=crate::rule_settings::from_legacy(Some(value))?;}
+    if let Some(value)=source.get("kickthemap_material_choices"){out.kickthemap_material_choices=normalize_list(Some(value));}
     out.validate()?;Ok(out)
 }
 pub fn import_legacy_file(path:&Path)->Result<MigratedSettings,String> {
@@ -346,6 +347,10 @@ mod project_override_tests{
         let out=with_project_overrides(&base,&json!({"template_cross_section_marker_diameter":0.08,"template_show_profile_direction":false,"map_export_background_source":"osm","include_klic_in_map_exports":true,"password":"never copy"})).unwrap();
         assert_eq!(out.export_preferences.template_cross_section_marker_diameter,0.08);assert!(!out.export_preferences.template_show_profile_direction);assert_eq!(out.export_preferences.template_client_logo_path,"user.png");assert_eq!(out.dxf_label_gap,8.);assert_eq!(out.map_export.background,"osm");assert!(out.map_export.include_cad);assert_eq!(out.kickthemap_material_choices,base.kickthemap_material_choices);
         assert_eq!(base.export_preferences.template_cross_section_marker_diameter,0.05);assert!(!serde_json::to_string(&out).unwrap().contains("never copy"));
+        let materials=with_project_overrides(&base,&json!({"kickthemap_material_choices":[" PE ","pe","PVC"]})).unwrap();
+        assert_eq!(materials.kickthemap_material_choices,vec!["PE","PVC"]);
+        assert!(with_project_overrides(&base,&json!({"kickthemap_material_choices":[]})).unwrap().kickthemap_material_choices.is_empty());
+        assert_eq!(base.kickthemap_material_choices,vec!["user material"],"project choices must not change global defaults");
         assert_eq!(with_project_overrides(&base,&json!({"map_export_background_source":"cyclomedia_aerial"})).unwrap().map_export.background,"pdok");
         assert!(with_project_overrides(&base,&json!({"map_export_background_source":"future-provider"})).unwrap_err().contains("nog niet ondersteund"));
     }

@@ -272,8 +272,24 @@ impl Editor {
                 .unwrap_or(CABLE);
             let radius = section.radius(object_diameter(object));
             painter.circle_filled(point, radius, color);
+            let label_beside = depth.is_none() || point.y - radius - 18. < plot.top();
+            let label_left = point.x > plot.center().x;
+            let number_rect = (self.draft.objects.len() <= 24).then(|| painter.text(
+                if label_beside { point + egui::vec2(if label_left { -radius - 4. } else { radius + 4. }, 0.) }
+                else { point - egui::vec2(0., radius + 3.) },
+                if label_beside && label_left { egui::Align2::RIGHT_CENTER }
+                else if label_beside { egui::Align2::LEFT_CENTER }
+                else { egui::Align2::CENTER_BOTTOM },
+                (index + 1).to_string(),
+                font.clone(),
+                INK,
+            ));
             if let Some(pos) = hit_position {
-                let distance = pos.distance(point);
+                // A number belongs to its cable: clicking its label must never
+                // start an unrelated new entry in the empty space above it.
+                let distance = if number_rect.is_some_and(|rect| rect.expand(2.).contains(pos)) {
+                    0.
+                } else { pos.distance(point) };
                 if distance <= radius.max(9.)
                     && hit.is_none_or(|(nearest, _, _)| distance <= nearest)
                 {
@@ -299,19 +315,27 @@ impl Editor {
                 "Ø onbekend".into()
             };
             let left = point.x > plot.center().x;
-            painter.text(
-                point + egui::vec2(if left { -radius - 5. } else { radius + 5. }, -radius - 2.),
-                if left {
+            let label = match self.selected {
+                Some(index) => format!("{} · {diameter}", index + 1),
+                None => format!("Nieuw · {diameter}"),
+            };
+            let label_beside = active_depth.is_none() || point.y - radius - 18. < plot.top();
+            let label_rect = painter.text(
+                point + egui::vec2(if left { -radius - 5. } else { radius + 5. },
+                    if label_beside { 0. } else { -radius - 2. }),
+                if label_beside && left { egui::Align2::RIGHT_CENTER }
+                else if label_beside { egui::Align2::LEFT_CENTER }
+                else if left {
                     egui::Align2::RIGHT_BOTTOM
                 } else {
                     egui::Align2::LEFT_BOTTOM
                 },
-                diameter,
+                label,
                 font,
                 INK,
             );
             if let Some(pos) = hit_position {
-                let distance = pos.distance(point);
+                let distance = if label_rect.expand(2.).contains(pos) { 0. } else { pos.distance(point) };
                 if distance <= radius.max(9.)
                     && hit.is_none_or(|(nearest, _, _)| distance <= nearest)
                 {
