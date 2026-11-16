@@ -114,6 +114,9 @@ fn verify(o: &DxfOverlay, case: &Value) {
         .chain(o.features.len()..o.features.len() + o.expanded.features.len());
     let expected = case["scene"].as_array().unwrap();
     assert_eq!(indices.clone().count(), expected.len());
+    let r12 = case["file"].as_str().unwrap().starts_with("R12");
+    let mut culled_definitions = 0;
+    let mut hidden_layer_definitions = 0;
     for (i, w) in indices.zip(expected) {
         let d = o.inspect_feature(i).unwrap();
         let detail = o.inspect_details(i).unwrap();
@@ -137,6 +140,33 @@ fn verify(o: &DxfOverlay, case: &Value) {
         }
         let actual: Vec<_> = d.paths().filter(|p| !p.is_empty()).collect();
         let paths = w["paths"].as_array().unwrap();
+        if d.source.entity_type == "ATTDEF" {
+            let cad = d.source.cad.as_deref().unwrap();
+            let contours = &cad.text.as_deref().unwrap().contours;
+            // The corpus's ENTITY case uses group 60, which R12 cannot store.
+            // Derive the expectation from fixture data, not from is_hidden().
+            let entity_hidden = w["tag"] == "ENTITY" && !r12;
+            let attribute_hidden = w["flags"].as_u64().unwrap() & 1 != 0;
+            assert_eq!(cad.invisible, entity_hidden, "{}", d.source.handle);
+            assert_eq!(cad.is_hidden(), entity_hidden || attribute_hidden);
+            if entity_hidden || attribute_hidden {
+                // The original reference prepared even hidden tag ink. Native
+                // import preserves the source but avoids all unused glyph buffers.
+                assert!(!paths.is_empty(), "hidden fixture must exercise tag ink");
+                assert!(!d.visible);
+                assert!(actual.is_empty() && d.points.is_empty() && d.path_breaks.is_empty());
+                assert!(d.source.points.is_empty() && cad.path_breaks.is_empty());
+                assert!(contours.points.is_empty() && contours.kinds.is_empty());
+                culled_definitions += 1;
+                continue;
+            }
+            if !d.visible {
+                // A layer can be enabled later: retain and compare all its ink.
+                assert_eq!(w["layer"], "Off");
+                assert!(!actual.is_empty() && !contours.points.is_empty());
+                hidden_layer_definitions += 1;
+            }
+        }
         assert_eq!(actual.len(), paths.len(), "{}", d.source.handle);
         for (a, w) in actual.iter().zip(paths) {
             let mut from = point(&w["start"]);
@@ -164,6 +194,8 @@ fn verify(o: &DxfOverlay, case: &Value) {
             close(g::xyz(*a.last().unwrap()), from);
         }
     }
+    assert_eq!(culled_definitions, if r12 { 1 } else { 2 });
+    assert_eq!(hidden_layer_definitions, 1);
 }
 #[test]
 fn r12_to_r2018_ascii_binary_definitions_match_original_tag_ink_and_insert_exclusion() {
