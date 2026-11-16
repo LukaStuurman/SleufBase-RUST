@@ -140,10 +140,25 @@ fn navigation_shell_map_uses_the_visible_available_area() {
                 })
                 .max_by(|a, b| a.0.area().total_cmp(&b.0.area()))
                 .expect("map shape");
-            assert!(
-                map.0.width() > size[0] - 500. && map.0.height() > size[1] - 230.,
-                "map too small: {map:?} at {size:?}"
-            );
+            let toolbar_bottom = out.shapes.iter().filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if matches!(text.galley.text(),
+                    "TIFF" | "Proefsleufnaam" | "Maaiveld invullen" | "Referentiepunt" | "Beginpunt") =>
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).bottom()),
+                _ => None,
+            }).max_by(f32::total_cmp).expect("map toolbar labels");
+            let status_top = out.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) if rect.fill == theme::SURFACE_ALT
+                    && rect.corner_radius == egui::CornerRadius::same(16)
+                    && rect.rect.width() > 500. => Some(rect.rect.top()),
+                _ => None,
+            }).expect("map status card");
+            // The controls can wrap onto two rows. Check that the map fills
+            // their actual remaining space, not a fixed fraction of the window.
+            assert!(map.0.width() > size[0] - 500., "map too narrow: {map:?} at {size:?}");
+            assert!((0. ..=20.).contains(&(map.0.top() - toolbar_bottom)),
+                "unused space or overlap below toolbar: {toolbar_bottom}, map {map:?}");
+            assert!((0. ..=16.).contains(&(status_top - map.0.bottom())),
+                "unused space or overlap above status: {status_top}, map {map:?}");
             assert!(map.1.contains_rect(map.0), "map clipped: {map:?}");
             assert!(map.0.bottom() < size[1] - 40., "map covers status: {map:?}");
         }

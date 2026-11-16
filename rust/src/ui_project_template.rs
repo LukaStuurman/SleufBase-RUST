@@ -1158,12 +1158,25 @@ mod flow_audit_tests {
         let selected=d.editor.selected.clone();
         let sources=d.options.choices.iter().map(|choice|choice.source).collect::<Vec<_>>();
         let ctx=egui::Context::default();
-        let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1500.,930.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
+        let time=std::cell::Cell::new(0.);
+        let frame=|app:&mut SleufBaseApp,events|{
+            time.set(time.get()+0.2);
+            ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1500.,930.))),
+                time:Some(time.get()),predicted_dt:0.2,events,..Default::default()},|ctx|app.show_project_template_dialog(ctx))
+        };
+        for _ in 0..4{frame(&mut app,vec![]);}
+        // The compact body initially clips the first checkbox below its footer.
+        // Use the dialog's real reveal path and settle its scroll animation
+        // before clicking; emitted offscreen text is not an interactive target.
+        app.project_template_dialog.as_mut().unwrap().reveal_row=Some(0);
         for _ in 0..4{frame(&mut app,vec![]);}
         let out=frame(&mut app,vec![]);
         let pos=out.shapes.iter().find_map(|shape|match &shape.shape{
-            egui::Shape::Text(text) if text.galley.text()=="Meenemen"=>Some(text.pos+text.galley.rect.size()/2.),_=>None,
-        }).expect("the first inclusion checkbox remains visible");
+            egui::Shape::Text(text) if text.galley.text()=="Meenemen"=>{
+                let rect=text.galley.rect.translate(text.pos.to_vec2());
+                shape.clip_rect.contains_rect(rect).then_some(rect.center())
+            },_=>None,
+        }).expect("the first inclusion checkbox must be visible after revealing its row");
         frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
         let out=frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
         let labels=out.shapes.iter().filter_map(|shape|match &shape.shape{

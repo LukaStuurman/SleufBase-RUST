@@ -12,12 +12,18 @@ fn original_menu_order_matches_validated_launcher_snapshot() {
             .iter()
             .find(|m| m["label"] == name)
             .unwrap();
-        let expected: Vec<_> = menu["items"]
+        let mut expected: Vec<_> = menu["items"]
             .as_array()
             .unwrap()
             .iter()
             .map(|row| row["label"].as_str().unwrap_or(""))
             .collect();
+        if name == "Acties" {
+            // The captured launcher predates the terrain-loading action. Keep
+            // its original order and verify this known addition at its exact spot.
+            let starts = expected.iter().position(|label| *label == "Laad alle beginpunten").unwrap();
+            expected.insert(starts + 1, "Laad alle maaiveldgegevens");
+        }
         assert_eq!(actual.iter().map(|row| row.0).collect::<Vec<_>>(), expected);
     }
 }
@@ -455,6 +461,27 @@ fn original_menu_and_map_buttons_execute_actions_through_real_pointer_events() {
 #[test]
 fn large_cad_values_are_bounded_in_the_visible_information_panel() {
     let mut app = SleufBaseApp {
+        // A real visible source keeps the selection valid across capture frames;
+        // the map correctly clears stale selections that have no matching overlay.
+        overlays: vec![DxfOverlay {
+            path: "huge-cad-value.dxf".into(),
+            visible: true,
+            features: vec![sleufbase_rust::dxf_read::DxfFeature {
+                entity_type: "LINE".into(),
+                handle: "1".into(),
+                layer: "Testkabel".into(),
+                color_aci: 7,
+                points: vec![
+                    Vertex { x: 0., y: 0., z: None },
+                    Vertex { x: 1., y: 1., z: None },
+                ],
+                raw_text: String::new(),
+                block_name: String::new(),
+                closed: Some(false),
+                cad: None,
+            }],
+            ..Default::default()
+        }],
         dxf_selection: Some(DxfSelection {
             overlay: 0,
             feature: 0,
@@ -853,11 +880,39 @@ fn template_defaults_to_builtin_and_drawer_label_precedes_its_field_on_the_same_
                 app.virtual_trenches.push(VirtualTrench::new("PS12".into(),Vertex{x:155000.,y:463000.,z:Some(2.)},Vertex{x:155010.,y:463000.,z:Some(2.)},0.6).unwrap());
                 app.open_project_template_dialog();app.project_template_dialog.as_mut().unwrap().options.drawn_by="Tekenaar-veld-controle".into();
             }
-            let mut out=None;for _ in 0..4{out=Some(ctx.run(input(size),|ctx|app.render(ctx)));}
+            assert!(app.project_template_dialog.as_ref().unwrap().options.template.as_os_str().is_empty(),
+                "a fresh export must use the built-in template");
+            let mut tick = 0;
+            let mut render = |app: &mut SleufBaseApp, events: Vec<egui::Event>| {
+                let mut raw = input(size);
+                raw.time = Some(f64::from(tick) * 0.2);
+                raw.predicted_dt = 0.2;
+                raw.events = events;
+                tick += 1;
+                ctx.run(raw, |ctx| app.render(ctx))
+            };
+            let mut out=None;for _ in 0..4{out=Some(render(&mut app, vec![]));}
             let out=out.unwrap();let label=label_position(&out,"Tekenaar");let value=label_position(&out,"Tekenaar-veld-controle");
             assert!(label.x<value.x);
             for text in ["Projectnaam","Tekenaar"]{assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()==text&&t.galley.rows.len()==1)),"identity label must stay on one line: {text}");}
             assert!((label.y-value.y).abs()<3.,"{physical} {size:?}: {label:?} {value:?}");
+            // The drawing-stamp fields were added after this compact-layout
+            // fixture and start expanded. Collapse them through the real control
+            // before checking the compact form and first selectable trench.
+            let position = label_position(&out, "Tekeningstempel");
+            for pressed in [true, false] {
+                render(&mut app, vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            let mut out = render(&mut app, vec![]);
+            for _ in 0..3 { out = render(&mut app, vec![]); }
             label_position(&out,"Sjabloon: ingebouwd SleufBase-sjabloon");
             assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Eigen DXF-sjabloon kiezen…")));
             if size[0] >= 1200 {

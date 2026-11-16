@@ -32,6 +32,9 @@ fn scripted(replies: Vec<(&'static str, Value)>) -> (BrowserChannel, mpsc::Recei
                     Err(error) => panic!("{error}"),
                 }
             };
+            // Accepted Windows sockets can inherit the listener's nonblocking
+            // mode. The scripted WebSocket peer uses blocking reads with a timeout.
+            stream.set_nonblocking(false).unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
             stream.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
             let mut socket = tungstenite::accept(stream).unwrap();

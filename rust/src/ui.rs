@@ -2159,6 +2159,15 @@ mod project_lifecycle_tests {
         let path=root.join("cad-mtext-paint/paint-binary.dxf");
         let overlay=sleufbase_rust::dxf_read::parse_dxf_bytes_with_catalog(&std::fs::read(&path).unwrap(),&path,&cancel,&mut catalog).unwrap();
         assert_eq!(overlay.rendered_features().count(),141);
+        let visible_instances=overlay.rendered_features().filter(|draw|draw.visible&&!draw.points.is_empty()).count();
+        let selectable=overlay.feature_indices_in(overlay.bounds().unwrap()).into_iter().filter(|&index|{
+            !(index<overlay.features.len()&&overlay.features[index].entity_type=="INSERT")
+                &&overlay.inspect_feature(index).is_some_and(|draw|draw.visible&&!draw.points.is_empty())
+        }).collect::<Vec<_>>();
+        assert!(visible_instances>0);
+        assert_eq!(selectable.len(),visible_instances,"each visible source instance must remain selectable once");
+        assert_eq!(selectable.iter().copied().collect::<std::collections::BTreeSet<_>>().len(),selectable.len(),
+            "glyph paths and color runs must not become duplicate inspection candidates");
         let mut expected=std::collections::BTreeMap::<[u8;3],usize>::new();
         for draw in overlay.rendered_features().filter(|d|d.visible){for(path,rgb)in draw.painted_paths(){*expected.entry(rgb).or_default()+=path.len().saturating_sub(1);}}
         assert!(expected.contains_key(&[0,0,0])&&expected.contains_key(&[255,255,255]));assert_eq!(expected.len(),249);
@@ -2166,9 +2175,28 @@ mod project_lifecycle_tests {
         let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(800.,600.))),..Default::default()},|ctx|{
             egui::CentralPanel::default().show(ctx,|ui|{canvas(ui,&[],&[],&[],std::slice::from_ref(&overlay),&[],&[],&[],None,&[],None,None,false,&mut zoom,&mut pan,RULES,None);});
         });
-        let mut actual=std::collections::BTreeMap::<[u8;3],usize>::new();
-        for shape in &output.shapes{if let egui::Shape::LineSegment{stroke,..}=&shape.shape{if stroke.width==1.6{*actual.entry([stroke.color.r(),stroke.color.g(),stroke.color.b()]).or_default()+=1;}}}
-        assert_eq!(actual,expected);
+        let mut actual=std::collections::BTreeSet::<[u8;3]>::new();
+        let mut meshes=0;
+        for shape in &output.shapes {
+            match &shape.shape {
+                egui::Shape::LineSegment{stroke,..} if stroke.width==1.6=>{
+                    actual.insert([stroke.color.r(),stroke.color.g(),stroke.color.b()]);
+                }
+                egui::Shape::Mesh(mesh)=>{
+                    assert!(mesh.is_valid()&&!mesh.indices.is_empty());
+                    meshes+=1;
+                    // Inspect referenced opaque vertices: antialiasing fringes
+                    // add transparent colors but must retain every source run.
+                    for &index in &mesh.indices {
+                        let color=mesh.vertices[index as usize].color;
+                        if color.a()==255 {actual.insert([color.r(),color.g(),color.b()]);}
+                    }
+                }
+                _=>{}
+            }
+        }
+        assert!(meshes>0,"this fixture must exercise the existing batched mesh renderer");
+        assert_eq!(actual,expected.keys().copied().collect(),"every visible MTEXT run color must be painted");
     }
 
     #[test]
