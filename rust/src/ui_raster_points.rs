@@ -75,6 +75,83 @@ impl SleufBaseApp {
                 .then_some(index)
         })
     }
+    /// Continue the chosen raster tool on the newly selected source. Candidate
+    /// rows always belong to one TIFF and must never survive a source change.
+    pub(super) fn resume_point_mode_after_selection(&mut self, previous_mode: Option<Mode>) {
+        self.raster_points.mode = None;
+        self.raster_points.rows.clear();
+        let Some(mode) = previous_mode else { return; };
+        if self.virtual_map.selected.is_some() {
+            self.message = if mode == Mode::Start {
+                "Beginpunt kiezen is beschikbaar voor TIFF-proefsleuven met profielpunten. Bij virtuele en MarXact-proefsleuven ligt het begin vast aan de meetrichting.".into()
+            } else {
+                "Selecteer Referentiepunt om een referentie bij deze virtuele proefsleuf te plaatsen.".into()
+            };
+            return;
+        }
+        let Some(path) = self.raster_points.selected.clone() else { return; };
+        if !self.geotiffs.iter().any(|r| r.path == path && layer_visibility_ui::raster_is_visible(r)) {
+            self.message = "Maak deze proefsleuf eerst zichtbaar om kaartpunten te kiezen.".into();
+            return;
+        }
+        if mode == Mode::Start {
+            self.start_point_task(Some(path));
+        } else {
+            self.raster_points.mode = Some(Mode::Reference);
+            self.message = "Klik op de kaart om het referentiepunt van de geselecteerde proefsleuf te plaatsen.".into();
+        }
+    }
+    fn raster_point_captures_click(&self, view: &View, click: Pos2) -> bool {
+        let Some(raster) = self.raster_points.selected.as_ref().and_then(|path|
+            self.geotiffs.iter().find(|r| r.path == *path && layer_visibility_ui::raster_is_visible(r)))
+        else { return false; };
+        match self.raster_points.mode {
+            Some(Mode::Start) => {
+                let mpp = 1. / view.scale;
+                points::pick(&self.raster_points.rows, view.world(click), mpp,
+                    (mpp * 6.).clamp(0.001, 3.)).is_some()
+            }
+            Some(Mode::Reference) => points::stored(raster, points::REFERENCE)
+                .and_then(|point| points::display(raster, point).ok())
+                .is_some_and(|point| view.project(point).distance_sq(click) <= 14_f32.powi(2)),
+            None => false,
+        }
+    }
+    /// A marker edits the current trench; another visible trench changes the
+    /// target. Consume the selection click so it cannot also edit an old point.
+    pub(super) fn handle_point_mode_selection(&mut self, view: &View) -> bool {
+        let Some(click) = view.clicked else { return false; };
+        if self.maaiveld_ui.has_draft() { return true; }
+        if (self.raster_points.mode.is_none() && !self.maaiveld_ui.active)
+            || self.virtual_map.captures() || self.raster_rotation.active()
+            || self.comment_tools.captures() || !view.scale.is_finite() || view.scale <= 0.
+        {
+            return false;
+        }
+        if self.manual_maaiveld_captures_click(view) || self.raster_point_captures_click(view, click) {
+            return false;
+        }
+        let world = view.world(click);
+        let selected_virtual = virtual_map_ui::pick_visible_trench(&self.virtual_trenches, world,
+            1. / view.scale, (6. / view.scale).clamp(0.001, 3.));
+        let selected_raster = if selected_virtual.is_none() {
+            self.raster_at_map_point(world).map(|index| self.geotiffs[index].path.clone())
+        } else { None };
+        if selected_virtual.is_none() && selected_raster.is_none() { return false; }
+        if selected_virtual == self.virtual_map.selected && selected_raster == self.raster_points.selected {
+            return false;
+        }
+        let previous_mode = self.raster_points.mode;
+        let old_virtual = self.virtual_map.selected;
+        let old_raster = self.raster_points.selected.clone();
+        self.virtual_map.selected = selected_virtual;
+        self.raster_points.selected = selected_raster;
+        self.update_view_selection(old_virtual, old_raster.as_deref());
+        self.resume_point_mode_after_selection(previous_mode);
+        self.maaiveld_selection_changed();
+        view.painter.ctx().request_repaint();
+        true
+    }
     pub(super) fn show_raster_trench_context(&mut self, ui: &mut egui::Ui, index: usize) {
         let Some(raster) = self.geotiffs.get(index) else { return; };
         let path = raster.path.clone();
@@ -96,6 +173,9 @@ impl SleufBaseApp {
         }
     }
     pub(super) fn show_point_controls(&mut self, ui: &mut egui::Ui) {
+        // Preparing candidates temporarily lends the sources to the worker.
+        // Do not treat that empty source vector as a deleted selection.
+        if self.export_intent.is_some() { return; }
         if self
             .raster_points
             .selected
@@ -257,6 +337,10 @@ impl SleufBaseApp {
     pub(super) fn finish_point_task(&mut self, kind: Kind, exported: Exported) {
         if kind == Kind::StartCandidates {
             if let Some((path, rows)) = exported.point_candidates {
+                // A completed preparation may never reactivate an older target.
+                if self.virtual_map.selected.is_some() || self.raster_points.selected.as_ref() != Some(&path) {
+                    return;
+                }
                 if !self.geotiffs.iter().any(|r| r.path==path && layer_visibility_ui::raster_is_visible(r)) {
                     self.raster_points.mode=None;
                     self.raster_points.rows.clear();

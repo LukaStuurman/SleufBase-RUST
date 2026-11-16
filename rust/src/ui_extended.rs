@@ -2,7 +2,7 @@
 use super::*;
 impl SleufBaseApp {
     pub(super) fn show_extended_tools(&mut self, ctx: &egui::Context) {
-        if !self.shell.extended {
+        if !self.shell.extended || self.export_intent.is_some() {
             return;
         }
         let mut open = true;
@@ -12,7 +12,7 @@ impl SleufBaseApp {
             .vscroll(true)
             .show(ctx, |ui| {
                 self.show_extended_toolbar(ui, ctx);
-                self.show_extended_sources(ui);
+                if self.export_intent.is_none() { self.show_extended_sources(ui); }
             });
         self.shell.extended = open;
     }
@@ -342,6 +342,7 @@ impl SleufBaseApp {
                     });
                 ui.separator();
                 ui.heading("GeoTIFF-bestanden");
+                let mut selected_raster = None;
                 egui::ScrollArea::vertical()
                     .max_height(130.0)
                     .show(ui, |ui| {
@@ -356,9 +357,7 @@ impl SleufBaseApp {
                                 )
                                 .clicked()
                             {
-                                self.raster_points.selected = Some(info.path.clone());
-                                self.raster_points.mode = None;
-                                self.raster_points.rows.clear();
+                                selected_raster = Some(info.path.clone());
                             }
                             ui.small(format!(
                                 "{}x{}, EPSG {}, job {}",
@@ -383,6 +382,24 @@ impl SleufBaseApp {
                             }
                         }
                     });
+                if let Some(path) = selected_raster {
+                    if self.maaiveld_ui.has_draft() {
+                        self.message = "Sla de maaiveldtekst op of sluit het venster voordat je een andere proefsleuf kiest.".into();
+                    } else if self.virtual_map.selected.is_some() || self.raster_points.selected.as_ref() != Some(&path) {
+                        let previous_mode = self.raster_points.mode;
+                        let old_virtual = self.virtual_map.selected;
+                        let old_raster = self.raster_points.selected.clone();
+                        self.cancel_virtual_map();
+                        self.stop_raster_rotation();
+                        self.virtual_map.selected = None;
+                        self.raster_points.selected = Some(path);
+                        self.update_view_selection(old_virtual, old_raster.as_deref());
+                        self.resume_point_mode_after_selection(previous_mode);
+                        self.maaiveld_selection_changed();
+                        ui.ctx().request_repaint();
+                        if self.export_intent.is_some() { return; }
+                    }
+                }
                 ui.separator();
 
                 self.show_point_controls(ui);
@@ -731,7 +748,7 @@ impl SleufBaseApp {
             self.project_view.camera = Some(camera);
             let old_virtual = self.virtual_map.selected;
             let old_raster = self.raster_points.selected.clone();
-            if !self.handle_manual_maaiveld(&view) {
+            if !self.handle_point_mode_selection(&view) && !self.handle_manual_maaiveld(&view) {
                 self.handle_cable_information(&view);
                 self.handle_raster_rotation(&view);
                 self.handle_raster_points(&view);

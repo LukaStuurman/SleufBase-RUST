@@ -8,6 +8,7 @@ use sleufbase_rust::{
     raster_points,
 };
 use std::{
+    collections::VecDeque,
     hash::{DefaultHasher, Hasher},
     io::Write,
     sync::Arc,
@@ -18,6 +19,10 @@ const LABELS: [&str; 3] = ["Beginpunt", "Middenpunt", "Eindpunt"];
 const META: &str = "template_maaiveld_segments";
 const DEFAULT_COLOR: [u8; 3] = [128; 3];
 const RADIUS: f32 = 9.;
+// Only three coordinates and their validation stamp are retained per source.
+// Even unusually large projects cannot grow the preparation cache unbounded.
+const MAX_CACHED_SOURCES: usize = 4096;
+const MAX_FAILURE_DETAILS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stamp {
@@ -25,6 +30,8 @@ struct Stamp {
     generation: u64,
     dataset: Option<usize>,
     trench: Option<usize>,
+    settings_digest: u64,
+    local_profile: Option<(PathBuf, u64, Option<std::time::SystemTime>)>,
     digest: u64,
 }
 struct HashWriter(DefaultHasher);
@@ -47,9 +54,35 @@ impl Drop for Job {
         self.control.cancel();
     }
 }
+#[derive(Clone)]
 struct Markers {
     stamp: Stamp,
     points: [[f64; 2]; 3],
+    partial_context: bool,
+}
+struct Preload {
+    generation: u64,
+    rasters: usize,
+    trenches: usize,
+    next: usize,
+    completed: usize,
+    prepared: usize,
+    reused: usize,
+    skipped: usize,
+    partial_context: usize,
+    failures: Vec<String>,
+    current: String,
+    cancelled: bool,
+}
+impl Preload {
+    fn total(&self) -> usize { self.rasters + self.trenches }
+    fn skip(&mut self, message: String) {
+        self.completed += 1;
+        self.skipped += 1;
+        if self.failures.len() < MAX_FAILURE_DETAILS {
+            self.failures.push(message.chars().take(240).collect());
+        }
+    }
 }
 struct Draft {
     stamp: Stamp,
@@ -66,11 +99,38 @@ pub(super) struct State {
     job: Option<Job>,
     markers: Option<Markers>,
     draft: Option<Draft>,
+    cache: VecDeque<Markers>,
+    generation: Option<u64>,
+    preload: Option<Preload>,
+    settings_checked: Option<Instant>,
 }
 impl State {
-    pub(super) fn captures(&self) -> bool {
-        self.active
+    pub(super) fn captures(&self) -> bool { self.active }
+    pub(super) fn has_draft(&self) -> bool { self.draft.is_some() }
+    pub(super) fn preloading(&self) -> bool { self.preload.is_some() }
+    fn cached(&mut self, stamp: &Stamp) -> Option<Markers> {
+        let index = self.cache.iter().position(|entry| entry.stamp.source == stamp.source)?;
+        let entry = self.cache.remove(index)?;
+        if entry.stamp != *stamp { return None; }
+        self.cache.push_back(entry.clone());
+        Some(entry)
     }
+    fn remember(&mut self, markers: Markers) {
+        self.cache.retain(|entry| entry.stamp.source != markers.stamp.source);
+        while self.cache.len() >= MAX_CACHED_SOURCES { self.cache.pop_front(); }
+        self.cache.push_back(markers);
+    }
+}
+
+fn markers_from_prepared(stamp: Stamp, prepared: maaiveld_profile::Prepared) -> Result<Markers, String> {
+    if prepared.points.len() != 3 || prepared.points.iter().any(|point| !point.x.is_finite() || !point.y.is_finite()) {
+        return Err("Geen drie geldige maaiveldpunten beschikbaar.".into());
+    }
+    Ok(Markers {
+        stamp,
+        points: std::array::from_fn(|index| [prepared.points[index].x, prepared.points[index].y]),
+        partial_context: !prepared.context_failures.is_empty(),
+    })
 }
 
 fn edited_metadata(
@@ -143,6 +203,30 @@ impl SleufBaseApp {
         }
         .ok_or("De gekozen proefsleuf is niet meer beschikbaar".into())
     }
+    fn maaiveld_settings_digest(&self) -> Result<u64, String> {
+        // Preparation reads only these two settings. Map visibility, labels,
+        // contact details and other export options must not invalidate geometry.
+        let imported = if self.project_settings.is_none() && self.legacy_archive.as_ref()
+            .is_some_and(|archive| archive.original.get("template_export_settings").is_some())
+        { Some(self.project_export_settings()?) } else { None };
+        let settings = imported.as_ref().or(self.project_settings.as_ref())
+            .unwrap_or(&self.migrated_settings);
+        let mut writer = HashWriter(DefaultHasher::new());
+        serde_json::to_writer(&mut writer, &(&settings.object_rules,
+            settings.export_preferences.template_cross_section_marker_diameter))
+            .map_err(|error| error.to_string())?;
+        Ok(writer.0.finish())
+    }
+    fn maaiveld_local_profile_path(&self, source: Source) -> Option<PathBuf> {
+        let Source::Raster(index) = source else { return None; };
+        let raster = self.geotiffs.get(index)?;
+        let path = raster.metadata.get("kickthemap_job_features_path")?
+            .as_str().filter(|path| !path.is_empty())?;
+        let path = PathBuf::from(path);
+        Some(if path.is_absolute() { path } else {
+            raster.path.parent().unwrap_or(std::path::Path::new(".")).join(path)
+        })
+    }
     fn maaiveld_stamp(
         &self,
         source: Source,
@@ -179,124 +263,136 @@ impl SleufBaseApp {
             )
             .map_err(|e| e.to_string())?;
         }
-        serde_json::to_writer(
-            &mut writer,
-            self.project_settings
-                .as_ref()
-                .unwrap_or(&self.migrated_settings),
-        )
-        .map_err(|e| e.to_string())?;
+        let settings_digest = self.maaiveld_settings_digest()?;
+        writer.0.write_u64(settings_digest);
+        let local_profile = self.maaiveld_local_profile_path(source).and_then(|path| {
+            let metadata = std::fs::metadata(&path).ok().filter(|metadata| metadata.is_file())?;
+            Some((path, metadata.len(), metadata.modified().ok()))
+        });
         Ok(Stamp {
             source,
             generation: self.project_generation,
             dataset,
             trench,
+            settings_digest,
+            local_profile,
             digest: writer.0.finish(),
         })
     }
-    fn maaiveld_unchanged(&self, stamp: &Stamp) -> bool {
-        self.maaiveld_selected() == Some(stamp.source)
-            && self
-                .maaiveld_stamp(stamp.source, stamp.dataset, stamp.trench)
-                .as_ref()
-                == Ok(stamp)
+    fn maaiveld_valid(&self, stamp: &Stamp) -> bool {
+        stamp.generation == self.project_generation
+            && self.maaiveld_association(stamp.source).ok() == Some((stamp.dataset, stamp.trench))
+            && self.maaiveld_stamp(stamp.source, stamp.dataset, stamp.trench).as_ref() == Ok(stamp)
     }
-    // Clone only the selected layer and its uniquely associated profile input;
-    // unrelated project allocations and account/session state remain untouched.
-    fn maaiveld_input(&self, source: Source) -> Result<(NativeProject, Source, Stamp), String> {
+    fn maaiveld_unchanged(&self, stamp: &Stamp) -> bool {
+        self.maaiveld_selected() == Some(stamp.source) && self.maaiveld_valid(stamp)
+    }
+    // Resolve associations before a cache lookup without cloning any datasets.
+    fn maaiveld_association(&self, source: Source) -> Result<(Option<usize>, Option<usize>), String> {
+        let Source::Raster(index) = source else {
+            if let Source::Virtual(index) = source {
+                self.virtual_trenches.get(index).ok_or("Proefsleuf ontbreekt")?;
+            }
+            return Ok((None, None));
+        };
+        let raster = self.geotiffs.get(index).ok_or("TIFF ontbreekt")?;
+        if self.maaiveld_local_profile_path(source).is_some_and(|path| path.is_file()) {
+            return Ok((None, None));
+        }
+        let mut jobs = self.datasets.iter().enumerate().filter(|(_, dataset)|
+            raster.kickthemap_job_id.is_some_and(|id| id > 0 && dataset.job_id == id));
+        let first = jobs.next().map(|(index, _)| index);
+        if jobs.next().is_some() { return Err("De TIFF-jobkoppeling is niet eenduidig".into()); }
+        if let Some(index) = first { return Ok((Some(index), None)); }
+        let choices = sleufbase_rust::template_project::suggest(
+            &self.datasets, &self.geotiffs, &self.virtual_trenches);
+        let mut matches = choices.iter().filter(|choice| choice.raster == Some(index));
+        let choice = matches.next().ok_or("Koppel deze TIFF eerst eenduidig aan lokale profielobjecten")?;
+        if matches.next().is_some() {
+            return Err("Koppel deze TIFF eerst eenduidig aan lokale profielobjecten".into());
+        }
+        match choice.source {
+            sleufbase_rust::template_project::Source::Job(index) => Ok((Some(index), None)),
+            sleufbase_rust::template_project::Source::Virtual(index) => Ok((None, Some(index))),
+            _ => Err("Geen lokale profielobjecten beschikbaar; laad eerst de gekoppelde KickTheMap-jobdata".into()),
+        }
+    }
+    fn maaiveld_current_stamp(&self, source: Source) -> Result<Stamp, String> {
+        let (dataset, trench) = self.maaiveld_association(source)?;
+        self.maaiveld_stamp(source, dataset, trench)
+    }
+    // Clone only the chosen layer and its uniquely associated profile input.
+    fn maaiveld_input(&self, stamp: &Stamp) -> Result<(NativeProject, Source), String> {
         let mut project = NativeProject::default();
-        let (mut dataset, mut trench) = (None, None);
-        let local_source = match source {
-            Source::Virtual(i) => {
-                project.virtual_trenches.push(
-                    self.virtual_trenches
-                        .get(i)
-                        .ok_or("Proefsleuf ontbreekt")?
-                        .clone(),
-                );
+        let source = match stamp.source {
+            Source::Virtual(index) => {
+                project.virtual_trenches.push(self.virtual_trenches.get(index)
+                    .ok_or("Proefsleuf ontbreekt")?.clone());
                 Source::Virtual(0)
             }
-            Source::Raster(i) => {
-                let raster = self.geotiffs.get(i).ok_or("TIFF ontbreekt")?;
-                project.rasters.push(raster.clone());
-                let local = raster
-                    .metadata
-                    .get("kickthemap_job_features_path")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| {
-                        let path = PathBuf::from(s);
-                        if path.is_absolute() {
-                            path
-                        } else {
-                            raster
-                                .path
-                                .parent()
-                                .unwrap_or(std::path::Path::new("."))
-                                .join(path)
-                        }
-                    })
-                    .is_some_and(|p| p.is_file());
-                if !local {
-                    let jobs: Vec<_> = self
-                        .datasets
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, d)| {
-                            raster
-                                .kickthemap_job_id
-                                .is_some_and(|id| id > 0 && d.job_id == id)
-                        })
-                        .map(|(j, _)| j)
-                        .collect();
-                    if jobs.len() > 1 {
-                        return Err("De TIFF-jobkoppeling is niet eenduidig".into());
-                    }
-                    if let Some(&j) = jobs.first() {
-                        dataset = Some(j);
-                    } else {
-                        let choices: Vec<_> = sleufbase_rust::template_project::suggest(
-                            &self.datasets,
-                            &self.geotiffs,
-                            &self.virtual_trenches,
-                        )
-                        .into_iter()
-                        .filter(|c| c.raster == Some(i))
-                        .collect();
-                        if choices.len() != 1 {
-                            return Err(
-                                "Koppel deze TIFF eerst eenduidig aan lokale profielobjecten"
-                                    .into(),
-                            );
-                        }
-                        match choices[0].source {
-                            sleufbase_rust::template_project::Source::Job(j) => dataset = Some(j),
-                            sleufbase_rust::template_project::Source::Virtual(j) => trench = Some(j),
-                            _ => return Err("Geen lokale profielobjecten beschikbaar; laad eerst de gekoppelde KickTheMap-jobdata".into()),
-                        }
-                    }
-                    if let Some(j) = dataset {
-                        project.datasets.push(self.datasets[j].clone());
-                    }
-                    if let Some(j) = trench {
-                        project
-                            .virtual_trenches
-                            .push(self.virtual_trenches[j].clone());
-                    }
+            Source::Raster(index) => {
+                project.rasters.push(self.geotiffs.get(index).ok_or("TIFF ontbreekt")?.clone());
+                if let Some(index) = stamp.dataset {
+                    project.datasets.push(self.datasets.get(index).ok_or("Profieljob ontbreekt")?.clone());
+                }
+                if let Some(index) = stamp.trench {
+                    project.virtual_trenches.push(self.virtual_trenches.get(index)
+                        .ok_or("Profielsleuf ontbreekt")?.clone());
                 }
                 Source::Raster(0)
             }
         };
-        Ok((
-            project,
-            local_source,
-            self.maaiveld_stamp(source, dataset, trench)?,
-        ))
+        Ok((project, source))
     }
-    pub(super) fn close_maaiveld_mode(&mut self) {
+    fn start_maaiveld_preparation(&mut self, stamp: Stamp) -> Result<(), String> {
+        let (project, source) = self.maaiveld_input(&stamp)?;
+        let settings = self.project_export_settings()?;
+        let control = Arc::new(Control::default());
+        let task_control = control.clone();
+        let (tx, rx) = mpsc::sync_channel(1);
+        std::thread::Builder::new().name("manual-maaiveld-profile".into()).spawn(move || {
+            let result = maaiveld_profile::prepare(&project, source, &settings, &task_control);
+            let _ = tx.send(result);
+        }).map_err(|error| error.to_string())?;
+        self.maaiveld_ui.job = Some(Job { stamp, control, rx });
+        Ok(())
+    }
+    fn ensure_maaiveld_generation(&mut self) {
+        if self.maaiveld_ui.generation.is_some_and(|generation| generation != self.project_generation) {
+            self.reset_maaiveld_state();
+        }
+        self.maaiveld_ui.generation = Some(self.project_generation);
+    }
+    pub(super) fn reset_maaiveld_state(&mut self) {
         self.maaiveld_ui = State::default();
     }
+    pub(super) fn close_maaiveld_mode(&mut self) {
+        self.maaiveld_ui.active = false;
+        self.maaiveld_ui.selected = None;
+        self.maaiveld_ui.markers = None;
+        self.maaiveld_ui.draft = None;
+        if !self.maaiveld_ui.preloading() { self.maaiveld_ui.job = None; }
+    }
+    pub(super) fn maaiveld_selection_changed(&mut self) {
+        if self.maaiveld_ui.active && !self.maaiveld_ui.has_draft()
+            && self.maaiveld_ui.selected != self.maaiveld_selected()
+        {
+            self.refresh_manual_maaiveld();
+        }
+    }
+    pub(super) fn manual_maaiveld_captures_click(&self, view: &raster_point_ui::View) -> bool {
+        self.maaiveld_ui.active && (self.maaiveld_ui.has_draft()
+            || view.clicked.is_some_and(|click| self.maaiveld_ui.markers.as_ref().is_some_and(|markers|
+                self.maaiveld_source_visible(markers.stamp.source)
+                    && self.maaiveld_selected() == Some(markers.stamp.source)
+                    && nearest(&markers.points, view, click).is_some())))
+    }
     pub(super) fn toggle_maaiveld_mode(&mut self) {
+        if self.maaiveld_ui.has_draft() {
+            self.message = "Sla de maaiveldtekst op of sluit het tekstvenster eerst.".into();
+            return;
+        }
+        self.ensure_maaiveld_generation();
         if self.maaiveld_ui.active {
             self.close_maaiveld_mode();
             self.message = "Maaiveld-invulmodus uitgeschakeld.".into();
@@ -329,96 +425,219 @@ impl SleufBaseApp {
         self.refresh_manual_maaiveld();
     }
     pub(super) fn refresh_manual_maaiveld(&mut self) {
+        if self.maaiveld_ui.preloading() || self.maaiveld_ui.has_draft() { return; }
+        self.ensure_maaiveld_generation();
         self.maaiveld_ui.selected = self.maaiveld_selected();
         self.maaiveld_ui.job = None;
         self.maaiveld_ui.markers = None;
-        self.maaiveld_ui.draft = None;
         let result = (|| {
-            let source = self
-                .maaiveld_selected()
+            let source = self.maaiveld_ui.selected
                 .ok_or("Kies eerst een proefsleuf om maaiveldpunten te tonen.")?;
-            let (project, local_source, stamp) = self.maaiveld_input(source)?;
-            let settings = self
-                .project_settings
-                .as_ref()
-                .unwrap_or(&self.migrated_settings)
-                .clone();
-            let control = Arc::new(Control::default());
-            let task_control = control.clone();
-            let (tx, rx) = mpsc::sync_channel(1);
-            std::thread::Builder::new()
-                .name("manual-maaiveld-profile".into())
-                .spawn(move || {
-                    let result =
-                        maaiveld_profile::prepare(&project, local_source, &settings, &task_control);
-                    let _ = tx.send(result);
-                })
-                .map_err(|e| e.to_string())?;
-            Ok::<_, String>(Job { stamp, control, rx })
-        })();
-        match result {
-            Ok(job) => {
-                self.maaiveld_ui.job = Some(job);
+            let stamp = self.maaiveld_current_stamp(source)?;
+            if let Some(markers) = self.maaiveld_ui.cached(&stamp) {
+                self.activate_maaiveld_markers(markers);
+            } else {
+                self.start_maaiveld_preparation(stamp)?;
                 self.message = "Maaiveldpunten van het dwarsprofiel voorbereiden…".into();
             }
-            Err(error) => self.message = error,
-        }
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result { self.message = error; }
     }
-    pub(super) fn poll_manual_maaiveld(&mut self, ctx: &egui::Context) {
-        if !self.maaiveld_ui.active {
+    fn activate_maaiveld_markers(&mut self, markers: Markers) {
+        self.message = "Klik op begin, midden of eind van het dwarsprofiel om maaiveldtekst en kleur te kiezen.".into();
+        if markers.partial_context {
+            self.message.push_str(" Weg- of terreincontext kon niet volledig worden opgehaald; lokale profielgeometrie is gebruikt.");
+        }
+        self.maaiveld_ui.markers = Some(markers);
+    }
+    fn maaiveld_source_label(&self, source: Source) -> String {
+        match source {
+            Source::Raster(index) => self.geotiffs.get(index).map(|raster| {
+                if !raster.kickthemap_job_title.is_empty() {
+                    raster.kickthemap_job_title.chars().take(120).collect()
+                } else {
+                    raster.path.file_name().unwrap_or_default().to_string_lossy().chars().take(120).collect()
+                }
+            }),
+            Source::Virtual(index) => self.virtual_trenches.get(index)
+                .map(|trench| trench.label.chars().take(120).collect()),
+        }.unwrap_or_else(|| "Onbeschikbare proefsleuf".into())
+    }
+    /// Prepare only marker geometry. Stored terrain descriptions and elevations
+    /// are never edited by this operation, including when a source is skipped.
+    pub(super) fn preload_all_maaiveld(&mut self) {
+        if self.maaiveld_ui.preloading() { return; }
+        if self.maaiveld_ui.has_draft() {
+            self.message = "Sla de maaiveldtekst op of sluit het tekstvenster eerst.".into();
             return;
         }
-        if self.maaiveld_ui.draft.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.close_maaiveld_mode();
-            return;
-        }
-        if !self
-            .project_settings
-            .as_ref()
-            .unwrap_or(&self.migrated_settings)
-            .export_preferences
-            .template_enable_maaiveld_edit_points
-            || self.project_sources_owned()
+        if self.project_sources_owned() || self.trench_editor.is_some()
+            || self.file_intent.is_some() || self.export_intent.is_some()
+            || self.template_job.is_some() || self.live_operation_busy()
         {
-            self.close_maaiveld_mode();
+            self.message = "Rond de lopende taak of het sleufconcept eerst af.".into();
             return;
         }
-        let selected = self.maaiveld_selected();
-        if self.maaiveld_ui.selected != selected {
-            self.refresh_manual_maaiveld();
-        }
-        let Some(job) = &self.maaiveld_ui.job else {
-            return;
-        };
-        let result = match job.rx.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(Duration::from_millis(50));
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Err("Voorbereiden maaiveldpunten is afgebroken".into())
-            }
-        };
-        let job = self.maaiveld_ui.job.take().unwrap();
-        if !self.maaiveld_unchanged(&job.stamp) {
-            self.message = "De proefsleuf is gewijzigd; maak de maaiveldpunten opnieuw aan.".into();
+        if self.geotiffs.is_empty() && self.virtual_trenches.is_empty() {
+            self.message = "Laad eerst proefsleuven om maaiveldgegevens voor te bereiden.".into();
             return;
         }
-        match result {
-            Ok(prepared) if prepared.points.len() == 3 => {
-                self.maaiveld_ui.markers = Some(Markers {
-                    stamp: job.stamp.clone(),
-                    points: std::array::from_fn(|i| [prepared.points[i].x, prepared.points[i].y]),
-                });
-                self.message = "Klik op begin, midden of eind van het dwarsprofiel om maaiveldtekst en kleur te kiezen.".into();
-                if !prepared.context_failures.is_empty() {
-                    self.message.push_str(" Weg- of terreincontext kon niet volledig worden opgehaald; lokale profielgeometrie is gebruikt.");
+        self.ensure_maaiveld_generation();
+        self.maaiveld_ui.job = None;
+        self.maaiveld_ui.preload = Some(Preload {
+            generation: self.project_generation,
+            rasters: self.geotiffs.len(), trenches: self.virtual_trenches.len(),
+            next: 0, completed: 0, prepared: 0, reused: 0, skipped: 0,
+            partial_context: 0, failures: Vec::new(), current: "Voorbereiding starten…".into(),
+            cancelled: false,
+        });
+        self.message = "Alle maaiveldgegevens voorbereiden…".into();
+        // Begin on the next frame so the progress window is painted first.
+    }
+    fn finish_maaiveld_preload(&mut self) {
+        let Some(preload) = self.maaiveld_ui.preload.take() else { return; };
+        self.maaiveld_ui.job = None;
+        if self.maaiveld_ui.active {
+            self.maaiveld_ui.selected = self.maaiveld_selected();
+            self.maaiveld_ui.markers = None;
+            if let Some(source) = self.maaiveld_ui.selected {
+                if let Ok(stamp) = self.maaiveld_current_stamp(source) {
+                    self.maaiveld_ui.markers = self.maaiveld_ui.cached(&stamp);
                 }
             }
-            Ok(_) => self.message = "Geen drie geldige maaiveldpunten beschikbaar.".into(),
-            Err(error) => self.message = error,
         }
+        // Cancelling bulk loading can leave the selected source unprepared.
+        // Do not retain an active tool that would consume clicks without markers.
+        let reopen = self.maaiveld_ui.active && self.maaiveld_ui.markers.is_none();
+        if reopen { self.close_maaiveld_mode(); }
+        self.message = format!("Maaiveldgegevens {}: {} voorbereid, {} hergebruikt, {} overgeslagen.",
+            if preload.cancelled { "laden geannuleerd" } else { "geladen" },
+            preload.prepared, preload.reused, preload.skipped);
+        if preload.partial_context > 0 {
+            self.message.push_str(&format!(" Bij {} sleuven is lokale geometrie gebruikt omdat kaartcontext niet volledig beschikbaar was.", preload.partial_context));
+        }
+        if let Some(reason) = preload.failures.first() {
+            self.message.push_str(&format!(" Eerste melding: {reason}"));
+        }
+        if preload.prepared + preload.reused > MAX_CACHED_SOURCES {
+            self.message.push_str(&format!(" De {} laatst gebruikte sleuven blijven voorbereid.", MAX_CACHED_SOURCES));
+        }
+        if reopen {
+            self.message.push_str(" Open Maaiveld invullen om de geselecteerde proefsleuf verder voor te bereiden.");
+        }
+    }
+    fn advance_maaiveld_preload(&mut self, ctx: &egui::Context) {
+        if self.maaiveld_ui.job.is_some() { return; }
+        // Bound the UI work even when many sources are cached or unusable.
+        for _ in 0..4 {
+            let Some(preload) = self.maaiveld_ui.preload.as_mut() else { return; };
+            if preload.cancelled || preload.next >= preload.total() {
+                self.finish_maaiveld_preload();
+                ctx.request_repaint();
+                return;
+            }
+            let index = preload.next;
+            preload.next += 1;
+            let source = if index < preload.rasters { Source::Raster(index) }
+                else { Source::Virtual(index - preload.rasters) };
+            let label = self.maaiveld_source_label(source);
+            self.maaiveld_ui.preload.as_mut().unwrap().current = format!("Voorbereiden: {label}");
+            let result = (|| {
+                let stamp = self.maaiveld_current_stamp(source)?;
+                if let Some(markers) = self.maaiveld_ui.cached(&stamp) {
+                    let preload = self.maaiveld_ui.preload.as_mut().unwrap();
+                    preload.completed += 1;
+                    preload.reused += 1;
+                    preload.partial_context += usize::from(markers.partial_context);
+                    return Ok(false);
+                }
+                self.start_maaiveld_preparation(stamp)?;
+                Ok::<_, String>(true)
+            })();
+            match result {
+                Ok(true) => break,
+                Ok(false) => {},
+                Err(error) => self.maaiveld_ui.preload.as_mut().unwrap().skip(format!("{label}: {error}")),
+            }
+        }
+        ctx.request_repaint_after(Duration::from_millis(20));
+    }
+    pub(super) fn poll_manual_maaiveld(&mut self, ctx: &egui::Context) {
+        self.ensure_maaiveld_generation();
+        if self.maaiveld_ui.preloading() {
+            let changed = self.maaiveld_ui.preload.as_ref().is_some_and(|preload|
+                preload.generation != self.project_generation || preload.rasters != self.geotiffs.len()
+                    || preload.trenches != self.virtual_trenches.len());
+            if changed || self.project_sources_owned() {
+                self.reset_maaiveld_state();
+                self.message = "Maaiveldvoorbereiding gestopt omdat de projectbronnen zijn gewijzigd.".into();
+                return;
+            }
+        } else {
+            if !self.maaiveld_ui.active { return; }
+            if !self.maaiveld_ui.has_draft() && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+                self.close_maaiveld_mode();
+                return;
+            }
+            if !self.project_settings.as_ref().unwrap_or(&self.migrated_settings)
+                .export_preferences.template_enable_maaiveld_edit_points || self.project_sources_owned()
+            {
+                self.close_maaiveld_mode();
+                return;
+            }
+            if self.maaiveld_ui.selected != self.maaiveld_selected() && !self.maaiveld_ui.has_draft() {
+                self.refresh_manual_maaiveld();
+            }
+            // Geometry is fully revalidated on use. Check the small relevant
+            // settings subset periodically so an open mode updates promptly.
+            if !self.maaiveld_ui.has_draft() && self.maaiveld_ui.settings_checked
+                .is_none_or(|time| time.elapsed() >= Duration::from_millis(500))
+            {
+                self.maaiveld_ui.settings_checked = Some(Instant::now());
+                let expected = self.maaiveld_ui.markers.as_ref().map(|markers| markers.stamp.settings_digest)
+                    .or_else(|| self.maaiveld_ui.job.as_ref().map(|job| job.stamp.settings_digest));
+                if expected.is_some_and(|digest| self.maaiveld_settings_digest().ok() != Some(digest)) {
+                    self.maaiveld_ui.cache.clear();
+                    self.refresh_manual_maaiveld();
+                }
+            }
+        }
+        if let Some(job) = &self.maaiveld_ui.job {
+            let result = match job.rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err("Voorbereiden maaiveldpunten is afgebroken".into())),
+            };
+            if let Some(result) = result {
+                let job = self.maaiveld_ui.job.take().unwrap();
+                let cancelled = self.maaiveld_ui.preload.as_ref().is_some_and(|preload| preload.cancelled);
+                if !cancelled {
+                    let result = if self.maaiveld_valid(&job.stamp) {
+                        result.and_then(|prepared| markers_from_prepared(job.stamp.clone(), prepared))
+                    } else { Err("De proefsleuf of profielinstellingen zijn gewijzigd; bereid de punten opnieuw voor.".into()) };
+                    match result {
+                        Ok(markers) => {
+                            self.maaiveld_ui.remember(markers.clone());
+                            if let Some(preload) = self.maaiveld_ui.preload.as_mut() {
+                                preload.completed += 1;
+                                preload.prepared += 1;
+                                preload.partial_context += usize::from(markers.partial_context);
+                            } else if self.maaiveld_ui.active && self.maaiveld_selected() == Some(markers.stamp.source) {
+                                self.activate_maaiveld_markers(markers);
+                            }
+                        }
+                        Err(error) => {
+                            let label = self.maaiveld_source_label(job.stamp.source);
+                            if let Some(preload) = self.maaiveld_ui.preload.as_mut() {
+                                preload.skip(format!("{label}: {error}"));
+                            } else { self.message = error; }
+                        }
+                    }
+                }
+            } else { ctx.request_repaint_after(Duration::from_millis(40)); }
+        }
+        if self.maaiveld_ui.preloading() { self.advance_maaiveld_preload(ctx); }
     }
     /// Returns true while this mode owns map clicks. Call before other handlers.
     pub(super) fn handle_manual_maaiveld(&mut self, view: &raster_point_ui::View) -> bool {
@@ -553,10 +772,31 @@ impl SleufBaseApp {
         if let Some(markers) = &mut self.maaiveld_ui.markers {
             markers.stamp = stamp;
         }
+        if let Some(markers) = self.maaiveld_ui.markers.clone() {
+            self.maaiveld_ui.remember(markers);
+        }
         self.message = format!("{} bijgewerkt.", LABELS[draft.segment]);
         Ok(())
     }
     pub(super) fn show_manual_maaiveld(&mut self, ctx: &egui::Context) {
+        if let Some(preload) = &self.maaiveld_ui.preload {
+            let cancel = progress_ui::window(ctx, "maaiveld-preload-progress", "Maaiveldgegevens laden",
+                &preload.current, Some((preload.completed, preload.total())), true, preload.cancelled,
+                |ui| {
+                    ui.label(format!("{} voorbereid · {} hergebruikt · {} overgeslagen",
+                        preload.prepared, preload.reused, preload.skipped));
+                    ui.small("Begin-, midden- en eindpunt worden voorbereid voor direct maaiveld bewerken.");
+                    if preload.partial_context > 0 {
+                        ui.small(format!("{} sleuven gebruiken lokale geometrie zonder volledige kaartcontext.", preload.partial_context));
+                    }
+                    for failure in &preload.failures { ui.small(failure); }
+                });
+            if cancel {
+                if let Some(preload) = &mut self.maaiveld_ui.preload { preload.cancelled = true; }
+                if let Some(job) = &self.maaiveld_ui.job { job.control.cancel(); }
+            }
+            return;
+        }
         let Some(mut draft) = self.maaiveld_ui.draft.take() else {
             return;
         };

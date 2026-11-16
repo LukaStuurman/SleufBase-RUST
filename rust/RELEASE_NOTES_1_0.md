@@ -29,6 +29,20 @@
 - Alle scrollbalken gebruiken dezelfde duidelijk zichtbare stijl, breedte en kleuren, in **Proefsleuven**, **Overlays**, **Kabelinformatie**, de kandidatenlijst, instellingen, exportvensters, de handleiding en menu’s.
 - De overbodige tekst **GeoTIFF en KLIC** boven de kaart is verwijderd; de titel **Kaart** blijft staan.
 
+### Eigen DXF-sjabloon beheren
+
+- **Instellingen > DXF-export > DXF-sjabloon** bevat drie acties: **Ingebouwd sjabloon opslaan…**, **Aangepast sjabloon laden…** en **Origineel herstellen**.
+- Sla de originele DXF op, pas die aan in een CAD-programma en laad de bewerkte versie terug. SleufBase controleert het bestand en bewaart een eigen kopie voor de sjabloonexport.
+- **Opslaan** past de sjabloonkeuze toe; **Annuleren** behoudt de bestaande keuze. Herstellen schakelt terug naar de ongewijzigde ingebouwde versie en laat de aangepaste bestanden bewaard.
+- Het opslaan en verwerken van sjabloonbestanden gebeurt op de achtergrond, met een zichtbare status in Instellingen.
+
+### Sneller doorgaan bij bewerkpunten
+
+- **Proefsleufnaam** staat links van **Maaiveld invullen** en schakelt de namen op de werkkaart direct aan of uit. De knop bewaart dezelfde voorkeur als Instellingen.
+- **Acties > Laad alle maaiveldgegevens** bereidt de maaiveldpunten van de geladen proefsleuven vooraf voor, met een compacte voortgangsbalk en annulering. Geldige voorbereidingen worden hergebruikt; ingevoerde tekst, kleuren en gemeten hoogten blijven behouden.
+- Bij het kiezen van een andere GeoTIFF blijft **Beginpunt kiezen** beschikbaar en worden de nieuwe kandidaten automatisch voorbereid. **Maaiveld invullen** blijft actief bij het wisselen tussen proefsleuven, zowel via de kaart als de lijst.
+- Een klik op een bestaande bewerkmarker houdt voorrang. Een open maaiveldtekst wordt beschermd tegen een onbedoelde selectiewissel.
+
 ### Build en release
 
 Op verzoek worden geen runtime- of geautomatiseerde tests, Clippy of installatieproeven uitgevoerd. De compileercontrole en Windows-build verzorgen de uitvoerbare app, portable ZIP en installer. Versie, pakketinhoud en SHA-256-controlesommen worden voor publicatie gecontroleerd.

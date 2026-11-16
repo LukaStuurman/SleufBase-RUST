@@ -394,7 +394,7 @@ impl SleufBaseApp {
         if let Some(worker)=&mut self.pending_ahn {worker.cancel();}
         self.recovery_dialog=None;
         self.overview_ui=Default::default();
-        self.close_maaiveld_mode();
+        self.reset_maaiveld_state();
         self.virtual_map=Default::default();
         self.raster_rotation=Default::default();
         self.tiff_comment_editor=None;
@@ -1584,6 +1584,20 @@ impl eframe::App for SleufBaseApp {
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
         if !self.shell.installed { theme::install(ctx); self.shell.installed=true; }
+        if self.maaiveld_ui.preloading() {
+            if ctx.input(|i| i.viewport().close_requested()) {
+                // The worker only owns a preparation snapshot; cancelling it
+                // leaves the ordinary close/save flow in charge of the project.
+                self.reset_maaiveld_state();
+            } else {
+                self.poll_manual_maaiveld(ctx);
+                if self.maaiveld_ui.preloading() {
+                    self.paint_busy_backdrop(ctx);
+                    self.show_manual_maaiveld(ctx);
+                    return;
+                }
+            }
+        }
         self.capture_file_drop(ctx);
         if self.overview_ui.busy(){
             if ctx.input(|i|i.viewport().close_requested()){
@@ -1649,6 +1663,11 @@ impl SleufBaseApp {
         ctx.request_repaint_after(Duration::from_secs(1));
         self.show_original_menu(ctx);
 
+        if self.maaiveld_ui.preloading() {
+            self.paint_busy_backdrop(ctx);
+            self.show_manual_maaiveld(ctx);
+            return;
+        }
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}
         if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         if self.template_dialog.is_some() {self.show_template_dialog(ctx);}
@@ -1656,6 +1675,7 @@ impl SleufBaseApp {
         self.show_original_sidebar(ctx);
 
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}
+        if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         if self.trench_markers.len()!=self.virtual_trenches.len() {
             self.trench_markers=self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
             self.refresh_virtual_references();
@@ -1665,6 +1685,7 @@ impl SleufBaseApp {
         } else {
             self.show_original_map(ctx);
         }
+        if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         self.show_extended_tools(ctx);
 
         if self.show_trench_dialog {

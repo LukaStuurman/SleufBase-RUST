@@ -5,7 +5,7 @@ type XY = [f64; 2];
 
 /// Reuse the core hit tolerance on each visible source without cloning models
 /// or renumbering their project indices. Equal-distance hits retain paint order.
-fn pick_visible_trench(trenches:&[VirtualTrench],p:XY,mpp:f64,tolerance:f64)->Option<usize>{
+pub(super) fn pick_visible_trench(trenches:&[VirtualTrench],p:XY,mpp:f64,tolerance:f64)->Option<usize>{
     let mut best=None;
     let mut distance=f64::INFINITY;
     for (index,trench) in trenches.iter().enumerate().rev(){

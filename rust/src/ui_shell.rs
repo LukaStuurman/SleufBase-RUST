@@ -97,6 +97,7 @@ const ACTIONS: &[(&str, &str)] = &[
     ("", ""),
     ("Wis alle referentiepunten", "clear_refs"),
     ("Laad alle beginpunten", "starts"),
+    ("Laad alle maaiveldgegevens", "terrain"),
     ("", ""),
     ("Wis opmerkingen", "clear_comments"),
     ("Wis alles", "clear"),
@@ -318,6 +319,7 @@ impl SleufBaseApp {
             "template" => self.open_template_export(),
             "clear_refs" => self.clear_raster_references(),
             "starts" => self.load_all_shell_start_points(),
+            "terrain" => self.preload_all_maaiveld(),
             "clear_comments" => self.clear_map_comments(),
             "clear" => self.request_project_action(ProjectAction::ClearLayers, ctx),
             "excel" => self.save_excel(),
@@ -499,6 +501,9 @@ impl SleufBaseApp {
                 tiff = tiff.min((available - 310.).max(140.));
                 klic = klic.min((available - tiff - 110.).max(150.));
                 self.show_shell_tiffs(ui, tiff);
+                // Selecting another TIFF can start its point-preparation worker,
+                // which temporarily owns every source. Keep the other lists intact.
+                if self.export_intent.is_some() { return; }
                 separator(ui, &mut tiff, 140., available - klic - 110., "tiff-sash");
                 self.show_shell_overlays(ui, klic);
                 separator(ui, &mut klic, 150., available - tiff - 110., "klic-sash");
@@ -625,15 +630,22 @@ impl SleufBaseApp {
     fn apply_trench_list_selection(&mut self) {
         let old_virtual = self.virtual_map.selected;
         let old_raster = self.raster_points.selected.clone();
+        let old_point_mode = self.raster_points.mode;
+        let active = self.shell.trench_selection.active();
+        let selected_virtual = active.and_then(|i| i.checked_sub(self.geotiffs.len()))
+            .filter(|&i| i < self.virtual_trenches.len());
+        let selected_raster = active.and_then(|i| self.geotiffs.get(i)).map(|r| r.path.clone());
+        // Selecting an already active row must keep its prepared point markers.
+        if selected_virtual == old_virtual && selected_raster == old_raster { return; }
         self.cancel_virtual_map();
         self.stop_raster_rotation();
         self.raster_points.mode = None;
         self.raster_points.rows.clear();
-        let active = self.shell.trench_selection.active();
-        self.virtual_map.selected = active.and_then(|i| i.checked_sub(self.geotiffs.len()))
-            .filter(|&i| i < self.virtual_trenches.len());
-        self.raster_points.selected = active.and_then(|i| self.geotiffs.get(i)).map(|r| r.path.clone());
+        self.virtual_map.selected = selected_virtual;
+        self.raster_points.selected = selected_raster;
         self.update_view_selection(old_virtual, old_raster.as_deref());
+        self.resume_point_mode_after_selection(old_point_mode);
+        self.maaiveld_selection_changed();
     }
 
     fn apply_overlay_list_selection(&mut self) {
@@ -721,9 +733,13 @@ impl SleufBaseApp {
                         }
             });
             if let Some((row, secondary, modifiers)) = clicked {
-                if secondary { self.shell.trench_selection.context(row); }
-                else { self.shell.trench_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
-                self.apply_trench_list_selection();
+                if self.maaiveld_ui.has_draft() {
+                    self.message = "Sla de maaiveldtekst op of sluit het invulvenster voordat je een andere proefsleuf kiest.".into();
+                } else {
+                    if secondary { self.shell.trench_selection.context(row); }
+                    else { self.shell.trench_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
+                    self.apply_trench_list_selection();
+                }
             }
             selection_count(ui, self.shell.trench_selection.len());
             ui.horizontal_wrapped(|ui| {
@@ -1021,7 +1037,7 @@ impl SleufBaseApp {
                 theme::card(22, 12, 12).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
                             let profile_enabled = self
                                 .project_settings
                                 .as_ref()
@@ -1082,6 +1098,13 @@ impl SleufBaseApp {
                             {
                                 self.toggle_maaiveld_mode();
                             }
+                            if ui.add(egui::Button::new("Proefsleufnaam")
+                                .selected(self.migrated_settings.viewer.show_trench_labels))
+                                .on_hover_text("Namen van proefsleuven op de werkkaart tonen of verbergen")
+                                .clicked()
+                            {
+                                self.toggle_shell_trench_names();
+                            }
                         });
                     });
                     ui.add_space(4.);
@@ -1128,7 +1151,30 @@ impl SleufBaseApp {
             });
     }
 
+    fn toggle_shell_trench_names(&mut self) {
+        let mut settings = self.migrated_settings.clone();
+        settings.viewer.show_trench_labels = !settings.viewer.show_trench_labels;
+        match settings_store::save_pair(&project::app_data_directory(), &settings, &self.backup_settings) {
+            Ok(()) => {
+                self.migrated_settings = settings;
+                if let Some(dialog) = &mut self.settings_dialog {
+                    dialog.draft.viewer.show_trench_labels = self.migrated_settings.viewer.show_trench_labels;
+                }
+                self.message = if self.migrated_settings.viewer.show_trench_labels {
+                    "Proefsleufnamen op de werkkaart ingeschakeld."
+                } else {
+                    "Proefsleufnamen op de werkkaart uitgeschakeld."
+                }.into();
+            }
+            Err(error) => self.message = format!("Weergave van proefsleufnamen niet opgeslagen: {error}"),
+        }
+    }
+
     fn toggle_shell_point(&mut self, reference: bool) {
+        if self.maaiveld_ui.has_draft() {
+            self.message = "Sla de maaiveldtekst op of sluit het invulvenster voordat je een ander gereedschap kiest.".into();
+            return;
+        }
         if self.virtual_map.selected.and_then(|i| self.virtual_trenches.get(i))
             .is_some_and(|trench| !layer_visibility_ui::trench_is_visible(trench))
             || self.raster_points.selected.as_ref().is_some_and(|path|
@@ -1139,6 +1185,10 @@ impl SleufBaseApp {
             return;
         }
         self.close_maaiveld_mode();
+        if !reference && self.virtual_map.selected.is_some() {
+            self.resume_point_mode_after_selection(Some(raster_point_ui::Mode::Start));
+            return;
+        }
         if reference {
             if let Some(i) = self.virtual_map.selected {
                 if self.virtual_map.reference_active() {

@@ -132,9 +132,22 @@ impl SleufBaseApp {
                 for overlay in &self.overlays{ui.selectable_value(&mut self.project_view.selected_dxf,Some(overlay.path.clone()),overlay.path.file_name().unwrap_or_default().to_string_lossy());}
             });
         });
+        if previous.selected_tiff != self.project_view.selected_tiff && self.maaiveld_ui.has_draft() {
+            self.project_view.selected_tiff = previous.selected_tiff.clone();
+            self.message = "Sla de maaiveldtekst op of sluit het venster voordat je een andere proefsleuf kiest.".into();
+        }
         if self.project_view!=previous{
             self.dirty=true;
-            if previous.selected_tiff!=self.project_view.selected_tiff||previous.selected_dxf!=self.project_view.selected_dxf{self.apply_view_selection();}
+            let trench_changed = previous.selected_tiff != self.project_view.selected_tiff;
+            let previous_mode = self.raster_points.mode;
+            if trench_changed || previous.selected_dxf!=self.project_view.selected_dxf{self.apply_view_selection();}
+            if trench_changed {
+                self.cancel_virtual_map();
+                self.stop_raster_rotation();
+                self.resume_point_mode_after_selection(previous_mode);
+                self.maaiveld_selection_changed();
+                ui.ctx().request_repaint();
+            }
             if previous.use_background!=self.project_view.use_background||previous.background_source!=self.project_view.background_source{self.request_selected_background();}
         }
     }

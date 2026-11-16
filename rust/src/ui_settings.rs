@@ -1,10 +1,10 @@
-//! Transactional settings draft. No disk paths, accounts or active app state.
+//! Transactional settings draft with explicit DXF-template file actions.
 //! Original UI contracts: settings_navigation_patch.py and settings.py normalizers.
 use eframe::egui;
 use sleufbase_rust::{
     disciplines::Rule, project::AutosaveSettings, settings_compat::MigratedSettings,
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Category {
@@ -49,6 +49,27 @@ struct RuleRow {
     label: String,
     color: u16,
 }
+#[derive(Clone, Copy)]
+enum TemplateAction {
+    ExportOriginal,
+    ImportCustom,
+}
+impl TemplateAction {
+    fn progress(self) -> &'static str {
+        match self {
+            Self::ExportOriginal => "Ingebouwd sjabloon opslaan…",
+            Self::ImportCustom => "Aangepast sjabloon controleren en laden…",
+        }
+    }
+}
+struct TemplateTask {
+    action: TemplateAction,
+    result: mpsc::Receiver<Result<PathBuf, String>>,
+}
+struct TemplateNotice {
+    text: &'static str,
+    path: Option<PathBuf>,
+}
 pub(crate) struct Dialog {
     pub draft: MigratedSettings,
     pub autosave: AutosaveSettings,
@@ -65,6 +86,8 @@ pub(crate) struct Dialog {
     materials: Vec<String>,
     extras: Vec<String>,
     mappings: Vec<(String, String)>,
+    template_task: Option<TemplateTask>,
+    template_notice: Option<TemplateNotice>,
 }
 // Reuse the production Python-compatible normalizers, including Unicode
 // casefold and whitespace behavior; do not create a competing UI interpretation.
@@ -111,6 +134,8 @@ impl Dialog {
             autosave_count: None,
             project_scoped: false,
             restore_autosave_requested: false,
+            template_task: None,
+            template_notice: None,
             rules: settings
                 .object_rules
                 .iter()
@@ -133,6 +158,57 @@ impl Dialog {
                 .iter()
                 .map(|(s, t)| (s.clone(), t.clone()))
                 .collect(),
+        }
+    }
+    fn start_template_task(&mut self, ctx: &egui::Context, action: TemplateAction, path: PathBuf) {
+        if self.template_task.is_some() {
+            return;
+        }
+        let (tx, result) = mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        self.error.clear();
+        self.template_notice = None;
+        match std::thread::Builder::new().name("sleufbase-template-settings".into()).spawn(move || {
+            let result = match action {
+                TemplateAction::ExportOriginal => sleufbase_rust::template_custom::export_original(&path)
+                    .map(|()| path),
+                TemplateAction::ImportCustom => sleufbase_rust::template_custom::import_custom(&path),
+            };
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        }) {
+            Ok(_) => self.template_task = Some(TemplateTask { action, result }),
+            Err(error) => self.error = format!("Sjabloontaak starten mislukt: {error}"),
+        }
+    }
+    fn poll_template_task(&mut self, ctx: &egui::Context) {
+        let Some(task) = self.template_task.as_ref() else { return; };
+        let action = task.action;
+        let result = match task.result.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(100));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => Err("Sjabloontaak is onverwacht gestopt".into()),
+        };
+        self.template_task = None;
+        match result {
+            Ok(path) => {
+                self.error.clear();
+                let text = match action {
+                    TemplateAction::ExportOriginal => "Ingebouwd sjabloon opgeslagen.",
+                    TemplateAction::ImportCustom => {
+                        self.draft.export_preferences.cadastral_template_path = path.to_string_lossy().into_owned();
+                        "Eigen sjabloon geladen. Klik op Opslaan om deze keuze te bewaren."
+                    }
+                };
+                self.template_notice = Some(TemplateNotice { text, path: Some(path) });
+            }
+            Err(error) => self.error = format!("{} {error}", match action {
+                TemplateAction::ExportOriginal => "Ingebouwd sjabloon opslaan mislukt:",
+                TemplateAction::ImportCustom => "Aangepast sjabloon laden mislukt:",
+            }),
         }
     }
     pub fn open_words(&mut self) {
@@ -179,6 +255,10 @@ impl Dialog {
         &mut self,
         save: &mut impl FnMut(&MigratedSettings, &AutosaveSettings) -> Result<(), String>,
     ) -> Option<Saved> {
+        if self.template_task.is_some() {
+            self.error = "Wacht tot de sjabloontaak klaar is voordat je de instellingen opslaat".into();
+            return None;
+        }
         match self.candidate().and_then(|candidate| {
             save(&candidate.settings, &candidate.autosave)?;
             Ok(candidate)
@@ -385,7 +465,57 @@ fn contact_fields(ui: &mut egui::Ui, contact: &mut sleufbase_rust::template_bran
     ]);
     ui.small("Laat een veld leeg om die contactregel weg te laten. Klik op Opslaan om de wijzigingen toe te passen.");
 }
+fn template_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    let current = state.draft.export_preferences.cadastral_template_path.trim();
+    if current.is_empty() {
+        ui.label(egui::RichText::new("Ingebouwd").strong());
+        ui.small("Het originele SleufBase-sjabloon wordt gebruikt.");
+    } else {
+        ui.label(egui::RichText::new("Eigen sjabloon").strong());
+        let file_name = std::path::Path::new(current).file_name()
+            .map(|name| name.to_string_lossy()).unwrap_or_else(|| current.into());
+        ui.add(egui::Label::new(file_name.as_ref()).truncate()).on_hover_text(current);
+    }
+    ui.small("Sla het ingebouwde sjabloon op om het in je CAD-programma te bewerken. Laad daarna de aangepaste DXF; deze wordt gecontroleerd en als eigen kopie bewaard.");
+    ui.small("Bewaar als DXF voor AutoCAD 2007 of nieuwer en behoud de bestaande bladen, proefsleufvakken en vaste bloknamen.");
+    ui.add_enabled_ui(state.template_task.is_none(), |ui| {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Ingebouwd sjabloon opslaan…").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Ingebouwd DXF-sjabloon opslaan")
+                    .add_filter("AutoCAD DXF", &["dxf"])
+                    .set_file_name("SleufBase-ingebouwd-sjabloon.dxf")
+                    .save_file()
+                {
+                    state.start_template_task(ui.ctx(), TemplateAction::ExportOriginal, path);
+                }
+            }
+            if ui.button("Aangepast sjabloon laden…").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Aangepast DXF-sjabloon laden")
+                    .add_filter("AutoCAD DXF", &["dxf"])
+                    .pick_file()
+                {
+                    state.start_template_task(ui.ctx(), TemplateAction::ImportCustom, path);
+                }
+            }
+            if ui.add_enabled(!state.draft.export_preferences.cadastral_template_path.trim().is_empty(),
+                egui::Button::new("Origineel herstellen")).clicked()
+            {
+                state.draft.export_preferences.cadastral_template_path.clear();
+                state.error.clear();
+                state.template_notice = Some(TemplateNotice {
+                    text: "Origineel geselecteerd. Klik op Opslaan om deze keuze te bewaren.",
+                    path: None,
+                });
+            }
+        });
+    });
+    ui.small("Klik op Opslaan om je sjabloonkeuze voor volgende exports te bewaren. Annuleren behoudt de vorige keuze.");
+}
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    section(ui,"DXF-sjabloon",|ui| template_fields(ui,state));
+    ui.add_space(12.);
     section(ui,"Weergave proefsleuf in kadastrale DXF-export",|ui| {
     let p = &mut state.draft.export_preferences;
     let mode_label = |mode: &str| match mode {
@@ -515,16 +645,6 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     ui.small("Vult midden, links en rechts vanuit BGT. Handmatige tekst blijft staan.");
     checkbox(ui, &mut state.draft.template_auto_export_discipline_excel,
         "Automatisch discipline-Excel naast sjabloon-DXF");
-    ui.collapsing("Eigen DXF-sjabloon", |ui| {
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut p.cadastral_template_path);
-            if ui.button("Kies bestand").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("AutoCAD DXF", &["dxf"]).pick_file() {
-                    p.cadastral_template_path = path.to_string_lossy().into_owned();
-                }
-            }
-        });
-    });
 }
 /// Save callback must durably store BOTH candidates before returning Ok.
 /// Caller applies returned Saved only. Cancel and window X return no candidate.
@@ -534,6 +654,7 @@ pub(crate) fn show(
     mut save: impl FnMut(&MigratedSettings, &AutosaveSettings) -> Result<(), String>,
 ) -> Option<Saved> {
     let state = dialog.as_mut()?;
+    state.poll_template_task(ctx);
     let mut open = true;
     let mut cancel = false;
     let mut requested = false;
@@ -558,7 +679,8 @@ pub(crate) fn show(
                     if ui.button("Annuleren").clicked() {
                         cancel = true;
                     }
-                    if ui.add(egui::Button::new(egui::RichText::new("Opslaan").color(egui::Color32::WHITE))
+                    if ui.add_enabled(state.template_task.is_none(),
+                        egui::Button::new(egui::RichText::new("Opslaan").color(egui::Color32::WHITE))
                         .fill(super::ORANGE)).clicked() {
                         requested = true;
                     }
@@ -566,6 +688,17 @@ pub(crate) fn show(
                         state.back();
                     }
                 });
+                if let Some(task) = &state.template_task {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(task.action.progress());
+                    });
+                } else if let Some(notice) = &state.template_notice {
+                    let response = ui.label(notice.text);
+                    if let Some(path) = &notice.path {
+                        response.on_hover_text(path.display().to_string());
+                    }
+                }
                 if !state.error.is_empty() {
                     ui.colored_label(egui::Color32::DARK_RED, &state.error);
                 }
@@ -586,7 +719,7 @@ pub(crate) fn show(
                         }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
-                            Category::Dxf => "Stel de proefsleufweergave, kleuren, gekoppelde rasters en contactgegevens op de bladen in.",
+                            Category::Dxf => "Beheer je DXF-sjabloon, proefsleufweergave, kleuren, gekoppelde rasters en contactgegevens op de bladen.",
                             Category::Trenches => "Stel dwarsprofielen, maaiveld en het opdrachtgeverlogo in.",
                             Category::KickTheMap => "Beheer materiaalkeuzes, kabelnamen en de woordenlijst voor DXF-lagen.",
                             Category::Backups => "Stel automatisch opslaan in en herstel een eerdere versie.",

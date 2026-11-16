@@ -36,6 +36,7 @@ mod template_attributes;
 pub mod template_legends;
 pub mod template_setup;
 pub mod template_export;
+pub mod template_custom;
 mod asset_budget;
 pub mod template_variants;
 pub mod dxf_text_metrics;
