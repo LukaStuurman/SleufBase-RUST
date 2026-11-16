@@ -3,7 +3,7 @@
 //! limited to the locally launched browser, never attached to existing tabs.
 //! Credentials and session cookies are never saved to SleufBase project files.
 use serde_json::{Value,json};
-use std::{fs, path::Path,process::Command, time::{Duration,Instant}};
+use std::{fs, path::Path,process::Command, sync::atomic::AtomicBool, time::{Duration,Instant}};
 #[cfg(test)]
 use tungstenite::Message;
 
@@ -67,6 +67,43 @@ fn session_cookie_params(payload:&Value)->Vec<Value>{
         }
         Some(params)
     }).collect()
+}
+
+/// Narrow native-account handoff. These cookies are never persisted and are
+/// intentionally stricter than restoring an operator's existing browser profile.
+pub(crate) fn native_session_cookie_params(payload: &Value) -> Result<Vec<Value>, String> {
+    let items = payload.as_array().filter(|items| !items.is_empty() && items.len() <= 64)
+        .ok_or("De KickTheMap-sessie bevat geen geldige aanmeldcookies")?;
+    let mut names = std::collections::HashMap::new();
+    let mut result = Vec::new();
+    for item in items {
+        let cookie = parse_cookie(item)
+            .ok_or("De KickTheMap-sessie bevat ongeldige aanmeldcookies")?;
+        if cookie.domain != "www.my.kickthemap.com" || cookie.path != "/"
+            || item["httpOnly"] != true || item.get("expires").is_some()
+            || item.get("partitionKey").is_some() || cookie.value.is_empty()
+            || !cookie.value.bytes().all(|c| matches!(c, 0x21 | 0x23..=0x2b | 0x2d..=0x3a | 0x3c..=0x5b | 0x5d..=0x7e))
+        {
+            return Err("De KickTheMap-aanmeldcookies zijn niet beperkt tot het eigen accountvenster".into());
+        }
+        if let Some(previous) = names.insert(cookie.name.clone(), cookie.value.clone()) {
+            if previous != cookie.value {
+                return Err("De KickTheMap-sessie bevat tegenstrijdige aanmeldcookies".into());
+            }
+            continue;
+        }
+        result.push(json!({
+            "name":cookie.name,"value":cookie.value,"domain":"www.my.kickthemap.com",
+            "path":"/","secure":true,"httpOnly":true,"sameSite":"Lax",
+        }));
+    }
+    Ok(result)
+}
+
+fn is_job_url(url: &reqwest::Url) -> bool {
+    is_kickthemap_origin(url) && url.query().is_none() && url.fragment().is_none()
+        && url.path().strip_prefix("/viewJob/")
+            .is_some_and(|tail| !tail.is_empty() && !tail.contains('/'))
 }
 
 pub fn parse_browser_cookies(payload:&Value)->Result<Vec<BrowserCookie>,String>{
@@ -133,6 +170,10 @@ pub struct Browser {
 }
 impl Browser {
     pub fn launch_embedded(dock:BrowserDock,host:isize,remember:bool)->Result<Self,String>{
+        Self::launch_embedded_with_cancel(dock, host, remember, &crate::input::NEVER_CANCEL)
+    }
+    pub fn launch_embedded_with_cancel(dock:BrowserDock,host:isize,remember:bool,cancel:&AtomicBool)->Result<Self,String>{
+        crate::input::check(cancel)?;
         #[cfg(windows)] {
             if host==0{return Err("Het SleufBase-hoofdvenster is niet beschikbaar".into());}
             let (profile,lock)=if remember{
@@ -147,7 +188,7 @@ impl Browser {
             let mut command=Command::new(std::env::current_exe().map_err(|e|e.to_string())?);
             command.arg("--kickthemap-webview").arg(dock.control.path()).arg(&profile)
                 .arg(host.to_string()).arg(if remember{"remember"}else{"temporary"});
-            Self::launch_process(command,dock.control,profile,lock)
+            Self::launch_process(command,dock.control,profile,lock,cancel)
         }
         #[cfg(not(windows))] {
             let _=(dock,host,remember);
@@ -157,21 +198,25 @@ impl Browser {
     #[cfg(all(windows,test))]
     fn launch_owned(command:Command,profile:tempfile::TempDir)->Result<Self,String>{
         let path=profile.path().to_owned();
-        Self::launch_process(command,std::sync::Arc::new(profile),path,None)
+        Self::launch_process(command,std::sync::Arc::new(profile),path,None,&crate::input::NEVER_CANCEL)
     }
     #[cfg(windows)]
-    fn launch_process(command:Command,control:std::sync::Arc<tempfile::TempDir>,profile:std::path::PathBuf,lock:Option<fs::File>)->Result<Self,String>{
+    fn launch_process(command:Command,control:std::sync::Arc<tempfile::TempDir>,profile:std::path::PathBuf,lock:Option<fs::File>,cancel:&AtomicBool)->Result<Self,String>{
+        crate::input::check(cancel)?;
         let log=fs::File::create(control.path().join("startup.log")).map_err(|e|e.to_string())?;
         let process=BrowserProcess::spawn(&command,&log).map_err(|e|format!("Inloggen starten: {e}"))?;
         let mut owned=Self{process,_profile:control,_remember_lock:lock,port:0,websocket:String::new()};
         let deadline=Instant::now()+Duration::from_secs(45);
         while Instant::now()<deadline {
+            crate::input::check(cancel)?;
             if let Ok((port,websocket))=read_port(&profile){
                 owned.port=port;owned.websocket=websocket;
                 // WebView2 exposes its diagnostic port before its first page
                 // exists. Wait for the owned webview instead of announcing a
                 // socket-only startup as a ready login window.
-                if owned.cdp("Target.getTargets",json!({})).ok().and_then(|v|v.get("targetInfos").and_then(Value::as_array).map(|a|a.iter().any(|p|p["type"]=="page"))).unwrap_or(false){return Ok(owned);}
+                let targets=owned.channel().command_until("Target.getTargets",json!({}),None,cancel,deadline,512*1024);
+                crate::input::check(cancel)?;
+                if targets.ok().and_then(|v|v.get("targetInfos").and_then(Value::as_array).map(|a|a.iter().any(|p|p["type"]=="page"))).unwrap_or(false){return Ok(owned);}
             }
             if let Some(status)=owned.process.try_wait().map_err(|e|e.to_string())? {
                 let detail=fs::read_to_string(owned._profile.path().join("startup.log")).unwrap_or_default();
@@ -250,16 +295,21 @@ impl Browser {
         fs::write(self._profile.path().join("window-visible"),if visible{b"1"}else{b"0"}).map_err(|_|"Het ingebouwde venster kon niet worden getoond of verborgen".into())
     }
     pub fn open_job(&self,job_id:u64)->Result<(),String>{
+        self.open_job_with_cancel(job_id, &crate::input::NEVER_CANCEL).map(|_| ())
+    }
+    pub fn open_job_with_cancel(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        let url = self.channel().open_verified_job(job_id, cancel)?;
+        crate::input::check(cancel)?;
         self.set_visible(true)?;
-        let payload=self.browser_job_payload()?;
-        let url=job_view_url(&payload,job_id)?;
-        let target=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
-        let response=self.command("Page.navigate",
-            json!({"url":url.as_str()}),Some(&target))?;
-        if response["frameId"].as_str().is_none_or(str::is_empty)||response.get("errorText").is_some(){
-            return Err("Ingebouwde browser kon het KickTheMap-jobtabblad niet openen".into());
-        }
-        Ok(())
+        Ok(url)
+    }
+    /// Transfer the active native account into an owned temporary browser. The
+    /// caller retains its existing SnapshotOwner; no browser identity is adopted.
+    pub fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        let url = self.channel().prepare_authenticated_job(cookies, job_id, cancel)?;
+        crate::input::check(cancel)?;
+        self.set_visible(true)?;
+        Ok(url)
     }
     pub fn browser_job_payload(&self)->Result<String,String>{
         self.channel().browser_job_payload()
@@ -287,21 +337,184 @@ impl Browser {
         BrowserChannel {port:self.port,websocket:self.websocket.clone()}
     }
 }
+struct PageLoad {
+    url: reqwest::Url,
+    frame_id: String,
+    loader_id: Option<String>,
+    require_csrf: bool,
+}
+
+fn page_target(targets: &Value, port: u16, only_job: bool) -> Result<Option<(String, reqwest::Url)>, String> {
+    let list = targets["targetInfos"].as_array().ok_or("Browser-taboverzicht ontbreekt")?;
+    for page in list {
+        if page["type"] != "page" { continue; }
+        let Some(url) = page["url"].as_str().and_then(|raw| reqwest::Url::parse(raw).ok()) else { continue; };
+        if !is_kickthemap_origin(&url) || (only_job && !is_job_url(&url)) { continue; }
+        let id = page["targetId"].as_str().filter(|id| !id.is_empty() && id.len() <= 128
+            && id.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c)))
+            .ok_or("Ongeldige Browser-tabidentiteit")?;
+        return validated_ws_url(&format!("ws://127.0.0.1:{port}/devtools/page/{id}"), port)
+            .map(|target| Some((target, url)));
+    }
+    Ok(None)
+}
+
 impl BrowserChannel {
+    fn command_until(&self, method: &str, params: Value, target: Option<&str>, cancel: &AtomicBool,
+        deadline: Instant, response_bytes: usize) -> Result<Value, String>
+    {
+        crate::input::check(cancel)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err("Het KickTheMap-venster reageert niet op tijd".into()); }
+        cdp::command(self.port, target.unwrap_or(&self.websocket), method, params, cancel,
+            cdp::Limits { duration: remaining.min(Duration::from_secs(25)), response_bytes })
+    }
+    fn pause_until(cancel: &AtomicBool, deadline: Instant) -> Result<(), String> {
+        crate::input::check(cancel)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err("De KickTheMap-pagina is niet op tijd geladen".into()); }
+        std::thread::sleep(remaining.min(Duration::from_millis(75)));
+        crate::input::check(cancel)
+    }
+    fn owned_target(&self, cancel: &AtomicBool, deadline: Instant) -> Result<(String, reqwest::Url), String> {
+        loop {
+            let targets = self.command_until("Target.getTargets", json!({}), None, cancel, deadline, 512 * 1024)?;
+            if let Some(page) = page_target(&targets, self.port, false)? { return Ok(page); }
+            Self::pause_until(cancel, deadline)?;
+        }
+    }
+    fn wait_page(&self, target: &str, load: &PageLoad, cancel: &AtomicBool, deadline: Instant) -> Result<(), String> {
+        let expected = serde_json::to_string(load.url.as_str()).map_err(|_| "Ongeldige joblocatie")?;
+        let script = format!(
+            "(()=>{{if(location.href!=={expected}||document.readyState==='loading')return false;return {};}})()",
+            if load.require_csrf { "!!document.querySelector('meta[name=\"csrf-token\"]')?.content" } else { "true" });
+        loop {
+            let tree = self.command_until("Page.getFrameTree", json!({}), Some(target), cancel, deadline, 512 * 1024)?;
+            let frame = &tree["frameTree"]["frame"];
+            // URL alone can still describe the old document immediately after
+            // Page.navigate. Wait for its new loader before reading page data.
+            let loader_matches = load.loader_id.as_deref().is_none_or(|id| frame["loaderId"] == id);
+            if frame["id"] == load.frame_id && loader_matches {
+                if let Some(url) = frame["url"].as_str().and_then(|raw| reqwest::Url::parse(raw).ok()) {
+                    if is_kickthemap_origin(&url) && matches!(url.path().trim_end_matches('/'), "/signin" | "/login") {
+                        return Err("De KickTheMap-sessie is verlopen. Meld je opnieuw aan.".into());
+                    }
+                    if url == load.url {
+                        let result = self.command_until("Runtime.evaluate",
+                            json!({"expression":script,"returnByValue":true}), Some(target), cancel, deadline, 64 * 1024);
+                        if result.as_ref().is_ok_and(|reply| reply["result"]["value"] == true) { return Ok(()); }
+                        crate::input::check(cancel)?;
+                    }
+                }
+            }
+            Self::pause_until(cancel, deadline)?;
+        }
+    }
+    fn navigate_ready(&self, target: &str, url: &reqwest::Url, require_csrf: bool,
+        cancel: &AtomicBool, deadline: Instant) -> Result<(), String>
+    {
+        if !is_kickthemap_origin(url) || !(url.path() == "/" || is_job_url(url)) {
+            return Err("Ongeldige KickTheMap-joblocatie".into());
+        }
+        let response = self.command_until("Page.navigate", json!({"url":url.as_str()}), Some(target), cancel, deadline, 64 * 1024)?;
+        if response.get("errorText").is_some() { return Err("De KickTheMap-pagina kon niet worden geopend".into()); }
+        let frame_id = response["frameId"].as_str().filter(|id| !id.is_empty())
+            .ok_or("De KickTheMap-pagina heeft geen browserframe")?.to_owned();
+        let load = PageLoad { url: url.clone(), frame_id,
+            loader_id: response["loaderId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned), require_csrf };
+        self.wait_page(target, &load, cancel, deadline)
+    }
+    fn current_page_ready(&self, target: &str, url: &reqwest::Url, cancel: &AtomicBool, deadline: Instant) -> Result<(), String> {
+        let tree = self.command_until("Page.getFrameTree", json!({}), Some(target), cancel, deadline, 512 * 1024)?;
+        let frame = &tree["frameTree"]["frame"];
+        let load = PageLoad { url: url.clone(),
+            frame_id: frame["id"].as_str().filter(|id| !id.is_empty()).ok_or("Het KickTheMap-browserframe ontbreekt")?.to_owned(),
+            loader_id: frame["loaderId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned), require_csrf: true };
+        self.wait_page(target, &load, cancel, deadline)
+    }
+    fn job_payload_at(&self, target: &str, cancel: &AtomicBool, deadline: Instant) -> Result<String, String> {
+        let script = r#"(async()=>{if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw new Error('Ongeldige website');const csrf=document.querySelector('meta[name="csrf-token"]')?.content;if(!csrf)throw new Error('Aanmelding ontbreekt');const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}',signal:controller.signal});if(!r.ok)throw new Error('Jobs ophalen mislukt');return await r.text();}finally{clearTimeout(timer);}})()"#;
+        let result = self.command_until("Runtime.evaluate", json!({"expression":script,"awaitPromise":true,"returnByValue":true}),
+            Some(target), cancel, deadline, MAX_CDP_RESPONSE)?;
+        if result.get("exceptionDetails").is_some() { return Err("De actieve KickTheMap-sessie kon de joblijst niet ophalen".into()); }
+        result["result"]["value"].as_str().filter(|content| content.len() <= MAX_CDP_RESPONSE)
+            .map(str::to_owned).ok_or("KickTheMap gaf geen geldige joblijst terug".into())
+    }
+    fn open_job_at(&self, target: &str, job_id: u64, current_ready_url: Option<&reqwest::Url>,
+        cancel: &AtomicBool, deadline: Instant) -> Result<String, String>
+    {
+        let payload = self.job_payload_at(target, cancel, deadline)?;
+        let url = job_view_url(&payload, job_id)?;
+        if current_ready_url == Some(&url) {
+            // Reopening Jobs must not discard an unfinished point/line. Verify
+            // the live identity first, then ensure this same document is ready.
+            self.current_page_ready(target, &url, cancel, deadline)?;
+        } else {
+            self.navigate_ready(target, &url, false, cancel, deadline)?;
+        }
+        Ok(url.to_string())
+    }
+    fn open_verified_job(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        crate::input::check(cancel)?;
+        if job_id == 0 { return Err("Selecteer een geldige KickTheMap-job".into()); }
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (target, url) = self.owned_target(cancel, deadline)?;
+        self.current_page_ready(&target, &url, cancel, deadline)?;
+        self.open_job_at(&target, job_id, Some(&url), cancel, deadline)
+    }
+    fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        crate::input::check(cancel)?;
+        if job_id == 0 { return Err("Selecteer een geldige KickTheMap-job".into()); }
+        let mut cookies = native_session_cookie_params(cookies)?;
+        for cookie in &mut cookies {
+            cookie.as_object_mut().unwrap().remove("domain");
+            cookie["url"] = json!(format!("{ORIGIN}/"));
+        }
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (target, _) = self.owned_target(cancel, deadline)?;
+        self.command_until("Page.stopLoading", json!({}), Some(&target), cancel, deadline, 64 * 1024)?;
+        self.command_until("Storage.clearCookies", json!({}), None, cancel, deadline, 64 * 1024)?;
+        self.command_until("Storage.setCookies", json!({"cookies":cookies}), None, cancel, deadline, 64 * 1024)?;
+        let home = reqwest::Url::parse(&format!("{ORIGIN}/")).map_err(|_| "Ongeldige KickTheMap-accountlocatie")?;
+        self.navigate_ready(&target, &home, true, cancel, deadline)?;
+        self.open_job_at(&target, job_id, None, cancel, deadline)
+    }
+    fn form_target(&self, cancel: &AtomicBool) -> Result<(String, reqwest::Url), String> {
+        crate::input::check(cancel)?;
+        let targets = self.command("Target.getTargets", json!({}), None, cancel)?;
+        page_target(&targets, self.port, true)?.ok_or("Open eerst de geselecteerde job in de ingebouwde browser".into())
+    }
+    fn evaluate_form(&self, expression: String, cancel: &AtomicBool) -> Result<crate::kickthemap_form::BridgeReply, String> {
+        let (target, _) = self.form_target(cancel)?;
+        let result = self.command("Runtime.evaluate", json!({"expression":expression,"returnByValue":true}), Some(&target), cancel)?;
+        if result.get("exceptionDetails").is_some() { return Err("Het kabel-/leidingformulier kon niet worden gelezen. Kies het object opnieuw.".into()); }
+        let raw = result["result"]["value"].as_str().filter(|raw| raw.len() <= 128 * 1024)
+            .ok_or("Het kabel-/leidingformulier gaf geen geldig antwoord")?;
+        crate::kickthemap_form::BridgeReply::from_json(raw)
+    }
+    pub fn form_snapshot(&self, cancel: &AtomicBool) -> Result<crate::kickthemap_form::BridgeReply, String> {
+        self.evaluate_form(crate::kickthemap_form::snapshot_script(), cancel)
+    }
+    pub fn apply_form(&self, snapshot: &crate::kickthemap_form::FormSnapshot,
+        values: &crate::kickthemap_form::FormValues, cancel: &AtomicBool) -> Result<crate::kickthemap_form::BridgeReply, String>
+    {
+        crate::input::check(cancel)?;
+        self.evaluate_form(crate::kickthemap_form::apply_script(snapshot, values)?, cancel)
+    }
+    pub fn reload_job(&self, expected_url: &str, cancel: &AtomicBool) -> Result<(), String> {
+        crate::input::check(cancel)?;
+        let expected = reqwest::Url::parse(expected_url).ok().filter(is_job_url)
+            .ok_or("Ongeldige geselecteerde KickTheMap-job")?;
+        let (target, current) = self.form_target(cancel)?;
+        if current != expected { return Err("De browser toont een andere job. Open de gewenste job opnieuw via Jobs.".into()); }
+        self.navigate_ready(&target, &expected, false, cancel, Instant::now() + Duration::from_secs(30))
+    }
     pub fn browser_job_payload(&self)->Result<String,String>{
         self.browser_job_payload_with_cancel(&crate::input::NEVER_CANCEL)
     }
     pub(crate) fn browser_job_payload_with_cancel(&self,cancel:&std::sync::atomic::AtomicBool)->Result<String,String>{
-        let ws=self.job_tab(cancel)?;
-        let script=r#"(async()=>{if(!['https://www.my.kickthemap.com','https://my.kickthemap.com'].includes(location.origin))throw new Error('Ongeldige website');let csrf=document.querySelector('meta[name="csrf-token"]')?.content||'';let r=await fetch('/jobs/get-user-jobs',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.text();})()"#;
-        let result=cdp::command(self.port,&ws,"Runtime.evaluate",
-            json!({"expression":script,"awaitPromise":true,"returnByValue":true}),cancel,
-            cdp::Limits{duration:Duration::from_secs(25),response_bytes:MAX_CDP_RESPONSE})?;
-        if result.get("exceptionDetails").is_some() {return Err("KickTheMap job-API kon niet in het browservenster worden opgevraagd".into());}
-        let content=result["result"]["value"].as_str()
-            .ok_or("KickTheMap-browser heeft geen jobgegevens geretourneerd")?;
-        if content.len()>MAX_CDP_RESPONSE{return Err("KickTheMap browser-resultaat te groot".into());}
-        Ok(content.to_owned())
+        let target = self.job_tab(cancel)?;
+        self.job_payload_at(&target, cancel, Instant::now() + Duration::from_secs(25))
     }
     pub(crate) fn storage_config_payload(&self,cancel:&std::sync::atomic::AtomicBool)->Result<String,String>{
         let target=self.job_tab(cancel)?;
@@ -391,6 +604,10 @@ impl Drop for Browser {
         // A private temporary profile is dropped after the owned browser.
     }
 }
+#[cfg(test)]
+#[path="kickthemap_workspace_tests.rs"]
+mod workspace_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

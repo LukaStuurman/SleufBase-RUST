@@ -43,6 +43,10 @@ mod project_template_ui;
 mod trench_editing;
 #[path="ui_kickthemap_browser.rs"]
 mod kick_browser_ui;
+#[path="ui_kickthemap_tools.rs"]
+mod kick_browser_tools;
+#[path="ui_kickthemap_reload.rs"]
+mod kick_browser_reload_ui;
 #[path="ui_location.rs"]
 mod location_ui;
 #[path="ui_tiff_addresses.rs"]
@@ -1133,7 +1137,9 @@ impl SleufBaseApp {
                 self.message=format!("{} KickTheMap jobs live opgehaald",self.live_jobs.len());
                 if native {
                     // An earlier website view might belong to another account.
+                    self.reset_kickthemap_editor();
                     self.browser_ui.browser=None;
+                    self.browser_ui.dock=None;
                     #[cfg(not(test))]
                     {
                         use sleufbase_rust::kickthemap_session as stored;
@@ -1201,6 +1207,7 @@ impl SleufBaseApp {
         self.live_jobs.clear();
 
         self.hide_kickthemap_pane();
+        self.reset_kickthemap_editor();
         self.browser_ui.browser=None;
         self.browser_ui.dock=None;
         self.browser_ui.selected.clear();
@@ -1653,6 +1660,8 @@ impl SleufBaseApp {
         self.poll_live_jobs();
         self.poll_live_download(ctx);
         self.poll_kickthemap_browser(ctx);
+        self.poll_kickthemap_object_reload(ctx);
+        self.poll_kickthemap_form(ctx);
         self.poll_bgt();
         self.poll_cadastral();
         self.poll_ahn();

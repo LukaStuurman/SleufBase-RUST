@@ -15,6 +15,8 @@ pub(super) struct State {
     candidates: Vec<Candidate>,
     sources: Vec<(usize, SourceStamp)>,
     rows: HashMap<Candidate, Row>,
+    row_heights: Vec<Option<f32>>,
+    row_layout: Option<[f32; 5]>,
     // Scroll history only: the active row always comes from dxf_selection.
     last_scroll_target: Option<Candidate>,
     reveal_selection: bool,
@@ -62,6 +64,8 @@ impl State {
         self.candidates.clear();
         self.candidates.extend_from_slice(candidates);
         self.rows.clear();
+        self.row_heights = vec![None; candidates.len()];
+        self.row_layout = None;
         self.sources = candidates.iter().map(|&(overlay, _)| overlay).collect::<BTreeSet<_>>()
             .into_iter().filter_map(|index| overlays.get(index).map(|o| (index, SourceStamp::capture(o)))).collect();
         self.reveal_selection = true;
@@ -117,36 +121,47 @@ fn row_fonts(ui: &egui::Ui) -> (egui::FontId, egui::FontId, egui::FontId) {
     } else { body.family.clone() });
     (bold, small, body)
 }
-fn row_height(ui: &egui::Ui) -> f32 {
+fn estimated_row_height(ui: &egui::Ui) -> f32 {
     let (bold, small, body) = row_fonts(ui);
-    ui.fonts(|fonts| fonts.row_height(&bold).ceil() * 2.
-        + fonts.row_height(&small).ceil() * 2. + fonts.row_height(&body).ceil() * 3.) + 29.
+    ui.fonts(|fonts| fonts.row_height(&bold).ceil()
+        + fonts.row_height(&small).ceil() * 2. + fonts.row_height(&body).ceil()) + 20.
 }
-fn row_widget(ui: &mut egui::Ui, row: &Row, active: bool, height: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+struct RowLayout {
+    blocks: Vec<(Arc<egui::Galley>, Color32)>,
+    height: f32,
+}
+fn row_layout(ui: &egui::Ui, row: &Row, active: bool, width: f32) -> RowLayout {
+    let (bold, small, body) = row_fonts(ui);
+    let mut blocks = Vec::with_capacity(4);
+    let mut height = 14.;
+    for (text, font, lines, color) in [
+        (row.layer.as_str(), bold, 2, ui.visuals().text_color()),
+        (row.context.as_str(), small.clone(), 1, MUTED),
+        (if active { "Actief · XDATA InfraCAD" } else { "XDATA InfraCAD" }, small, 1, MUTED),
+        (row.infracad.as_deref().unwrap_or("Geen InfraCAD-informatie"), body, 2, ui.visuals().text_color()),
+    ] {
+        let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, (width - 20.).max(1.));
+        job.wrap.max_rows = lines;
+        let galley = ui.fonts(|fonts| fonts.layout_job(job));
+        height += galley.size().y;
+        if !blocks.is_empty() { height += 2.; }
+        blocks.push((galley, color));
+    }
+    RowLayout { blocks, height: height.ceil() }
+}
+fn row_widget(ui: &mut egui::Ui, active: bool, layout: RowLayout) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), layout.height), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let highlighted = response.hovered() || response.has_focus();
         ui.painter().rect(rect, 10_u8,
             if active { Color32::from_rgb(255, 224, 199) } else if highlighted { APP_BG } else { Color32::WHITE },
             egui::Stroke::new(if active { 2_f32 } else { 1_f32 },
                 if active || highlighted { ORANGE } else { theme::BORDER }), egui::StrokeKind::Inside);
-        let (bold, small, body) = row_fonts(ui);
-        let mut position = rect.min + egui::vec2(10., 10.);
-        let width = (rect.width() - 20.).max(1.);
-        // Separate bounded blocks keep layer, filename/type and InfraCAD visible
-        // even for very long values, without changing the virtual row height.
-        for (text, font, lines, color) in [
-            (row.layer.as_str(), bold, 2, ui.visuals().text_color()),
-            (row.context.as_str(), small.clone(), 1, MUTED),
-            (if active { "Actief · XDATA InfraCAD" } else { "XDATA InfraCAD" }, small, 1, MUTED),
-            (row.infracad.as_deref().unwrap_or("Geen InfraCAD-informatie"), body, 3, ui.visuals().text_color()),
-        ] {
-            let line_height = ui.fonts(|fonts| fonts.row_height(&font)).ceil();
-            let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, width);
-            job.wrap.max_rows = lines;
-            let galley = ui.fonts(|fonts| fonts.layout_job(job));
+        let mut position = rect.min + egui::vec2(10., 7.);
+        for (galley, color) in layout.blocks {
+            let height = galley.size().y;
             ui.painter().galley(position, galley, color);
-            position.y += line_height * lines as f32 + 3.;
+            position.y += height + 2.;
         }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -165,25 +180,13 @@ pub(super) fn show(
     // Leave useful map space at normal window sizes, including after resizing.
     let maximum = (available - 520.).max(available * 0.30).min(460.).max(1.);
     let minimum = maximum.min(240.);
-    let mut close = false;
     let mut choose = None;
     egui::SidePanel::right("cable-object-list").resizable(true)
         .default_width(330_f32.min(maximum)).width_range(minimum..=maximum)
         .frame(egui::Frame::new().fill(APP_BG).inner_margin(egui::Margin {
             left: 8, right: 18, top: 18, bottom: 18,
         })).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.;
-                let title_width = (ui.available_width() - 38.).max(0.);
-                let title = egui::RichText::new("Kabelobjecten").font(row_fonts(ui).0);
-                ui.add_sized([title_width, 28.], egui::Label::new(title).truncate().halign(egui::Align::Min));
-                let response = ui.add_sized([32., 28.], egui::Button::new("×").corner_radius(6))
-                    .on_hover_text("Objectlijst sluiten");
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button,
-                    ui.is_enabled(), "Objectlijst sluiten"));
-                close = response.clicked();
-            });
-            ui.small(format!("{} gevonden objecten", candidates.len()));
+            ui.label(egui::RichText::new("Kabelobjecten").font(row_fonts(ui).0));
             ui.add_space(6.);
             if candidates.is_empty() {
                 theme::card(12, 12, 12).show(ui, |ui| {
@@ -192,43 +195,69 @@ pub(super) fn show(
                 });
                 return;
             }
-            let row_height = row_height(ui);
-            let spacing = 8.;
+            let estimated_height = estimated_row_height(ui);
+            let spacing = 5.;
             ui.spacing_mut().item_spacing.y = spacing;
-            let mut scroll = egui::ScrollArea::vertical().id_salt("cable-object-list-rows")
+            let scroll = egui::ScrollArea::vertical().id_salt("cable-object-list-rows")
                 .auto_shrink([false, false])
+                .animated(false)
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
             if reveal {
-                let row = selected.and_then(|value| candidates.iter().position(|&candidate| candidate == value)).unwrap_or(0);
                 let id = ui.make_persistent_id(egui::Id::new("cable-object-list-rows"));
                 let previous = egui::scroll_area::State::load(ui.ctx(), id).unwrap_or_default().offset.y;
-                let top = row as f32 * (row_height + spacing);
-                let bottom = top + row_height;
-                let viewport_height = ui.available_height().max(0.);
-                let offset = if top < previous { top }
-                    else if bottom > previous + viewport_height { (bottom - viewport_height).max(0.) }
-                    else { previous };
                 // Stop stale inertia on selection changes, retaining the user's
                 // current scroll position when the selected row is already visible.
                 let mut fresh = egui::scroll_area::State::default();
-                fresh.offset.y = offset;
+                fresh.offset.y = previous;
                 fresh.store(ui.ctx(), id);
-                scroll = scroll.vertical_scroll_offset(offset);
             }
-            scroll.show_rows(ui, row_height, candidates.len(), |ui, rows| {
-                ui.spacing_mut().item_spacing.y = spacing;
-                ui.spacing_mut().button_padding = egui::vec2(10., 10.);
-                for row_index in rows {
-                    let candidate = candidates[row_index];
-                    let Some(overlay) = overlays.get(candidate.0) else { continue; };
+            scroll.show_viewport(ui, |ui, viewport| {
+                let width = ui.available_width();
+                let (bold, small, body) = row_fonts(ui);
+                let stamp = [width, ui.ctx().pixels_per_point(), bold.size, small.size, body.size];
+                if state.row_layout != Some(stamp) {
+                    state.row_layout = Some(stamp);
+                    state.row_heights.fill(None);
+                    // Replacing measured heights shifts every following row.
+                    // Reveal again after the resized viewport has been measured.
+                    state.reveal_selection = true;
+                    ui.ctx().request_repaint();
+                }
+                let origin = ui.min_rect().min;
+                let target = selected.and_then(|value| candidates.iter().position(|&candidate| candidate == value)).unwrap_or(0);
+                let mut target_rect = None;
+                let mut top = 0.;
+                // Cache only cheap heights for offscreen rows. Building and
+                // measuring their text remains limited to the visible viewport.
+                for (row_index, &candidate) in candidates.iter().enumerate() {
+                    let mut height = state.row_heights[row_index].unwrap_or(estimated_height);
+                    let visible = top + height >= viewport.top() - estimated_height
+                        && top <= viewport.bottom() + estimated_height;
+                    if !visible {
+                        if reveal && row_index == target {
+                            target_rect = Some(egui::Rect::from_min_size(origin + egui::vec2(0., top), egui::vec2(width, height)));
+                            state.reveal_selection = true;
+                        }
+                        top += height + spacing;
+                        continue;
+                    }
+                    let Some(overlay) = overlays.get(candidate.0) else { top += height + spacing; continue; };
                     if !state.rows.contains_key(&candidate) {
                         if state.rows.len() >= MAX_CACHED_ROWS { state.rows.clear(); }
-                        let Some(row) = Row::build(overlay, candidate.1) else { continue; };
+                        let Some(row) = Row::build(overlay, candidate.1) else { top += height + spacing; continue; };
                         state.rows.insert(candidate, row);
                     }
                     let row = &state.rows[&candidate];
                     let active = selected == Some(candidate);
-                    let response = ui.push_id(candidate, |ui| row_widget(ui, row, active, row_height)).inner;
+                    let layout = row_layout(ui, row, active, width);
+                    height = layout.height;
+                    state.row_heights[row_index] = Some(height);
+                    let rect = egui::Rect::from_min_size(origin + egui::vec2(0., top), egui::vec2(width, height));
+                    let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(candidate)
+                        .layout(egui::Layout::top_down(egui::Align::Min)));
+                    let response = row_widget(&mut row_ui, active, layout);
+                    if reveal && row_index == target { target_rect = Some(rect); }
+                    top += height + spacing;
                     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel,
                         ui.is_enabled(), active, &row.layer));
                     if response.clicked() { choose = Some(candidate); }
@@ -245,8 +274,13 @@ pub(super) fn show(
                         }
                     });
                 }
+                ui.set_min_height((top - spacing).max(0.));
+                if let Some(rect) = target_rect { ui.scroll_to_rect(rect, None); }
             });
         });
-    if close { state.open = false; ctx.request_repaint(); }
     choose
 }
+
+#[cfg(test)]
+#[path = "ui_cable_list_tests.rs"]
+mod tests;

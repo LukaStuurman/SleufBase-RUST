@@ -219,11 +219,11 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
             "KickTheMap",
             "Instellingen",
             "marXact",
-            "Weergave",
             "Proefsleuven",
             "Overlays",
             "Kabelinformatie",
             "Kaart",
+            "TIFF",
             "Maaiveld invullen",
             "Referentiepunt",
             "Beginpunt",
@@ -244,7 +244,6 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
         }
         let map_title = labels
             .iter()
-            .rev()
             .find(|(label, _)| label == "Kaart")
             .unwrap();
         let expected_sidebar = (size[0] as f32 * 0.255).clamp(360., 400.);
@@ -253,9 +252,13 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
             "original split moved: {:?}",
             map_title.1
         );
+        let tiff_control = labels.iter().find(|(label, _)| label == "TIFF").unwrap().1;
+        assert!(tiff_control.left() >= map_title.1.left() && tiff_control.top() > map_title.1.bottom(),
+            "display controls must sit below the map heading: {tiff_control:?}");
         assert!(!labels.iter().any(|(label, _)| label == "KickTheMap online"
             || label == "Migratie-preview"
-            || label == "StreetSmart"));
+            || label == "StreetSmart"
+            || label == "Weergave"));
         let status = labels
             .iter()
             .find(|(label, _)| label.starts_with("Laad GeoTIFF-bestanden"))
@@ -266,7 +269,10 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
         );
         // Empty list bodies and the information panel must retain their original
         // pane heights, rather than collapsing to the footer/content height.
-        assert_eq!(image.get_pixel(40, 300).0, [251, 252, 254, 255]);
+        let trench_title = labels.iter().find(|(label, _)| label == "Proefsleuven").unwrap().1;
+        let trench_footer = labels.iter().find(|(label, _)| label == "0 geselecteerd").unwrap().1;
+        assert!(trench_footer.top() > trench_title.bottom() + 80., "empty trench list must retain its body height");
+        assert_eq!(image.get_pixel(40, (trench_title.bottom() + 60.).round() as u32).0, [255, 255, 255, 255]);
         assert_eq!(image.get_pixel(24, size[1] - 50).0, [255, 255, 255, 255]);
         if let Some(dir) = std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR") {
             let dir = PathBuf::from(dir);

@@ -6,6 +6,7 @@ use sleufbase_rust::kickthemap_session as stored;
 
 impl SleufBaseApp {
     pub(super) fn open_kickthemap_login(&mut self) {
+        self.hide_kickthemap_pane();
         let already_open = self.shell.login_open;
         if !already_open { self.browser_ui.show_password=false; }
         self.shell.login_open = true;
@@ -23,11 +24,14 @@ impl SleufBaseApp {
         }
     }
 
-    fn kickthemap_account_owner(&self)->Option<&sleufbase_rust::jobs_cache::SnapshotOwner> {
+    pub(super) fn kickthemap_account_owner(&self)->Option<&sleufbase_rust::jobs_cache::SnapshotOwner> {
         if self.browser_ui.capturing.is_some()||(self.shell.login_is_native&&self.live_rx.is_some()) {
             return None;
         }
         if let Some(session)=&self.live_session {return Some(session.snapshot_owner());}
+        if let Some(reload)=&self.browser_ui.reloading {
+            return (self.live_jobs_owner.as_ref()==Some(reload.owner())).then_some(reload.owner());
+        }
         if !self.live_busy {return None;}
         if let Some(refresh)=&self.live_refresh {
             return (self.live_jobs_owner.as_ref()==Some(&refresh.owner)).then_some(&refresh.owner);
@@ -203,6 +207,7 @@ impl SleufBaseApp {
     /// Embedded website is an explicit fallback for mandatory KickTheMap checks.
     /// It uses the parent SleufBase window and never launches an external browser.
     pub(super) fn hide_kickthemap_pane(&mut self) {
+        self.browser_ui.tools.cancel();
         self.browser_ui.web_visible = false;
         if let Some(dock) = &self.browser_ui.dock {
             let _ = dock.set_bounds(None);
@@ -216,18 +221,24 @@ impl SleufBaseApp {
         if !self.browser_ui.web_visible {
             return;
         }
+        if self.browser_ui.tools.job.is_some() && !self.browser_ui.is_opening_job() {
+            self.show_kickthemap_job_browser(ctx);
+            return;
+        }
         let busy = self.live_operation_busy();
+        let opening = self.browser_ui.is_opening_job();
         let connected = self.live_session.is_some();
         let mut close = false;
         let mut jobs = false;
         let mut logout = false;
         egui::CentralPanel::default().show(ctx, |ui| {
             settings_ui::control_style(ui);
-            ui.heading("KickTheMap beveiligde aanmelding");
+            ui.heading(if opening { "KickTheMap-browser openen" } else { "KickTheMap beveiligde aanmelding" });
             if busy {
                 ui.horizontal_wrapped(|ui| {
                     ui.spinner();
-                    ui.label("Meld je aan op de KickTheMap-pagina. Rond eventuele verificatie zelf af.");
+                    ui.label(if opening { "De geselecteerde job wordt geopend met je huidige aanmelding." }
+                        else { "Meld je aan op de KickTheMap-pagina. Rond eventuele verificatie zelf af." });
                 });
             } else if connected {
                 ui.label("Aangemeld bij KickTheMap.");
@@ -244,21 +255,11 @@ impl SleufBaseApp {
             });
             ui.separator();
             let rect = ui.available_rect_before_wrap();
-            let scale = ctx.pixels_per_point();
-            if let Some(dock) = &self.browser_ui.dock {
-                let popup_open = ctx.memory(|memory| memory.any_popup_open());
-                let bounds = (!popup_open && rect.width() >= 1. && rect.height() >= 1.)
-                    .then(|| [
-                        (rect.left() * scale).round() as i32,
-                        (rect.top() * scale).round() as i32,
-                        (rect.width() * scale).round() as i32,
-                        (rect.height() * scale).round() as i32,
-                    ]);
-                let _ = dock.set_bounds(bounds);
-            }
+            self.set_kickthemap_web_bounds(ctx, rect);
         });
         if close {
-            if busy { self.cancel_kickthemap_login(); }
+            if opening { self.cancel_kickthemap_job_open(); }
+            else if busy { self.cancel_kickthemap_login(); }
             else { self.hide_kickthemap_pane(); }
             self.shell.login_open = false;
         } else if jobs {
