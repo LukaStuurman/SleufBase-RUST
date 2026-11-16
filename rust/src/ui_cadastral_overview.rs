@@ -95,17 +95,61 @@ impl SleufBaseApp {
     }
     pub(super) fn show_cadastral_overview(&mut self,ctx:&egui::Context){
         if !self.overview_ui.open&&!self.overview_ui.busy(){return;}
-        let mut state=std::mem::take(&mut self.overview_ui);let mut open=state.open;let mut start=false;
-        egui::Window::new("Kadastrale DXF exporteren").open(&mut open).default_width(530.).show(ctx,|ui|{
-            if state.busy(){ui.spinner();ui.label(&self.message);if ui.button("Annuleren").clicked(){state.worker.as_ref().unwrap().cancel();}ctx.request_repaint_after(Duration::from_millis(40));return;}
-            ui.label(format!("{} GeoTIFFs en {} virtuele proefsleuven",self.geotiffs.len(),self.virtual_trenches.len()));
-            egui::ComboBox::from_label("Proefsleuven tekenen als").selected_text(match state.settings.trench_mode{overview::TrenchMode::Polygon=>"Vlak",overview::TrenchMode::Centerline=>"Hartlijn",overview::TrenchMode::None=>"Geen"}).show_ui(ui,|ui|{for(mode,label)in[(overview::TrenchMode::Polygon,"Vlak"),(overview::TrenchMode::Centerline,"Hartlijn"),(overview::TrenchMode::None,"Geen")]{ui.selectable_value(&mut state.settings.trench_mode,mode,label);}});
-            ui.checkbox(&mut state.settings.include_tiff_images,"TIFF-afbeeldingen opnemen");ui.checkbox(&mut state.include_bgt,"BGT-wegdelen meenemen");ui.checkbox(&mut state.offline,"Alleen geladen kaartgegevens gebruiken (offline)");
-            for(label,color)in[("Hartlijnkleur",&mut state.settings.centerline_color),("Labelkleur",&mut state.settings.label_color)]{ui.horizontal(|ui|{ui.label(label);ui.color_edit_button_srgb(color);});}
-            ui.horizontal(|ui|{ui.label("Labelafstand (m)");ui.add(egui::DragValue::new(&mut state.settings.label_gap).range(0. ..=1000.).speed(0.1));});
-            if !state.error.is_empty(){ui.colored_label(DARK,&state.error);}start=ui.button("Kies nieuwe uitvoer-DXF…").clicked();
-        });
-        if !open&&state.busy(){state.worker.as_ref().unwrap().cancel();}state.open=open;self.overview_ui=state;
+        if self.overview_ui.busy() {
+            self.paint_busy_backdrop(ctx);
+            let Some(worker) = self.overview_ui.worker.as_ref() else { return; };
+            let control = worker.control();
+            let can_cancel = control.is_some_and(|control| control.can_cancel());
+            let cancelled = control.is_some_and(|control| control.is_cancelled());
+            let status = match control.map(|control| control.progress().0) {
+                Some(sleufbase_rust::export_control::Stage::Writing) => "Kadastrale DXF schrijven…",
+                Some(sleufbase_rust::export_control::Stage::Publishing) => "Kadastrale DXF definitief opslaan…",
+                _ => "Kadastrale gegevens en proefsleuven voorbereiden…",
+            };
+            let cancel = progress_ui::window(ctx, "cadastral-export-progress", "Kadastrale DXF exporteren",
+                status, None, can_cancel, cancelled, |ui| {
+                    if !self.message.is_empty() { ui.label(&self.message); }
+                    if let Some(control) = control {
+                        let detail = control.detail();
+                        if !detail.is_empty() && detail != self.message { ui.label(detail); }
+                        let bytes = control.progress().1;
+                        if bytes > 0 { ui.small(format!("{:.1} MiB geschreven", bytes as f64 / 1_048_576.)); }
+                    }
+                    ui.small("De projectgegevens blijven behouden. Wacht op afronding voordat je verder werkt.");
+                });
+            if cancel { worker.cancel(); }
+            return;
+        }
+        let mut state=std::mem::take(&mut self.overview_ui);
+        let mut open=state.open;
+        let mut start=false;
+        let available=ctx.screen_rect().shrink(12.);
+        let size=egui::vec2((available.width()-36.).clamp(160.,480.),(available.height()-72.).clamp(120.,300.));
+        egui::Window::new("Kadastrale DXF exporteren")
+            .id(egui::Id::new("cadastral-export-options"))
+            .open(&mut open).anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO)
+            .fixed_size(size).resizable(false).collapsible(false).constrain_to(available)
+            .show(ctx,|ui|{
+                ui.set_max_width(ui.available_width());
+                ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                egui::TopBottomPanel::bottom("cadastral-export-actions").frame(egui::Frame::new()).show_inside(ui,|ui|{
+                    ui.separator();
+                    start=ui.button("Kies nieuwe uitvoer-DXF…").clicked();
+                });
+                egui::ScrollArea::vertical().id_salt("cadastral-export-options-body")
+                    .max_height(ui.available_height()).show(ui,|ui|{
+                        ui.set_width(ui.available_width());
+                        ui.label(format!("{} GeoTIFFs en {} virtuele proefsleuven",self.geotiffs.len(),self.virtual_trenches.len()));
+                        egui::ComboBox::from_label("Proefsleuven tekenen als").selected_text(match state.settings.trench_mode{overview::TrenchMode::Polygon=>"Vlak",overview::TrenchMode::Centerline=>"Hartlijn",overview::TrenchMode::None=>"Geen"}).show_ui(ui,|ui|{for(mode,label)in[(overview::TrenchMode::Polygon,"Vlak"),(overview::TrenchMode::Centerline,"Hartlijn"),(overview::TrenchMode::None,"Geen")]{ui.selectable_value(&mut state.settings.trench_mode,mode,label);}});
+                        ui.checkbox(&mut state.settings.include_tiff_images,"TIFF-afbeeldingen opnemen");
+                        ui.checkbox(&mut state.include_bgt,"BGT-wegdelen meenemen");
+                        ui.checkbox(&mut state.offline,"Alleen geladen kaartgegevens gebruiken (offline)");
+                        for(label,color)in[("Hartlijnkleur",&mut state.settings.centerline_color),("Labelkleur",&mut state.settings.label_color)]{ui.horizontal(|ui|{ui.label(label);ui.color_edit_button_srgb(color);});}
+                        ui.horizontal(|ui|{ui.label("Labelafstand (m)");ui.add(egui::DragValue::new(&mut state.settings.label_gap).range(0. ..=1000.).speed(0.1));});
+                        if !state.error.is_empty(){ui.colored_label(DARK,&state.error);}
+                    });
+            });
+        state.open=open;self.overview_ui=state;
         if start{if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"]).set_file_name("SleufBase-Kadastraal.dxf").save_file(){if let Err(error)=self.start_cadastral_overview(path){self.overview_ui.error=error;}}}
     }
 }

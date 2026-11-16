@@ -220,15 +220,15 @@ fn original_shell_renders_without_clipped_primary_controls_at_both_window_sizes(
             "Instellingen",
             "marXact",
             "Weergave",
-            "GeoTIFF Proefsleuven",
-            "KLIC Overlays",
+            "Proefsleuven",
+            "Overlays",
             "Kabelinformatie",
             "Kaart",
             "Maaiveld invullen",
             "Referentiepunt",
             "Beginpunt",
             "RD: -",
-            "Verwijder geselecteerde KLIC",
+            "Verwijder selectie",
         ] {
             let (_, rect) = labels
                 .iter()
@@ -590,7 +590,7 @@ fn backspace_edits_location_text_without_removing_the_selected_layer() {
     assert_eq!(app.virtual_trenches.len(), 2);
 }
 #[test]
-fn physical_raster_and_klic_shortcuts_preserve_sources_and_ignore_duplicate_paths() {
+fn physical_raster_and_overlay_shortcuts_preserve_sources_and_remove_exact_duplicate_row() {
     for overlay in [false, true] {
         for duplicate in [false, true] {
             let ctx = egui::Context::default();
@@ -617,7 +617,7 @@ fn physical_raster_and_klic_shortcuts_preserve_sources_and_ignore_duplicate_path
             click(&mut app, &ctx, label_position(&out, &label));
             frame(&mut app, &ctx, vec![shortcut(egui::Key::Delete, egui::Modifiers::NONE)]);
             let remaining = if overlay {app.overlays.len()} else {app.geotiffs.len()};
-            assert_eq!(remaining, if duplicate {2} else {0});
+            assert_eq!(remaining, if duplicate {1} else {0});
             assert_eq!(std::fs::read(source).unwrap(), bytes);
         }
     }
@@ -899,4 +899,73 @@ fn jobs_workspace_keeps_native_download_actions_visible_at_small_and_normal_size
         let(labels,image)=capture(&mut app,size);let rect=labels.iter().find(|(text,_)|text=="Download annuleren").unwrap().1;assert!(rect.max.y<=size[1] as f32,"cancellation must stay visible: {rect:?}");
         if let Some(dir)=std::env::var_os("SLEUFBASE_UI_CAPTURE_DIR"){image.save(PathBuf::from(dir).join(format!("jobs-busy-{}x{}.png",size[0],size[1]))).unwrap();}
     }
+}
+
+
+#[test]
+fn mixed_trench_selection_deletes_exact_rows_and_keeps_surviving_raster_state_aligned() {
+    let mut app = layer_app();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rasters/gray16.tiff");
+    let source = std::fs::read(&path).unwrap();
+    let raster = sleufbase_rust::geotiff::read_geotiff_metadata(&path).unwrap();
+    app.geotiffs = vec![raster.clone(), raster];
+    app.raster_textures = vec![None, None];
+    app.raster_errors = vec![None, None];
+    app.sync_trench_selection();
+    app.shell.trench_selection.click(0, false, false);
+    app.shell.trench_selection.click(3, true, false);
+    app.apply_trench_list_selection();
+    app.remove_shell_tiff();
+    assert_eq!(app.geotiffs.len(), 1);
+    assert_eq!(app.raster_textures.len(), 1);
+    assert_eq!(app.raster_errors.len(), 1);
+    assert_eq!(app.virtual_trenches.len(), 1);
+    assert_eq!(app.virtual_trenches[0].label, "PS1");
+    assert!(app.virtual_map.selected.is_none());
+    assert!(app.raster_points.selected.is_none());
+    assert!(app.project_view.selected_tiff.is_none());
+    assert_eq!(app.shell.trench_selection.len(), 0);
+    assert_eq!(std::fs::read(path).unwrap(), source);
+}
+
+#[test]
+fn mixed_overlay_selection_deletes_jobs_and_drawings_without_deleting_duplicate_sources() {
+    let mut app = SleufBaseApp::default();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad-space/R2018-normal-ascii.dxf");
+    let source = std::fs::read(&path).unwrap();
+    let drawing = load_dxf(&path).unwrap();
+    app.overlays = vec![drawing.clone(), drawing];
+    for id in [42, 43] {
+        app.datasets.push(sleufbase_rust::Dataset {
+            job_id: id, title: format!("PS{id}"), source_path: PathBuf::from(format!("PS{id}.json")), features: Vec::new(),
+        });
+    }
+    app.project_view.hidden_object_layers.push(PathBuf::from("PS42.json"));
+    app.sync_overlay_selection();
+    app.shell.overlay_selection.click(0, false, false);
+    app.shell.overlay_selection.click(3, true, false);
+    app.apply_overlay_list_selection();
+    app.remove_shell_overlay();
+    assert_eq!(app.datasets.len(), 1);
+    assert_eq!(app.datasets[0].job_id, 43);
+    assert_eq!(app.overlays.len(), 1);
+    assert!(app.project_view.hidden_object_layers.is_empty());
+    assert!(app.project_view.selected_dxf.is_none());
+    assert!(app.selected.is_none());
+    assert_eq!(app.shell.overlay_selection.len(), 0);
+    assert_eq!(std::fs::read(path).unwrap(), source);
+}
+
+#[test]
+fn batch_removal_is_blocked_before_any_selected_trench_is_removed() {
+    let mut app = layer_app();
+    app.sync_trench_selection();
+    app.shell.trench_selection.click(0, false, false);
+    app.shell.trench_selection.click(1, true, false);
+    app.apply_trench_list_selection();
+    app.open_virtual_editor(1);
+    app.remove_shell_tiff();
+    assert_eq!(app.virtual_trenches.len(), 2);
+    assert_eq!(app.shell.trench_selection.len(), 2);
+    assert!(app.message.contains("Sluit eerst"));
 }

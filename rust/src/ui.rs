@@ -88,6 +88,16 @@ mod cable_information_ui;
 mod maaiveld_ui;
 #[path="ui_theme.rs"]
 mod theme;
+#[path="ui_map_labels.rs"]
+mod map_labels_ui;
+#[path="ui_layer_visibility.rs"]
+mod layer_visibility_ui;
+#[path="ui_busy_backdrop.rs"]
+mod busy_backdrop_ui;
+#[path="ui_progress.rs"]
+mod progress_ui;
+#[path="ui_help.rs"]
+mod help_ui;
 #[path="ui_shell.rs"]
 mod shell_ui;
 #[path="ui_extended.rs"]
@@ -153,6 +163,7 @@ fn live_refresh_fallback_error(original:String,fallback:String)->String {
 pub struct SleufBaseApp {
     maaiveld_ui:maaiveld_ui::State,
     shell:shell_ui::State,
+    busy_backdrop:busy_backdrop_ui::State,
     overview_ui:cadastral_overview_ui::State,
     project_view:sleufbase_rust::project_view::ProjectView,
     project_settings:Option<MigratedSettings>,
@@ -265,6 +276,7 @@ impl Default for SleufBaseApp {
         let app = Self {
             maaiveld_ui:Default::default(),
             shell:Default::default(),
+            busy_backdrop:Default::default(),
             overview_ui:Default::default(),
             project_view:migrated_settings.viewer.project_view(),project_settings:None,project_exchange:None,exchange_deferred:None,
             background_restore_pending:false,pdok_source:pdok_wms::Source::Aerial,
@@ -595,11 +607,11 @@ impl SleufBaseApp {
     fn current_bounds(&self)->Option<Bounds> {
         if let Some(bounds)=self.navigation.bounds(){return Some(bounds);}
         let mut bounds=Bounds::from_datasets(&self.datasets);
-        for raster in &self.geotiffs {bounds=union_bounds(bounds,Some(raster.bounds));}
+        for raster in self.geotiffs.iter().filter(|r|layer_visibility_ui::raster_is_visible(r)) {bounds=union_bounds(bounds,Some(raster.bounds));}
         for overlay in self.overlays.iter().filter(|o|o.visible) {
             bounds=union_bounds(bounds,overlay.bounds());
         }
-        for t in &self.virtual_trenches {
+        for t in self.virtual_trenches.iter().filter(|t|layer_visibility_ui::trench_is_visible(t)) {
             for (x,y) in t.measured_boundary() {
                 bounds=union_bounds(bounds,Some(Bounds{
                     min_x:x-0.01,min_y:y-0.01,max_x:x+0.01,max_y:y+0.01
@@ -1286,7 +1298,7 @@ fn canvas(
     ) {
         bounds=union_bounds(bounds,Bounds::from_datasets(std::slice::from_ref(dataset)));
     }
-    for raster in rasters {
+    for raster in rasters.iter().filter(|r|layer_visibility_ui::raster_is_visible(r)) {
         bounds=union_bounds(bounds,Some(raster.bounds));
     }
     for layer in bgt_layers.iter().filter(|l|l.visible) {
@@ -1304,7 +1316,7 @@ fn canvas(
             max_x:note.x+0.1,max_y:note.y+0.1
         }));
     }
-    for t in virtual_trenches {
+    for t in virtual_trenches.iter().filter(|t|layer_visibility_ui::trench_is_visible(t)) {
         for (x,y) in t.measured_boundary() {
             bounds=union_bounds(bounds,Some(Bounds{
                 min_x:x-0.01,min_y:y-0.01,max_x:x+0.01,max_y:y+0.01
@@ -1411,7 +1423,7 @@ fn canvas(
         mesh.indices.extend_from_slice(&[0,1,2,0,2,3]);
         painter.add(egui::Shape::mesh(mesh));
     }
-    for (id,raster) in rasters.iter().enumerate() {
+    for (id,raster) in rasters.iter().enumerate().filter(|(_,r)|layer_visibility_ui::raster_is_visible(r)) {
         let crop=navigation.as_ref().and_then(|n|n.raster_crops.get(id)).and_then(|c|c.as_ref());
         raster_viewport_ui::paint(&painter,raster,textures.get(id).and_then(|t|t.as_ref()),crop,navigation.as_ref().and_then(|n|n.raster_opacity).unwrap_or(1.),project);
     }
@@ -1421,7 +1433,7 @@ fn canvas(
         painter.text(pos+egui::vec2(6.0,-6.0),egui::Align2::LEFT_BOTTOM,
             &note.text,egui::FontId::proportional(13.0),INK);
     }
-    for (index,trench) in virtual_trenches.iter().enumerate() {
+    for (index,trench) in virtual_trenches.iter().enumerate().filter(|(_,t)|layer_visibility_ui::trench_is_visible(t)) {
         let vertices=trench.measured_boundary();
         for pair in vertices.windows(2) {
             painter.line_segment([
@@ -1434,8 +1446,6 @@ fn canvas(
         // Endpoints indicate orientation without an extra line through cables.
         painter.circle_filled(start,3.5,DARK);
         painter.circle_filled(end,3.5,DARK);
-        painter.text(start+egui::vec2(5.0,-5.0),egui::Align2::LEFT_BOTTOM,
-            &trench.label,egui::FontId::proportional(12.0),INK);
         if let Some(markers)=trench_markers.get(index) {
             for marker in markers {
                 let object=&trench.objects[marker.object_index];
@@ -1520,6 +1530,9 @@ fn canvas(
             }
         }
     }
+    if navigation.as_ref().is_some_and(|nav|nav.show_trench_labels==Some(true)) {
+        map_labels_ui::paint(&painter,rect,rasters,virtual_trenches,project);
+    }
     if let Some(nav)=navigation.as_deref_mut(){
         if let Some((point,started))=nav.marker{
             let elapsed=started.elapsed();
@@ -1559,6 +1572,7 @@ impl eframe::App for SleufBaseApp {
 }
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
+        if !self.shell.installed { theme::install(ctx); self.shell.installed=true; }
         self.capture_file_drop(ctx);
         if self.overview_ui.busy(){
             if ctx.input(|i|i.viewport().close_requested()){
@@ -1574,7 +1588,7 @@ impl SleufBaseApp {
                 self.defer_for_project_exchange(&ProjectAction::Close);
             }
             self.poll_project_exchange(ctx);
-            if let Some(worker)=self.project_exchange.as_ref().filter(|w|w.is_busy()) {project_view_ui::export_progress(ctx,worker);return;}
+            if let Some(worker)=self.project_exchange.as_ref().filter(|w|w.is_busy()) {self.paint_busy_backdrop(ctx);project_view_ui::export_progress(ctx,worker);return;}
         }
         if self.template_job.is_some() {
             if ctx.input(|i|i.viewport().close_requested()) {
@@ -1597,7 +1611,6 @@ impl SleufBaseApp {
                 self.request_project_action(ProjectAction::Close,ctx);
             }
         }
-        if !self.shell.installed { theme::install(ctx); self.shell.installed=true; }
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}
         self.poll_file_jobs(ctx);
         self.process_input_paths(ctx);
@@ -1697,6 +1710,7 @@ impl SleufBaseApp {
         self.show_virtual_form_dialogs(ctx);
         self.show_marxact_orientation(ctx);
         self.show_settings_window(ctx);
+        help_ui::show(ctx, &mut self.shell.help);
 
         if let Some(rules)=crate::rule_editor::show(ctx,&mut self.rule_editor) {
             let mut config=self.migrated_settings.clone();
@@ -1744,6 +1758,7 @@ impl SleufBaseApp {
             if let Some(path)=rfd::FileDialog::new().add_filter("DXF",&["dxf"]).set_file_name(if !state.paired && state.reverse{"SleufBase-Proefsleuven-omgekeerd.dxf"}else{"SleufBase-Proefsleuven.dxf"}).save_file(){self.finish_template_export(path,state);}
         }
         self.handle_layer_shortcuts(ctx);
+        self.remember_busy_backdrop(ctx);
 
     }
 }

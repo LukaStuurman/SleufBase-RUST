@@ -50,6 +50,10 @@ impl SleufBaseApp {
             return false;
         }
         let raster = self.geotiffs.iter_mut().find(|r| r.path == path).unwrap();
+        if !layer_visibility_ui::raster_is_visible(raster) {
+            self.message="Zet de proefsleuf eerst zichtbaar om deze op de kaart te draaien.".into();
+            return false;
+        }
         match rotation::set(raster, angle) {
             Ok(changed) => {
                 self.dirty |= changed;
@@ -79,6 +83,10 @@ impl SleufBaseApp {
         self.rotate_raster(path, angle, true);
     }
     fn start_raster_rotation(&mut self, path: PathBuf) {
+        if !self.geotiffs.iter().any(|r| r.path==path && layer_visibility_ui::raster_is_visible(r)) {
+            self.message="Zet de proefsleuf eerst zichtbaar om deze op de kaart te draaien.".into();
+            return;
+        }
         self.cancel_virtual_map();
         if self.geotiffs.iter().filter(|r| r.path == path).count() != 1 {
             self.message = "Kies één unieke TIFF-bron".into();
@@ -98,6 +106,10 @@ impl SleufBaseApp {
     pub(super) fn show_physical_rotation_menu(&mut self,ui:&mut egui::Ui){
         let Some(path)=self.raster_points.selected.clone()else{return};
         let Some(raster)=self.geotiffs.iter().find(|r|r.path==path)else{return};
+        if !layer_visibility_ui::raster_is_visible(raster) {
+            ui.weak("Maak de proefsleuf zichtbaar om deze te draaien.");
+            return;
+        }
         let current=rotation::angle(raster);
         if self.raster_rotation.draft_path.as_ref()!=Some(&path){
             self.raster_rotation.draft_path=Some(path.clone());
@@ -139,6 +151,10 @@ impl SleufBaseApp {
         let Some(raster) = self.geotiffs.iter().find(|r| r.path == path) else {
             return;
         };
+        if !layer_visibility_ui::raster_is_visible(raster) {
+            ui.weak("Maak de proefsleuf zichtbaar om deze te draaien.");
+            return;
+        }
         let current = rotation::angle(raster);
         if self.raster_rotation.draft_path.as_ref() != Some(&path) {
             self.stop_raster_rotation();
@@ -204,7 +220,7 @@ impl SleufBaseApp {
             self.stop_raster_rotation();
             return;
         }
-        let Some(index) = self.geotiffs.iter().position(|r| r.path == path) else {
+        let Some(index) = self.geotiffs.iter().position(|r| r.path == path && layer_visibility_ui::raster_is_visible(r)) else {
             self.stop_raster_rotation();
             return;
         };

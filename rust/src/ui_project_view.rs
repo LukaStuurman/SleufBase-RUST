@@ -12,10 +12,25 @@ pub(super) fn restore_camera(view:&ProjectView,navigation:&mut location_ui::Navi
 }
 pub(super) fn export_progress(ctx:&egui::Context,worker:&sleufbase_rust::project_exchange_worker::Worker){
     if !worker.is_busy(){return;}
-    egui::Window::new("Project voor Python exporteren").collapsible(false).resizable(false).show(ctx,|ui|{
-        ui.spinner();ui.label("Projectgegevens voorbereiden en opslaan…");
-        if ui.button("Annuleren").clicked(){worker.cancel();}
-    });ctx.request_repaint_after(std::time::Duration::from_millis(40));
+    let control = worker.control();
+    let cancelled = control.is_some_and(|control| control.is_cancelled());
+    let can_cancel = control.is_some_and(|control| control.can_cancel());
+    let status = match control.map(|control| control.progress().0) {
+        Some(sleufbase_rust::export_control::Stage::Writing) => "Projectbestand schrijven…",
+        Some(sleufbase_rust::export_control::Stage::Publishing) => "Projectbestand definitief opslaan…",
+        _ => "Projectgegevens voorbereiden…",
+    };
+    let cancel = progress_ui::window(ctx, "project-exchange-progress", "Project voor Python exporteren",
+        status, None, can_cancel, cancelled, |ui| {
+            if let Some(control) = control {
+                let detail = control.detail();
+                if !detail.is_empty() { ui.label(detail); }
+                let bytes = control.progress().1;
+                if bytes > 0 { ui.small(format!("{:.1} MiB geschreven", bytes as f64 / 1_048_576.)); }
+            }
+            ui.small("Projectgegevens blijven behouden. Wacht op afronding voordat je verder werkt.");
+        });
+    if cancel { worker.cancel(); }
 }
 
 impl SleufBaseApp {

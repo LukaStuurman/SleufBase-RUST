@@ -248,23 +248,24 @@ fn project_output_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
         });
         if dialog.options.template.as_os_str().is_empty(){ui.small("Sjabloon: ingebouwd SleufBase-sjabloon");}
         else{ui.small(format!("Eigen sjabloon: {}",dialog.options.template.file_name().unwrap_or_default().to_string_lossy())).on_hover_text(dialog.options.template.display().to_string());}
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Nieuwe uitvoer-DXF kiezen…").clicked() {
-                if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"])
-                    .set_file_name("SleufBase-Project-Sjabloon-Rust.dxf").save_file(){dialog.output=Some(path);}
-            }
-            if let Some(path)=&dialog.output {
-                ui.label(path.file_name().unwrap_or_default().to_string_lossy()).on_hover_text(path.display().to_string());
-            }else{ui.weak("Nog geen uitvoerbestand gekozen");}
-        });
-        ui.small("De DXF en de bijbehorende afbeeldingen worden samen opgeslagen.");
+        if let Some(path)=&dialog.output {
+            ui.add(egui::Label::new(path.file_name().unwrap_or_default().to_string_lossy()).truncate())
+                .on_hover_text(path.display().to_string());
+        }else{ui.weak("Kies onderaan een nieuw uitvoerbestand.");}
     });
 }
 fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
     theme::card(12,12,10).show(ui,|ui| {
         ui.set_min_width(ui.available_width());
         ui.heading("2. Kaarten en profielen");
-        crate::template_dialog::server_mode(ui,&mut dialog.options.server_mode);
+        ui.horizontal_wrapped(|ui| {
+            use sleufbase_rust::template_server::Mode;
+            ui.label("Kaartgegevens");
+            ui.radio_value(&mut dialog.options.server_mode,Mode::Fresh,"Online")
+                .on_hover_text("Actuele kaartgegevens ophalen.");
+            ui.radio_value(&mut dialog.options.server_mode,Mode::Offline,"Offline")
+                .on_hover_text("Alleen al geladen gegevens gebruiken, met een witte kaart zonder luchtfoto.");
+        });
         if dialog.options.server_mode==sleufbase_rust::template_server::Mode::Fresh {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Achtergrond");
@@ -272,18 +273,19 @@ fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Blank,"Wit");
             });
         }else{
-            ui.small("Kaartachtergrond: wit. Je keuze voor de online luchtfoto blijft bewaard.");
+            ui.small("Witte kaart · geladen gegevens")
+                .on_hover_text("Je keuze voor de online luchtfoto blijft bewaard.");
         }
         ui.horizontal_wrapped(|ui| {
             ui.label("Kaartkwaliteit");
-            let current=match dialog.options.dpi{150=>"150 DPI · kleiner bestand".into(),300=>"300 DPI · scherp (standaard)".into(),dpi=>format!("{dpi} DPI · aangepast")};
-            egui::ComboBox::from_id_salt("project-template-quality").selected_text(current).show_ui(ui,|ui|{
+            let current=match dialog.options.dpi{150=>"150 DPI · kleiner".into(),300=>"300 DPI · scherp".into(),dpi=>format!("{dpi} DPI · aangepast")};
+            egui::ComboBox::from_id_salt("project-template-quality").width(160.).selected_text(current).show_ui(ui,|ui|{
                 ui.selectable_value(&mut dialog.options.dpi,300,"300 DPI · scherp (standaard)");
                 ui.selectable_value(&mut dialog.options.dpi,150,"150 DPI · kleiner bestand");
             });
-            ui.checkbox(&mut dialog.options.paired,"Beide kijkrichtingen").on_hover_text("Maakt de normale en de omgekeerde richting. Kies de gewenste versie later in AutoCAD.");
         });
-        if dialog.options.paired{ui.small("Beide richtingen worden bewaard; kies in AutoCAD met Versie de gewenste richting.");}
+        ui.checkbox(&mut dialog.options.paired,"Beide kijkrichtingen")
+            .on_hover_text("Maakt de normale en de omgekeerde richting. Beide blijven bewaard; kies in AutoCAD met Versie de gewenste richting.");
         ui.collapsing("Meer exportinstellingen",|ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Kaartresolutie (DPI)");
@@ -338,22 +340,34 @@ impl SleufBaseApp {
         }
         let mut open = true;
         let mut launch = None;
+        let mut cancel = false;
         let rasters = &self.geotiffs;
         let raster_previews = &self.raster_textures;
         if let Some(dialog) = &mut self.project_template_dialog {
             let mut clicked_row=None;let mut sync_editor=false;let mut edited_label=None;
+            let screen = ctx.screen_rect();
+            let maximum = egui::vec2((screen.width()-64.).max(280.), (screen.height()-88.).max(200.));
             egui::Window::new("DXF-sjabloon exporteren")
+                // A fresh identity drops the old nearly-fullscreen remembered size.
+                .id(egui::Id::new("project-template-compact-v1"))
                 .open(&mut open)
-                .default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
-                .default_height((ctx.screen_rect().height()-80.).clamp(240.,720.))
-                .constrain_to(ctx.screen_rect().shrink(12.))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .default_size(egui::vec2(800.,510.).min(maximum))
+                .min_size(egui::vec2(360.,240.).min(maximum))
+                .max_size(maximum)
+                .constrain_to(screen.shrink(16.))
+                .collapsible(false)
                 .resizable(true)
                 .show(ctx, |ui| {
                     settings_ui::control_style(ui);
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                    egui::ScrollArea::vertical().id_salt("project-template-body")
-                        .max_height((ui.available_height()-if dialog.error.is_empty(){120.}else{155.}).max(80.)).auto_shrink([false,false]).show(ui, |ui| {
-                        if ui.available_width()>=820. {
+                    let footer_height = if dialog.error.is_empty(){118.}else{142.}
+                        + if ui.available_width()<440.{34.}else{0.};
+                    egui::ScrollArea::vertical().id_salt("project-template-compact-body")
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                        .max_height((ui.available_height()-footer_height).max(64.))
+                        .auto_shrink([false,false]).show(ui, |ui| {
+                        if ui.available_width()>=720. {
                             ui.columns(2,|columns| {
                                 project_output_card(&mut columns[0],dialog);
                                 project_map_card(&mut columns[1],dialog);
@@ -364,10 +378,12 @@ impl SleufBaseApp {
                             project_map_card(ui,dialog);
                         }
                         ui.separator();
-                        ui.heading("3. Proefsleuven kiezen");
                         let summary=export_summary(&dialog.options);
                         let excluded=dialog.options.choices.iter().filter(|choice|!choice.include&&!matches!(choice.source,Source::Empty(_))).count();
-                        ui.label(format!("{} meenemen · {excluded} uitsluiten · {} lege vakken",summary.trenches,summary.empty));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.heading("3. Proefsleuven kiezen").on_hover_text("Meenemen bepaalt wat wordt geëxporteerd. Uitgesloten sleuven krijgen geen vak; lege vakken blijven behouden.");
+                            ui.small(format!("{} mee · {excluded} uit · {} leeg",summary.trenches,summary.empty));
+                        });
                         ui.horizontal_wrapped(|ui| {
                             if ui.small_button("Alles meenemen").clicked(){dialog.include_all(true);}
                             if ui.small_button("Alles uitsluiten").clicked(){dialog.include_all(false);}
@@ -376,7 +392,6 @@ impl SleufBaseApp {
                             if ui.small_button("Uit").clicked(){dialog.profiles_for_included(false);}
                         });
                         if summary.trenches+summary.empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
-                        ui.small("Meenemen bepaalt wat wordt geëxporteerd. Uitgesloten sleuven krijgen geen vak; lege vakken blijven behouden.");
                         ui.collapsing("Volgorde en meerdere sleuven aanpassen",|ui| {
                         ui.small("Klik op een regelnummer om regels te verplaatsen of samen aan te passen. Ctrl/Cmd selecteert losse regels, Shift een reeks. De oranje selectie verandert niet wat wordt geëxporteerd.");
                         let mut requested_sort=dialog.sort_mode;
@@ -443,7 +458,6 @@ impl SleufBaseApp {
                             dialog.sort_mode=None;
                         }
                         });
-                        ui.small("Pas het label direct aan, bijvoorbeeld PS 25-2 of PS25B. Open Details voor de bron, schaal of werkfoto's.");
                         let mut placements=dialog.placements();
                         for idx in 0..dialog.options.choices.len() {
                             ui.push_id(idx, |ui| {
@@ -460,7 +474,7 @@ impl SleufBaseApp {
                                             if ui.add(egui::TextEdit::singleline(label)
                                                 .hint_text("Proefsleuflabel")
                                                 .desired_width(150.)
-                                                .char_limit(256)).changed() {
+                                                .char_limit(256)).on_hover_text("Bijvoorbeeld PS 25-2 of PS25B. Open Details voor de bron, schaal of werkfoto's.").changed() {
                                                 edited_label = Some(idx);
                                                 placement_changed=true;
                                             }
@@ -615,22 +629,32 @@ impl SleufBaseApp {
                         }
                         if let Some(index)=edited_label {dialog.editor.update_typed_label(&dialog.options.choices,index);}
                         let summary=export_summary(&dialog.options);
-                        ui.strong(format!("{} sleuven · {} profielen aangevraagd · {}",summary.trenches,summary.profiles,
-                            if dialog.options.paired{"beide kijkrichtingen"}else{"één kijkrichting per sleuf"}));
-                        ui.small(format!("{} · {} DPI · kaart 1:{}",effective_map_label(&dialog.options),dialog.options.dpi,dialog.options.scale));
+                        ui.add(egui::Label::new(egui::RichText::new(format!("{} sleuven · {} profielen · {}",summary.trenches,summary.profiles,
+                            if dialog.options.paired{"beide kijkrichtingen"}else{"één kijkrichting"})).strong()).truncate());
+                        ui.add(egui::Label::new(egui::RichText::new(format!("{} · {} DPI · kaart 1:{}",effective_map_label(&dialog.options),dialog.options.dpi,dialog.options.scale)).small()).truncate());
                         let readiness=dialog.readiness();
                         let ready=readiness.is_ok();
                         if let Err(reason)=readiness{
                             ui.add(egui::Label::new(egui::RichText::new(&reason).small()).truncate()).on_hover_text(reason);
                         }else{ui.small("Selectie compleet. Bestanden worden bij starten gecontroleerd.");}
-                        if ui.add_enabled(ready, egui::Button::new(egui::RichText::new("Volledige project-sjabloonexport starten").color(Color32::WHITE)).fill(ORANGE)).clicked() {
-                            launch = dialog.output.clone();
-                        }
+                        // These actions are outside the scrolling body and remain
+                        // available when advanced options or many slots are open.
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Uitvoerbestand kiezen…").on_hover_text("Kies een nieuwe DXF. De bijbehorende afbeeldingen worden in dezelfde export opgeslagen.").clicked() {
+                                if let Some(path)=rfd::FileDialog::new().add_filter("AutoCAD DXF",&["dxf"])
+                                    .set_file_name("SleufBase-Project-Sjabloon-Rust.dxf").save_file(){dialog.output=Some(path);}
+                            }
+                            if ui.add_enabled(ready, egui::Button::new(egui::RichText::new("Export starten").color(Color32::WHITE)).fill(ORANGE))
+                                .on_hover_text("Volledige project-sjabloonexport starten").clicked() {
+                                launch = dialog.output.clone();
+                            }
+                            if ui.button("Annuleren").clicked() { cancel = true; }
+                        });
                 });
             if let Some((index,control,shift))=clicked_row{dialog.editor.select(&dialog.options.choices,index,control,shift);}else if sync_editor{dialog.editor.sync(&dialog.options.choices);}
 
         }
-        if !open { self.project_template_dialog = None; }
+        if !open || cancel { self.project_template_dialog = None; return; }
         if let Some(output) = launch {
             let options = self.project_template_dialog.as_ref().unwrap().options.clone();
             self.start_project_template_export(options, output);
@@ -800,7 +824,7 @@ mod flow_audit_tests {
         let ctx=egui::Context::default();
         let frame=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),events,..Default::default()},|ctx|app.show_project_template_dialog(ctx));
         for _ in 0..4{frame(&mut app,vec![]);}
-        let out=frame(&mut app,vec![]);let pos=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="Volledige project-sjabloonexport starten"=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).unwrap();assert!(pos.y<420.);
+        let out=frame(&mut app,vec![]);let pos=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()=="Export starten"=>Some(t.pos+t.galley.rect.size()/2.),_=>None}).unwrap();assert!(pos.y<420.);
         for pressed in [true,false]{frame(&mut app,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);}
         let d=app.project_template_dialog.as_ref().expect("rejected launch must retain form");assert_eq!(d.options.project,"Behouden keuze");assert!(d.error.contains("downloads"));assert!(app.template_job.is_none());assert_eq!(app.virtual_trenches.len(),1);
     }
@@ -1036,7 +1060,7 @@ mod flow_audit_tests {
         let ctx=egui::Context::default();let mut out=None;
         for _ in 0..4{out=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(680.,420.))),..Default::default()},|ctx|app.show_project_template_dialog(ctx)));}
         let out=out.unwrap();let action=out.shapes.iter().find_map(|shape|match &shape.shape{
-            egui::Shape::Text(text)if text.galley.text()=="Volledige project-sjabloonexport starten"=>Some((shape.clip_rect,egui::Rect::from_min_size(text.pos,text.galley.rect.size()))),_=>None,
+            egui::Shape::Text(text)if text.galley.text()=="Export starten"=>Some((shape.clip_rect,egui::Rect::from_min_size(text.pos,text.galley.rect.size()))),_=>None,
         }).expect("export action must remain drawn");
         assert!(action.1.min.y>=0.&&action.1.max.y<=420.,"action is outside screen: {:?}",action.1);
         assert!(action.0.contains_rect(action.1),"action must not be clipped: {action:?}");

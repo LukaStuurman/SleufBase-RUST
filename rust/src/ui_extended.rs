@@ -657,6 +657,7 @@ impl SleufBaseApp {
             || self.raster_points.mode.is_some();
         self.navigation.raster_opacity = Some((self.project_view.opacity_percent / 100.) as f32);
         self.navigation.show_background = Some(self.project_view.use_background);
+        self.navigation.show_trench_labels = Some(self.migrated_settings.viewer.show_trench_labels);
         let canvas_rect = ui.available_rect_before_wrap();
         let view = canvas(
             ui,

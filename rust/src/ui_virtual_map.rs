@@ -2,6 +2,21 @@
 use super::*;
 use sleufbase_rust::virtual_map as map;
 type XY = [f64; 2];
+
+/// Reuse the core hit tolerance on each visible source without cloning models
+/// or renumbering their project indices. Equal-distance hits retain paint order.
+fn pick_visible_trench(trenches:&[VirtualTrench],p:XY,mpp:f64,tolerance:f64)->Option<usize>{
+    let mut best=None;
+    let mut distance=f64::INFINITY;
+    for (index,trench) in trenches.iter().enumerate().rev(){
+        if !layer_visibility_ui::trench_is_visible(trench)
+            || map::pick(std::slice::from_ref(trench),p,mpp,tolerance).is_none(){continue;}
+        let (x,y,_,_)=trench.project(Vertex{x:p[0],y:p[1],z:None});
+        let candidate=(x-p[0]).hypot(y-p[1]);
+        if candidate<distance{distance=candidate;best=Some(index);}
+    }
+    best
+}
 struct AutoAhn {
     index:usize,generation:u64,axis:[Vertex;2],metadata:[serde_json::Value;2],
     cancel:std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -431,6 +446,10 @@ impl Target {
             objects: t.objects.len(),
         }
     }
+    fn valid_on_map(&self, trenches: &[VirtualTrench]) -> bool {
+        self.valid(trenches) && trenches.get(self.index)
+            .is_some_and(layer_visibility_ui::trench_is_visible)
+    }
     fn valid(&self, trenches: &[VirtualTrench]) -> bool {
         trenches.get(self.index).is_some_and(|t| {
             t.label == self.label
@@ -498,6 +517,11 @@ impl State {
     }
 }
 impl SleufBaseApp {
+    fn require_visible_virtual(&mut self,index:usize)->bool {
+        if self.virtual_trenches.get(index).is_some_and(layer_visibility_ui::trench_is_visible){return true;}
+        self.message="Zet de proefsleuf eerst zichtbaar om deze op de kaart te bewerken.".into();
+        false
+    }
     fn schedule_virtual_ahn(&mut self,index:usize){
         #[cfg(not(test))]
         {
@@ -548,6 +572,10 @@ impl SleufBaseApp {
         self.virtual_map.capture=false;
     }
     pub(super) fn start_editor_point_pick(&mut self,index:usize){
+        if !self.require_visible_virtual(index){
+            if let Some(editor)=self.trench_editor.as_mut(){editor.picking_object=false;}
+            return;
+        }
         if self.file_intent.is_some()||self.export_intent.is_some()||self.template_job.is_some(){
             if let Some(editor)=self.trench_editor.as_mut(){editor.picking_object=false;}
             self.message="Rond eerst de lopende taak af".into();return;
@@ -627,6 +655,7 @@ impl SleufBaseApp {
                 .into();
     }
     fn start_virtual_move(&mut self, index: usize, anchor: Option<XY>) {
+        if !self.require_visible_virtual(index){return;}
         if !self.begin_virtual_map() {
             return;
         }
@@ -643,6 +672,7 @@ impl SleufBaseApp {
             "Beweeg naar de nieuwe locatie en klik om de hele proefsleuf te verplaatsen.".into();
     }
     pub(super) fn start_virtual_reference(&mut self, index: usize) {
+        if !self.require_visible_virtual(index){return;}
         if !self.begin_virtual_map() {
             return;
         }
@@ -655,6 +685,7 @@ impl SleufBaseApp {
             "Klik om het referentiepunt van deze proefsleuf te plaatsen of te verplaatsen.".into();
     }
     fn start_virtual_points(&mut self,index:usize,adding:bool){
+        if !self.require_visible_virtual(index){return;}
         if !self.begin_virtual_map()||self.virtual_trenches.get(index).is_none(){return;}
         self.virtual_map.selected=Some(index);
         if adding{
@@ -671,6 +702,7 @@ impl SleufBaseApp {
         self.message="Prik het nieuwe beginpunt en daarna de richting. De gekopieerde sleuf behoudt zijn lengte.".into();
     }
     fn start_virtual_dekband(&mut self,index:usize){
+        if !self.require_visible_virtual(index){return;}
         if !self.begin_virtual_map(){return;}
         let Some(t)=self.virtual_trenches.get(index) else{return};
         if self.virtual_map.band_name.is_empty(){self.virtual_map.band_name="Dekband".into();self.virtual_map.band_rgb=[17,24,39];}
@@ -742,6 +774,7 @@ impl SleufBaseApp {
                 "virtual_copy_source":raster.path.to_string_lossy(),
                 "tiff_comment_text":raster.metadata.get("tiff_comment_text").and_then(|x|x.as_str()).unwrap_or("")
             });
+            layer_visibility_ui::set_visible(&mut copy.metadata,true)?;
             virtual_trench_editor::check(&copy)?;
             Ok::<_,String>(copy)
         })();
@@ -920,6 +953,7 @@ impl SleufBaseApp {
         }
     }
     fn start_virtual_rotation(&mut self,index:usize){
+        if !self.require_visible_virtual(index){return;}
         // Reject unsupported layers *before* cancelling the user's current
         // drawing operation. Failed commands must not destroy interaction state.
         let Some(t)=self.virtual_trenches.get(index)else{return};
@@ -938,7 +972,7 @@ impl SleufBaseApp {
         let Some(index)=self.virtual_map.rotating else{return};
         let ctx=view.painter.ctx();
         if self.virtual_map.rotate_generation!=self.project_generation
-            || index>=self.virtual_trenches.len()
+            || !self.virtual_trenches.get(index).is_some_and(layer_visibility_ui::trench_is_visible)
             || ctx.input(|i|i.key_pressed(egui::Key::Escape))
             || view.response.secondary_clicked(){
             self.cancel_virtual_map();
@@ -1076,6 +1110,7 @@ impl SleufBaseApp {
         }
     }
     fn rotate_virtual_tiff(&mut self,index:usize,angle:f64){
+        if !self.require_visible_virtual(index){return;}
         if !angle.is_finite()||angle.abs()>360_000.{
             self.message="Ongeldige rotatiehoek".into();return;
         }
@@ -1116,7 +1151,7 @@ impl SleufBaseApp {
         if let Some(i) = self
             .virtual_map
             .selected
-            .filter(|&i| i < self.virtual_trenches.len())
+            .filter(|&i| self.virtual_trenches.get(i).is_some_and(layer_visibility_ui::trench_is_visible))
         {
             ui.small(format!("Geselecteerd: {}", self.virtual_trenches[i].label));
             ui.horizontal_wrapped(|ui| {
@@ -1185,10 +1220,12 @@ impl SleufBaseApp {
             self.cancel_virtual_map();
         }
         let valid = match &self.virtual_map.mode {
-            Some(Mode::Move { target, .. } | Mode::Reference(target) | Mode::SelectPoint(target) | Mode::EditorPoint(target) | Mode::Copy{target,..} | Mode::Dekband{target,..}) => {
-                target.valid(&self.virtual_trenches)
+            Some(Mode::Move { target, .. } | Mode::Reference(target) | Mode::SelectPoint(target) | Mode::EditorPoint(target) | Mode::Dekband{target,..}) => {
+                target.valid_on_map(&self.virtual_trenches)
             }
-            Some(Mode::MovePoint{target,point,original})=>target.valid(&self.virtual_trenches)&&map::position(&self.virtual_trenches[target.index],*point)==Some(*original),
+            // A list-selected hidden source may be copied to a new visible layer.
+            Some(Mode::Copy{target,..})=>target.valid(&self.virtual_trenches),
+            Some(Mode::MovePoint{target,point,original})=>target.valid_on_map(&self.virtual_trenches)&&map::position(&self.virtual_trenches[target.index],*point)==Some(*original),
             _ => true,
         };
         if !valid {
@@ -1316,7 +1353,8 @@ impl SleufBaseApp {
                     }
                     Mode::Copy{target,label,start:None}=>{self.virtual_map.mode=Some(Mode::Copy{target,label,start:Some(world)});self.message="Klik nu de richting van de kopie.".into();}
                     Mode::Copy{target,label,start:Some(start)}=>{
-                        match map::copy_in_direction(&self.virtual_trenches[target.index],label.clone(),start,world){
+                        match map::copy_in_direction(&self.virtual_trenches[target.index],label.clone(),start,world)
+                            .and_then(|mut copy|{layer_visibility_ui::set_visible(&mut copy.metadata,true)?;Ok(copy)}){
                             Ok(copy)=>{self.hold_virtual_camera(view);self.virtual_trenches.push(copy);let i=self.virtual_trenches.len()-1;self.virtual_map.selected=Some(i);self.trench_markers.clear();self.dirty=true;self.open_virtual_editor(i);}
                             Err(e)=>{self.message=e;self.virtual_map.mode=Some(Mode::Copy{target,label,start:Some(start)});}
                         }
@@ -1333,7 +1371,7 @@ impl SleufBaseApp {
             }
         } else if self.virtual_map.mode.is_none() && !consumed {
             if let Some(p) = view.clicked {
-                self.virtual_map.selected = map::pick(
+                self.virtual_map.selected = pick_visible_trench(
                     &self.virtual_trenches,
                     view.world(p),
                     1. / view.scale,
@@ -1343,7 +1381,7 @@ impl SleufBaseApp {
             if view.response.secondary_clicked() {
                 if let Some(p) = view.response.interact_pointer_pos() {
                     self.virtual_map.context_anchor = Some(view.world(p));
-                    self.virtual_map.selected = map::pick(
+                    self.virtual_map.selected = pick_visible_trench(
                         &self.virtual_trenches,
                         view.world(p),
                         1. / view.scale,
@@ -1357,7 +1395,7 @@ impl SleufBaseApp {
             if let Some(i) = self
                 .virtual_map
                 .selected
-                .filter(|&i| i < self.virtual_trenches.len())
+                .filter(|&i| self.virtual_trenches.get(i).is_some_and(layer_visibility_ui::trench_is_visible))
             {
                 view.response.context_menu(|ui| {
                     let center=map::center(&self.virtual_trenches[i]);
@@ -1389,6 +1427,7 @@ impl SleufBaseApp {
         }
         let painter = &view.painter;
         for (i, p) in &self.virtual_map.references {
+            if !self.virtual_trenches.get(*i).is_some_and(layer_visibility_ui::trench_is_visible){continue;}
             let p = view.project(*p);
             painter.circle_stroke(p, 7., Stroke::new(2.0_f32, Color32::from_rgb(37, 99, 235)));
             if self.virtual_map.selected == Some(*i) {

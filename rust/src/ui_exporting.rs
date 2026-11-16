@@ -290,55 +290,43 @@ impl SleufBaseApp {
         }
     }
     pub(super) fn show_export_progress(&mut self, ctx: &egui::Context) {
+        self.paint_busy_backdrop(ctx);
+        let beginpoints = self.export_intent.as_ref()
+            .is_some_and(|intent| matches!(intent.kind, Kind::StartPoints | Kind::StartCandidates));
         let progress = self
             .exporter
             .as_ref()
             .and_then(Exporter::control)
             .map(|c| (c.progress(), c.can_cancel(), c.is_cancelled()));
-        let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(if self.export_intent.as_ref().is_some_and(|i|matches!(i.kind,Kind::StartPoints|Kind::StartCandidates)){"Beginpunten voorbereiden"}else{"Exporteren"});
+        let (stage, bytes, can_cancel, cancelled) = progress
+            .map(|((stage, bytes), can_cancel, cancelled)| (stage, bytes, can_cancel, cancelled))
+            .unwrap_or((Stage::Preparing, 0, false, false));
+        let status = if beginpoints {
+            "Beginpunten en bijbehorende kaartgegevens voorbereiden…"
+        } else {
+            match stage {
+                Stage::Preparing => "Export voorbereiden…",
+                Stage::Planning => "Geometrie en rapport voorbereiden…",
+                Stage::Writing => "Bestand schrijven…",
+                Stage::Publishing => "Bestand definitief opslaan…",
+            }
+        };
+        let cancel = progress_ui::window(ctx, "export-progress",
+            if beginpoints { "Beginpunten voorbereiden" } else { "Exporteren" },
+            status, None, can_cancel, cancelled, |ui| {
             ui.label(format!("Project: {}", self.project_name));
-            if let Some(intent) = &self.export_intent {
+            if let Some(intent) = self.export_intent.as_ref().filter(|_| !beginpoints) {
                 ui.label(intent.path.display().to_string());
             }
-            if let Some(((stage, bytes), can_cancel, cancelled)) = progress {
-                ui.label(if cancelled {
-                    "Annuleren wordt afgerond…"
-                } else {
-                    match stage {
-                        Stage::Preparing => "Export voorbereiden…",
-                        Stage::Planning => "Geometrie en rapport voorbereiden…",
-                        Stage::Writing => "Bestand schrijven…",
-                        Stage::Publishing => "Bestand definitief opslaan…",
-                    }
-                });
-                let detail = self
-                    .exporter
-                    .as_ref()
-                    .and_then(Exporter::control)
-                    .map(|c| c.detail())
-                    .unwrap_or_default();
-                if !detail.is_empty() {
-                    ui.label(detail);
-                }
-                if bytes > 0 {
-                    ui.label(format!(
-                        "{:.1} MiB geschreven",
-                        bytes as f64 / (1024. * 1024.)
-                    ));
-                }
-                if ui
-                    .add_enabled(can_cancel, egui::Button::new("Annuleren"))
-                    .clicked()
-                {
-                    cancel = true;
-                }
+            let detail = self.exporter.as_ref().and_then(Exporter::control)
+                .map(|control| control.detail()).unwrap_or_default();
+            if !detail.is_empty() { ui.label(detail); }
+            if bytes > 0 {
+                ui.small(format!("{:.1} MiB geschreven", bytes as f64 / (1024. * 1024.)));
             }
-            ui.label(
+            ui.small(
                 "Projectgegevens blijven behouden. Wacht op afronding voordat je verder werkt.",
             );
-            ui.spinner();
         });
         // Cancel wins before consuming a ready result if publication hasn't begun.
         if cancel {

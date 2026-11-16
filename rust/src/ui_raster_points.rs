@@ -68,6 +68,7 @@ impl SleufBaseApp {
         // The last raster is painted on top. Use its actual affine footprint,
         // including rotation, rather than an enlarged axis-aligned bounding box.
         self.geotiffs.iter().enumerate().rev().find_map(|(index, raster)| {
+            if !layer_visibility_ui::raster_is_visible(raster) { return None; }
             let (column, row) = raster.transform.world_to_pixel(world[0], world[1]).ok()?;
             (column >= 0. && row >= 0.
                 && column <= f64::from(raster.width) && row <= f64::from(raster.height))
@@ -101,14 +102,15 @@ impl SleufBaseApp {
             .as_ref()
             .is_none_or(|p| !self.geotiffs.iter().any(|r| r.path == *p))
         {
-            self.raster_points.selected = self.geotiffs.first().map(|r| r.path.clone());
+            self.raster_points.selected = self.geotiffs.iter().find(|r| layer_visibility_ui::raster_is_visible(r)).map(|r| r.path.clone());
             self.raster_points.mode = None;
             self.raster_points.rows.clear();
         }
         ui.collapsing("Begin- en referentiepunten",|ui|{
             ui.checkbox(&mut self.raster_points.online,"Weg- en terreincontext online ophalen");
             ui.small("Selecteer hierboven een GeoTIFF. Punten worden bij het project bewaard en in sjablonen gebruikt.");
-            let target=self.raster_points.selected.is_some();
+            let target=self.raster_points.selected.as_ref().is_some_and(|path|
+                self.geotiffs.iter().any(|r| r.path==*path && layer_visibility_ui::raster_is_visible(r)));
             if ui.add_enabled(target,egui::Button::new(if self.raster_points.mode==Some(Mode::Reference){"Referentie sluiten"}else{"Referentiepunt plaatsen"})).clicked(){
                 self.cancel_virtual_map();
                 self.stop_raster_rotation();
@@ -174,6 +176,11 @@ impl SleufBaseApp {
         };
     }
     pub(super) fn start_point_task(&mut self, target: Option<PathBuf>) -> bool {
+        if target.as_ref().is_some_and(|path| !self.geotiffs.iter().any(|r|
+            r.path==*path && layer_visibility_ui::raster_is_visible(r))) {
+            self.message="Zet de proefsleuf eerst zichtbaar om een beginpunt op de kaart te kiezen.".into();
+            return false;
+        }
         self.raster_points.mode = None;
         self.raster_points.rows.clear();
         let kind = if target.is_some() {
@@ -246,6 +253,12 @@ impl SleufBaseApp {
     pub(super) fn finish_point_task(&mut self, kind: Kind, exported: Exported) {
         if kind == Kind::StartCandidates {
             if let Some((path, rows)) = exported.point_candidates {
+                if !self.geotiffs.iter().any(|r| r.path==path && layer_visibility_ui::raster_is_visible(r)) {
+                    self.raster_points.mode=None;
+                    self.raster_points.rows.clear();
+                    self.message="Beginpunt kiezen gesloten: de proefsleuf is niet zichtbaar.".into();
+                    return;
+                }
                 self.raster_points.selected = Some(path);
                 self.raster_points.mode = (rows.len() >= 2).then_some(Mode::Start);
                 self.raster_points.rows = rows;
@@ -289,8 +302,10 @@ impl SleufBaseApp {
             .raster_points
             .selected
             .as_ref()
-            .and_then(|p| self.geotiffs.iter().position(|r| r.path == *p))
+            .and_then(|p| self.geotiffs.iter().position(|r| r.path == *p && layer_visibility_ui::raster_is_visible(r)))
         else {
+            self.raster_points.mode=None;
+            self.raster_points.rows.clear();
             return;
         };
         if mode == Mode::Reference {

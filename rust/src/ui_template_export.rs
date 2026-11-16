@@ -328,28 +328,25 @@ impl SleufBaseApp {
     }
 
     pub(super) fn show_template_progress(&mut self, ctx: &egui::Context) {
-        let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let Some(job) = &self.template_job else { return };
+        if self.template_job.is_none() { return; }
+        self.paint_busy_backdrop(ctx);
+        let Some(job) = &self.template_job else { return; };
         let (stage, bytes) = job.control.progress();
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("DXF-sjabloon exporteren");
-            ui.label(job.output.display().to_string());
-            ui.label(job.status.as_str());
-            ui.label(match stage {
-                Stage::Preparing => "Invoer en sjabloon voorbereiden",
-                Stage::Planning => "Vakken, profielen en kaartbeelden samenstellen",
-                Stage::Writing => "DXF-bestand schrijven",
-                Stage::Publishing => "DXF en rasterbundel definitief publiceren",
+        let stage_text = match stage {
+            Stage::Preparing => "Invoer en sjabloon voorbereiden",
+            Stage::Planning => "Vakken, profielen en kaartbeelden samenstellen",
+            Stage::Writing => "DXF-bestand schrijven",
+            Stage::Publishing => "DXF en rasterbundel definitief opslaan",
+        };
+        let cancel = progress_ui::window(ctx, "template-export-progress", "DXF-sjabloon exporteren",
+            stage_text, None, job.control.can_cancel(), job.control.is_cancelled(), |ui| {
+                if !job.status.is_empty() { ui.label(job.status.as_str()); }
+                let detail = job.control.detail();
+                if !detail.is_empty() && detail != job.status { ui.label(detail); }
+                ui.label(job.output.display().to_string());
+                if bytes > 0 { ui.small(format!("{:.1} MiB DXF geschreven", bytes as f64 / 1_048_576.)); }
+                ui.small("De DXF en bijbehorende afbeeldingen worden samen opgeslagen. Een bestaande uitvoer blijft behouden.");
             });
-            if bytes > 0 {
-                ui.label(format!("{:.1} MiB DXF geschreven", bytes as f64 / 1_048_576.));
-            }
-            if ui.add_enabled(job.control.can_cancel(), egui::Button::new("Annuleren")).clicked() {
-                cancel = true;
-            }
-            ui.label("De DXF en bijbehorende afbeeldingen worden samen opgeslagen. Een bestaande uitvoer blijft behouden.");
-            ui.spinner();
-        });
         if cancel {
             if let Some(job) = &self.template_job { job.control.cancel(); }
         }

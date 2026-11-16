@@ -11,10 +11,12 @@ impl SleufBaseApp {
         if self.settings_dialog.is_some() {
             return;
         }
-        let effective = match self.project_export_settings() {
+        let mut effective = match self.project_export_settings() {
             Ok(settings) => settings,
             Err(error) => { self.message = error; return; }
         };
+        // Labels are a global workspace preference, not a saved export override.
+        effective.viewer.show_trench_labels = self.migrated_settings.viewer.show_trench_labels;
         let mut dialog = settings_ui::Dialog::new(&effective, &self.backup_settings);
         dialog.project_scoped = self.has_project_settings_scope();
         dialog.viewer = Some(settings_ui::ViewerDraft {

@@ -672,7 +672,14 @@ impl SleufBaseApp {
         if let Some(cmd)=action {
             match cmd {
                 Action::Save=>{
-                    let result=editor.completed_draft();
+                    let result=editor.completed_draft().and_then(|mut next| {
+                        // A sidebar visibility change may be newer than this draft.
+                        let show=layer_visibility_ui::trench_is_visible(&self.virtual_trenches[editor.index]);
+                        layer_visibility_ui::set_visible(&mut next.metadata,show)?;
+                        next.validate()?;
+                        self.check_trench_metadata_replacement(editor.index,&next)?;
+                        Ok(next)
+                    });
                     match result {
                         Ok(next)=>{
                             self.virtual_trenches[editor.index]=next;
@@ -685,7 +692,10 @@ impl SleufBaseApp {
                     }
                 },
                 Action::Copy=>{
-                    match editor.completed_draft().and_then(|t|edit::manual_copy(&t,"(handmatig)")){
+                    match editor.completed_draft().and_then(|t|edit::manual_copy(&t,"(handmatig)")).and_then(|mut copy| {
+                        layer_visibility_ui::set_visible(&mut copy.metadata,true)?;
+                        Ok(copy)
+                    }){
                         Ok(copy)=>{
                             self.virtual_trenches.push(copy);
                             self.trench_markers.clear();

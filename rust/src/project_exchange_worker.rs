@@ -37,6 +37,7 @@ impl Worker {
         }
     }
     pub fn is_busy(&self)->bool{self.active.is_some()}
+    pub fn control(&self)->Option<&Control>{self.active.as_deref()}
     pub fn is_closed(&self)->bool{self.closed}
     pub fn cancel(&self)->bool{self.active.as_ref().is_some_and(|c|c.cancel())}
     pub fn poll(&mut self)->Option<Ready>{match self.results.try_recv(){Ok(ready)=>{self.active=None;Some(ready)},Err(TryRecvError::Empty)=>None,Err(TryRecvError::Disconnected)=>{self.closed=true;None}}}

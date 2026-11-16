@@ -118,20 +118,23 @@ fn nearest_screen(points: &[Pos2; 3], pointer: Pos2) -> Option<usize> {
     result
 }
 impl SleufBaseApp {
+    fn maaiveld_source_visible(&self, source: Source) -> bool {
+        match source {
+            Source::Raster(i)=>self.geotiffs.get(i).is_some_and(layer_visibility_ui::raster_is_visible),
+            Source::Virtual(i)=>self.virtual_trenches.get(i).is_some_and(layer_visibility_ui::trench_is_visible),
+        }
+    }
     fn maaiveld_selected(&self) -> Option<Source> {
-        self.virtual_map
-            .selected
-            .filter(|&i| i < self.virtual_trenches.len())
-            .map(Source::Virtual)
-            .or_else(|| {
-                self.raster_points
-                    .selected
-                    .as_ref()
-                    .and_then(|path| self.geotiffs.iter().position(|r| r.path == *path))
-                    .map(Source::Raster)
-            })
-            .or_else(|| (!self.geotiffs.is_empty()).then_some(Source::Raster(0)))
-            .or_else(|| (!self.virtual_trenches.is_empty()).then_some(Source::Virtual(0)))
+        // A deliberately selected hidden row must not redirect edits to another layer.
+        if let Some(index)=self.virtual_map.selected.filter(|&i|i<self.virtual_trenches.len()) {
+            return self.maaiveld_source_visible(Source::Virtual(index)).then_some(Source::Virtual(index));
+        }
+        if let Some(index)=self.raster_points.selected.as_ref()
+            .and_then(|path|self.geotiffs.iter().position(|r|r.path==*path)) {
+            return self.maaiveld_source_visible(Source::Raster(index)).then_some(Source::Raster(index));
+        }
+        self.geotiffs.iter().position(layer_visibility_ui::raster_is_visible).map(Source::Raster)
+            .or_else(||self.virtual_trenches.iter().position(layer_visibility_ui::trench_is_visible).map(Source::Virtual))
     }
     fn maaiveld_metadata(&self, source: Source) -> Result<&serde_json::Value, String> {
         match source {
@@ -443,6 +446,10 @@ impl SleufBaseApp {
         let Some(markers) = &self.maaiveld_ui.markers else {
             return true;
         };
+        if !self.maaiveld_source_visible(markers.stamp.source) {
+            self.close_maaiveld_mode();
+            return false;
+        }
         if self.maaiveld_ui.draft.is_some() {
             return true;
         }

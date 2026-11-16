@@ -97,11 +97,13 @@ impl ExportPreferences {
 pub struct ViewerPreferences {
     pub background_source:String,
     pub use_background:bool,
+    /// Global working-map preference; export maps never use these name badges.
+    pub show_trench_labels:bool,
 }
 impl Default for ViewerPreferences {
     fn default()->Self {
         let view=crate::project_view::ProjectView::default();
-        Self{background_source:view.background_source,use_background:view.use_background}
+        Self{background_source:view.background_source,use_background:view.use_background,show_trench_labels:true}
     }
 }
 impl ViewerPreferences {
@@ -370,7 +372,7 @@ mod viewer_preferences_tests {
     #[test]
     fn unsupported_startup_backgrounds_are_rejected() {
         for source in ["white", "not-a-provider", "cyclomedia_aerial"] {
-            let settings = ViewerPreferences {background_source:source.into(), use_background:true};
+            let settings = ViewerPreferences {background_source:source.into(), use_background:true, ..Default::default()};
             assert!(settings.validate().is_err());
         }
     }

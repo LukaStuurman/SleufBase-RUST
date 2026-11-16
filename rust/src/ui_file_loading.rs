@@ -311,29 +311,17 @@ impl SleufBaseApp {
     /// Return before rendering editable controls or polling project-mutating
     /// network results. Process Cancel before applying a newly arrived result.
     pub(super) fn show_file_loading(&mut self, ctx: &egui::Context) {
-        let progress = self
-            .file_loader
-            .as_ref()
-            .and_then(FileLoader::progress)
-            .map(|p| {
-                (
-                    p.completed,
-                    p.total,
-                    p.path.map(|p| p.display().to_string()),
-                )
+        self.paint_busy_backdrop(ctx);
+        let progress = self.file_loader.as_ref().and_then(FileLoader::progress)
+            .map(|progress| (progress.completed, progress.total,
+                progress.path.map(|path| path.display().to_string())));
+        let counts = progress.as_ref().map(|(done, total, _)| (*done, *total));
+        let cancel = progress_ui::window(ctx, "file-loading-progress", "Bestanden laden",
+            "Bestanden lezen en voorbereiden…", counts, true, false, |ui| {
+                ui.label(format!("Huidig project: {}", self.project_name));
+                if let Some((_, _, Some(path))) = &progress { ui.label(path); }
+                ui.small("De huidige gegevens blijven behouden. Annuleren voegt niets uit deze laadactie toe.");
             });
-        let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        egui::CentralPanel::default().show(ctx,|ui|{
-            ui.heading("Bestanden laden");
-            ui.label(format!("Huidig project: {}",self.project_name));
-            ui.label("De huidige gegevens blijven behouden. Annuleren voegt niets uit deze laadactie toe.");
-            if let Some((done,total,path))=&progress{
-                ui.add(egui::ProgressBar::new(*done as f32/(*total).max(1)as f32).text(format!("{done} van {total} bestanden verwerkt")));
-                if let Some(path)=path{ui.label(path);}
-            }
-            ui.spinner();
-            if ui.button("Annuleren").clicked(){cancel=true;}
-        });
         if cancel {
             let exported=self.file_intent.as_ref().and_then(|intent|match &intent.purpose {
                 LoadPurpose::ExportedDxf(path)=>Some(path.display().to_string()),_=>None

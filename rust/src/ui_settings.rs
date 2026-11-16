@@ -164,10 +164,9 @@ impl Dialog {
         settings.kickthemap_profile_extra_choices = choices(&self.extras)?;
         settings.marxact_name_mappings = mappings(&self.mappings)?;
         if let Some(viewer) = &self.viewer {
-            settings.viewer = sleufbase_rust::settings_compat::ViewerPreferences {
-                background_source: viewer.background_source.clone(),
-                use_background: viewer.use_background,
-            };
+            // Keep global working-map preferences from the staged draft.
+            settings.viewer.background_source = viewer.background_source.clone();
+            settings.viewer.use_background = viewer.use_background;
         }
         settings.validate()?;
         Ok(Saved {
@@ -323,19 +322,25 @@ fn viewer_fields(ui: &mut egui::Ui, viewer: &mut ViewerDraft) {
     checkbox(ui,&mut viewer.use_background,"Achtergrondkaart tonen op het kaartscherm");
     ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
 }
+fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    if let Some(viewer)=&mut state.viewer {
+        super::theme::strong(ui,"Achtergrond op het kaartscherm");
+        viewer_fields(ui,viewer);
+        ui.separator();
+    }
+    checkbox(ui,&mut state.draft.viewer.show_trench_labels,"Naambordjes van proefsleuven tonen");
+    ui.small("Toont namen bij TIFF-, KickTheMap-, MarXact- en virtuele proefsleuven. De bordjes zoeken vrije ruimte buiten de sleuven en TIFF-beelden; zonder ruimte worden ze verborgen.");
+    ui.small("Deze keuze geldt alleen voor de werkkaart en wordt na Opslaan voor volgende sessies onthouden.");
+}
 fn map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
-    if ui.available_width()>=1000. && state.viewer.is_some() {
+    if ui.available_width()>=1000. {
         ui.columns(2,|columns| {
-            section(&mut columns[0],"Achtergrond op het kaartscherm",|ui| {
-                viewer_fields(ui,state.viewer.as_mut().unwrap());
-            });
+            section(&mut columns[0],"Kaartscherm",|ui| working_map_fields(ui,state));
             section(&mut columns[1],"Achtergrond voor kaartuitvoer en sjabloonkaarten",|ui| export_map_fields(ui,state));
         });
     } else {
-        if let Some(viewer)=&mut state.viewer {
-            section(ui,"Achtergrond op het kaartscherm",|ui| viewer_fields(ui,viewer));
-            ui.add_space(12.);
-        }
+        section(ui,"Kaartscherm",|ui| working_map_fields(ui,state));
+        ui.add_space(12.);
         section(ui,"Achtergrond voor kaartuitvoer en sjabloonkaarten",|ui| export_map_fields(ui,state));
     }
 }

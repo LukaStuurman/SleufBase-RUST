@@ -16,7 +16,7 @@ impl SleufBaseApp {
             if self
                 .geotiffs
                 .get(ready.id)
-                .is_none_or(|r| r.path != ready.path)
+                .is_none_or(|r| r.path != ready.path || !layer_visibility_ui::raster_is_visible(r))
             {
                 continue;
             }
@@ -66,7 +66,7 @@ impl SleufBaseApp {
             .iter()
             .enumerate()
             .filter_map(|(id, r)| {
-                if r.width == 0 || r.height == 0 {
+                if !layer_visibility_ui::raster_is_visible(r) || r.width == 0 || r.height == 0 {
                     return None;
                 }
                 let mut uv = [[0.; 2]; 4];
@@ -137,6 +137,7 @@ pub(super) fn paint(
     opacity: f32,
     project: impl Fn(f64, f64) -> Pos2,
 ) {
+    if !layer_visibility_ui::raster_is_visible(raster) { return; }
     let crop = crop.filter(|c| c.path == raster.path);
     let quad = |texture: &egui::TextureHandle, area: [f64; 4], uv: [f32; 4]| {
         if area[0] >= area[2] || area[1] >= area[3] {

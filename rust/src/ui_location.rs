@@ -90,6 +90,8 @@ pub(super) struct Focus {
 pub(super) struct Navigation {
     pub raster_crops:Vec<Option<raster_viewport_ui::Crop>>,
     pub raster_opacity:Option<f32>,
+    /// Explicitly enabled only by the interactive working map.
+    pub show_trench_labels:Option<bool>,
     /// User-hidden KickTheMap object overlays; ignored by standalone canvas tests.
     pub hidden_object_layers:Vec<PathBuf>,
     pub show_background:Option<bool>,
