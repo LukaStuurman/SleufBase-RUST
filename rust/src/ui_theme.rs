@@ -84,6 +84,9 @@ pub(super) fn install(ctx: &egui::Context) {
     style.visuals.override_text_color = Some(INK);
     style.visuals.panel_fill = APP_BG;
     style.visuals.window_fill = APP_BG;
+    // Keep every dialog title bar on the same surface. Egui otherwise paints
+    // the topmost default window with the gray open-widget background.
+    style.visuals.window_highlight_topmost = false;
     style.visuals.window_corner_radius = 18.into();
     style.visuals.window_stroke = Stroke::new(1_f32, BORDER);
     style.visuals.faint_bg_color = INPUT_BG;

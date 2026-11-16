@@ -14,6 +14,11 @@
 - Het infovenster sluit qua vormgeving aan op Instellingen. Op smalle vensters blijft een compacte onderwerpkeuze beschikbaar.
 - Zoeken, F1, de vermelding **Gemaakt door Luka Stuurman** en het actuele versienummer blijven beschikbaar.
 
+### Gelijke titelbalken en vensterranden
+
+- De pop-upvensters in de app gebruiken dezelfde lichte titelbalk, vensterrand, afgeronde hoeken en schaduw.
+- Het actieve venster krijgt geen afwijkende grijze bovenbalk meer. Ook Jobs en de voortgangsvensters volgen nu dezelfde vensterstijl als Instellingen en Info.
+
 ### Build en release
 
 Zoals gevraagd worden voor deze release geen geautomatiseerde tests, Clippy of installatieproeven uitgevoerd. De Windows-app en installer worden gebouwd; versie, pakketinhoud en SHA-256-controlesommen worden gecontroleerd voor publicatie.

@@ -697,7 +697,6 @@ impl SleufBaseApp {
             .open(&mut open).default_width(1180.).default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
             .constrain_to(ctx.screen_rect().shrink(12.))
             .min_width(340.).min_height(240.)
-            .frame(theme::card(20,14,12).fill(theme::APP_BG))
             .resizable(true).show(ctx,|ui|{
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);

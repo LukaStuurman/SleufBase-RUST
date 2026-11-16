@@ -57,7 +57,6 @@ pub(super) fn window(
         .collapsible(false)
         .resizable(false)
         .constrain_to(available)
-        .frame(theme::card(16, 16, 12).fill(theme::APP_BG))
         .show(ctx, |ui| {
             ui.set_max_width(ui.available_width());
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
