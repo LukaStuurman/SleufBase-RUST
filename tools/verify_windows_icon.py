@@ -66,6 +66,28 @@ def _resources(data: bytes) -> dict:
     return result
 
 
+def _frame(entry: bytes, payload: bytes) -> tuple:
+    width, height, colors, reserved, planes, bits, size = struct.unpack("<BBBBHHI", entry[:12])
+    if size != len(payload):
+        raise ValueError("Icon directory size differs from its image resource")
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        if _slice(payload, 8, 8) != b"\0\0\0\rIHDR":
+            raise ValueError("PNG icon has no valid IHDR")
+        png_width, png_height, depth, color_type = struct.unpack(
+            ">IIBB", _slice(payload, 16, 10)
+        )
+        if (width or 256, height or 256) != (png_width, png_height):
+            raise ValueError("Icon directory dimensions differ from its PNG image")
+        # RC derives PNG planes/bpp from the image: 1 plane, 32 bits. Pillow ICO
+        # files use planes=0 (unspecified). Normalize only that harmless 0/1
+        # distinction for actual 8-bit RGBA PNGs; every other field and every
+        # image byte must still match. See LLVM's compatible RC implementation:
+        # llvm/tools/llvm-rc/ResourceFileWriter.cpp, visitIconOrCursorResource.
+        if depth == 8 and color_type == 6 and bits == 32 and planes in (0, 1):
+            planes = 1
+    return ((width, height, colors, reserved, planes, bits, size), payload)
+
+
 def verify(executable: Path, icon: Path) -> int:
     ico = icon.read_bytes()
     reserved, kind, count = struct.unpack("<HHH", _slice(ico, 0, 6))
@@ -75,7 +97,7 @@ def verify(executable: Path, icon: Path) -> int:
     for index in range(count):
         entry = _slice(ico, 6 + index * 16, 16)
         size, offset = struct.unpack_from("<II", entry, 8)
-        expected.append((entry[:12], _slice(ico, offset, size)))
+        expected.append(_frame(entry, _slice(ico, offset, size)))
 
     resources = _resources(executable.read_bytes())
     # Windows uses the first icon group as the application's default icon.
@@ -92,9 +114,14 @@ def verify(executable: Path, icon: Path) -> int:
         payload = resources.get((3, resource_id, path[2]))
         if payload is None:
             raise ValueError("Primary icon group references a missing icon image")
-        embedded.append((entry[:12], payload))
+        embedded.append(_frame(entry, payload))
     if Counter(embedded) != Counter(expected):
-        raise ValueError("Primary executable icon differs from the TechBase ICO asset")
+        if Counter(frame[0] for frame in embedded) != Counter(frame[0] for frame in expected):
+            raise ValueError(
+                "Primary executable icon metadata differs from the TechBase ICO asset: "
+                f"embedded={[frame[0] for frame in embedded]}, expected={[frame[0] for frame in expected]}"
+            )
+        raise ValueError("Primary executable icon image bytes differ from the TechBase ICO asset")
     return count
 
 

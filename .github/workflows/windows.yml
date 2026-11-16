@@ -48,6 +48,8 @@ jobs:
       - name: Package and verify portable app
         shell: pwsh
         run: |
+          python tools/test_windows_icon.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/verify_windows_icon.py rust/target/release/sleufbase-rust.exe assets/techbase_icon.ico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_autocad_template.py -v
