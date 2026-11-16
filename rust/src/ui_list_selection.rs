@@ -47,10 +47,6 @@ impl<K: PartialEq> Selection<K> {
         self.external = active;
     }
 
-    pub fn clear(&mut self) {
-        self.select_one(None);
-    }
-
     pub fn click(&mut self, index: usize, control: bool, shift: bool) {
         if index >= self.rows.len() {
             return;

@@ -155,8 +155,10 @@ fn tiff_row(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
             INK
         }))
         .selected(selected)
-        .frame(false)
         .stroke(Stroke::NONE)
+        // Setting a stroke enables the frame in egui, even for Stroke::NONE.
+        // Disable it last so ordinary rows have no background rectangle.
+        .frame(false)
         .corner_radius(5)
         .min_size(egui::vec2(ui.available_width(), 22.))
         .truncate(),
@@ -190,14 +192,14 @@ fn sidebar_list(ui: &mut egui::Ui, id: &'static str, height: f32, content: impl 
     });
 }
 
-fn selection_summary(ui: &mut egui::Ui, count: usize) -> bool {
-    let mut clear = false;
+fn remove_selection_button(ui: &mut egui::Ui, count: usize, description: &str) -> bool {
     ui.horizontal(|ui| {
         ui.small(format!("{count} geselecteerd"))
             .on_hover_text("Ctrl+klik: toevoegen of deselecteren. Shift+klik: een reeks. Ctrl+Shift+klik: reeks toevoegen.");
-        clear = ui.add_enabled(count > 0, egui::Button::new("Wis selectie").small()).clicked();
-    });
-    clear
+        ui.add_enabled(count > 0, egui::Button::new("Verwijder selectie"))
+            .on_hover_text(description)
+            .clicked()
+    }).inner
 }
 
 impl SleufBaseApp {
@@ -657,15 +659,9 @@ impl SleufBaseApp {
                 else { self.shell.trench_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
                 self.apply_trench_list_selection();
             }
-            if selection_summary(ui, self.shell.trench_selection.len()) {
-                self.shell.trench_selection.clear();
-                self.apply_trench_list_selection();
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Virtuele proefsleuf").clicked() { self.start_virtual_creation(); }
-                remove |= ui.add_enabled(self.shell.trench_selection.len() > 0,
-                    egui::Button::new("Verwijder")).on_hover_text("Verwijder alle geselecteerde proefsleuven uit dit project").clicked();
-            });
+            remove |= remove_selection_button(ui, self.shell.trench_selection.len(),
+                "Verwijder alle geselecteerde proefsleuven uit dit project");
+            if ui.button("Virtuele proefsleuf").clicked() { self.start_virtual_creation(); }
         });
         for (virtual_trench, index, visible) in visibility {
             if virtual_trench { self.set_trench_visibility(index, visible); }
@@ -748,12 +744,8 @@ impl SleufBaseApp {
                 else { self.shell.overlay_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
                 self.apply_overlay_list_selection();
             }
-            if selection_summary(ui, self.shell.overlay_selection.len()) {
-                self.shell.overlay_selection.clear();
-                self.apply_overlay_list_selection();
-            }
-            remove |= ui.add_enabled(self.shell.overlay_selection.len() > 0,
-                egui::Button::new("Verwijder selectie")).on_hover_text("Verwijder alle geselecteerde overlays uit dit project").clicked();
+            remove |= remove_selection_button(ui, self.shell.overlay_selection.len(),
+                "Verwijder alle geselecteerde overlays uit dit project");
         });
         for response in contexts {
             response.context_menu(|ui| {

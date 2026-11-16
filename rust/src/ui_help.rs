@@ -171,141 +171,198 @@ fn matching_topics(query: &str) -> Vec<usize> {
     }).collect()
 }
 
-fn topic_content(ui: &mut egui::Ui, index: usize, height: f32) {
+/// Match the white content sections used in Instellingen.
+fn section_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(Color32::WHITE)
+        .stroke(egui::Stroke::new(1_f32, Color32::from_rgb(208, 218, 231)))
+        .corner_radius(10)
+        .inner_margin(16)
+}
+
+fn topic_list(ui: &mut egui::Ui, matches: &[usize], selected: &mut usize, height: f32) {
     egui::ScrollArea::vertical()
-        .id_salt(("sleufbase-help-topic", index))
+        .id_salt("sleufbase-help-topics")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
         .max_height(height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let topic = &TOPICS[index];
-            theme::card(12, 16, 14).show(ui, |ui| {
+            // The surrounding two-column row is horizontal. Always give this
+            // scroll content its own vertical layout, including the topic rows.
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(egui::RichText::new(topic.title).size(21.).strong().color(INK));
-                ui.label(egui::RichText::new(topic.summary).color(theme::MUTED));
-                ui.add_space(12.);
-                for (heading, body) in topic.sections {
-                    ui.label(egui::RichText::new(*heading).strong().color(INK));
-                    ui.label(*body);
-                    ui.add_space(12.);
-                }
+                section_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 6.;
+                    theme::strong(ui, "Onderwerpen");
+                    ui.small(format!("{} onderwerpen", matches.len()));
+                    ui.add_space(4.);
+                    for index in matches.iter().copied() {
+                        let active = *selected == index;
+                        let text = egui::RichText::new(TOPICS[index].title)
+                            .color(if active { Color32::WHITE } else { INK });
+                        let button = egui::Button::new(text)
+                            .selected(active)
+                            .fill(if active { ORANGE } else { Color32::WHITE })
+                            .corner_radius(6)
+                            .truncate();
+                        if ui.add_sized([ui.available_width(), 34.], button)
+                            .on_hover_text(TOPICS[index].title).clicked()
+                        {
+                            *selected = index;
+                        }
+                    }
+                });
             });
         });
+}
+
+fn topic_content(ui: &mut egui::Ui, index: usize, height: f32) {
+    egui::ScrollArea::vertical()
+        .id_salt(("sleufbase-help-topic", index))
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_width(ui.available_width());
+                let topic = &TOPICS[index];
+                section_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 10.;
+                    ui.heading(topic.title);
+                    ui.label(egui::RichText::new(topic.summary).color(theme::MUTED));
+                    ui.separator();
+                    for (heading, body) in topic.sections {
+                        theme::strong(ui, *heading);
+                        ui.label(*body);
+                        ui.add_space(6.);
+                    }
+                });
+            });
+        });
+}
+
+fn help_contents(ui: &mut egui::Ui, state: &mut State) {
+    let wide = ui.available_width() >= 660.;
+    ui.label(if wide {
+        "Kies links een onderwerp of zoek op de naam van een functie."
+    } else {
+        "Kies een onderwerp of zoek op de naam van een functie."
+    });
+    ui.horizontal(|ui| {
+        let field_width = (ui.available_width() - 64.).max(40.);
+        let response = ui.add_sized(
+            [field_width, 30.],
+            egui::TextEdit::singleline(&mut state.query)
+                .id(egui::Id::new("sleufbase-help-search"))
+                .hint_text("Zoek bijvoorbeeld: naambordjes, MarXact, diameter…"),
+        );
+        if state.focus_search {
+            response.request_focus();
+            state.focus_search = false;
+        }
+        if ui.add_enabled(!state.query.is_empty(), egui::Button::new("Wis")).clicked() {
+            state.query.clear();
+            response.request_focus();
+        }
+    });
+    ui.add_space(6.);
+
+    let matches = matching_topics(&state.query);
+    if matches.is_empty() {
+        section_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            theme::strong(ui, "Geen onderwerp gevonden");
+            ui.label("Probeer een kortere zoekterm, zoals kaart, inloggen, kabel of export.");
+            if ui.button("Alle onderwerpen tonen").clicked() {
+                state.query.clear();
+            }
+        });
+        return;
+    }
+    if !matches.contains(&state.selected) {
+        state.selected = matches[0];
+    }
+    let height = ui.available_height().max(40.);
+    if wide {
+        // Reserve both columns before drawing either of them. The topic list
+        // cannot consume the explanation column or shrink later buttons to
+        // single-letter lines when it is nested in this horizontal row.
+        let list_width = 244.;
+        let gap = 16.;
+        let content_width = ui.available_width() - list_width - gap;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            ui.allocate_ui_with_layout(
+                egui::vec2(list_width, height),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.set_width(list_width);
+                    topic_list(ui, &matches, &mut state.selected, height);
+                },
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(content_width, height),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.set_width(content_width);
+                    topic_content(ui, state.selected, height);
+                },
+            );
+        });
+    } else {
+        egui::ComboBox::from_id_salt("sleufbase-help-topic-picker")
+            .selected_text(TOPICS[state.selected].title)
+            .width(ui.available_width())
+            .truncate()
+            .show_ui(ui, |ui| {
+                for index in matches {
+                    ui.selectable_value(&mut state.selected, index, TOPICS[index].title);
+                }
+            });
+        let content_height = ui.available_height().max(40.);
+        topic_content(ui, state.selected, content_height);
+    }
 }
 
 pub(super) fn show(ctx: &egui::Context, state: &mut State) {
     if !state.open {
         return;
     }
-    let screen = ctx.screen_rect();
+    let viewport = ctx.screen_rect();
     let mut open = true;
     let mut close = false;
     egui::Window::new("Info en handleiding · SleufBase")
         .id(egui::Id::new("sleufbase-help"))
+        // Use the same window geometry and standard frame as Instellingen.
+        // Explicit geometry also replaces an older, incorrectly sized window.
+        .fixed_pos(viewport.min + egui::vec2(12., 12.))
+        .fixed_size(egui::vec2(
+            (viewport.width() - 56.).max(180.),
+            (viewport.height() - 100.).max(140.),
+        ))
+        .constrain(false)
         .open(&mut open)
+        .movable(false)
         .collapsible(false)
-        .resizable(true)
-        .default_width((screen.width() - 70.).clamp(320., 940.))
-        .default_height((screen.height() - 90.).clamp(280., 720.))
-        .min_width(300.)
-        .min_height(260.)
-        .constrain_to(screen.shrink(12.))
-        .frame(theme::card(18, 16, 12).fill(theme::APP_BG))
+        .resizable(false)
         .show(ctx, |ui| {
-            ui.set_max_width(ui.available_width());
+            super::settings_ui::control_style(ui);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            ui.spacing_mut().item_spacing.y = 8.;
-
-            egui::TopBottomPanel::bottom("sleufbase-help-footer")
-                .frame(egui::Frame::new())
-                .show_inside(ui, |ui| {
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(egui::RichText::new("Gemaakt door Luka Stuurman").strong());
-                        ui.colored_label(theme::MUTED, format!("SleufBase Rust {}", env!("CARGO_PKG_VERSION")));
-                        close = ui.button("Sluiten").clicked();
-                    });
+            // Match the settings footer: it remains outside both scroll areas.
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    close = ui.button("Sluiten").clicked();
+                    theme::strong(ui, "Gemaakt door Luka Stuurman");
+                    ui.colored_label(theme::MUTED,
+                        format!("SleufBase Rust {}", env!("CARGO_PKG_VERSION")));
                 });
-
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new("Hulp bij je werk").size(24.).strong());
-                ui.colored_label(ORANGE, "Uitleg per onderdeel");
+                ui.separator();
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    help_contents(ui, state);
+                });
             });
-            ui.label("Kies een onderwerp of zoek op de naam van een functie.");
-            ui.horizontal(|ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut state.query)
-                        .id(egui::Id::new("sleufbase-help-search"))
-                        .hint_text("Zoek bijvoorbeeld: naambordjes, MarXact, diameter…")
-                        .desired_width((ui.available_width() - 64.).max(160.)),
-                );
-                if state.focus_search {
-                    response.request_focus();
-                    state.focus_search = false;
-                }
-                if ui.add_enabled(!state.query.is_empty(), egui::Button::new("Wis")).clicked() {
-                    state.query.clear();
-                    response.request_focus();
-                }
-            });
-            ui.add_space(6.);
-
-            let matches = matching_topics(&state.query);
-            if matches.is_empty() {
-                theme::card(12, 14, 14).show(ui, |ui| {
-                    ui.strong("Geen onderwerp gevonden");
-                    ui.label("Probeer een kortere zoekterm, zoals kaart, inloggen, kabel of export.");
-                    if ui.button("Alle onderwerpen tonen").clicked() {
-                        state.query.clear();
-                    }
-                });
-                return;
-            }
-            if !matches.contains(&state.selected) {
-                state.selected = matches[0];
-            }
-            let height = ui.available_height().max(40.);
-            if ui.available_width() >= 660. {
-                ui.horizontal_top(|ui| {
-                    ui.allocate_ui(egui::vec2(210., height), |ui| {
-                        ui.set_width(210.);
-                        egui::ScrollArea::vertical()
-                            .id_salt("sleufbase-help-topics")
-                            .max_height(height)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.colored_label(theme::MUTED, format!("{} onderwerpen", matches.len()));
-                                for index in matches.iter().copied() {
-                                    let selected = state.selected == index;
-                                    let text = egui::RichText::new(TOPICS[index].title)
-                                        .color(if selected { Color32::WHITE } else { INK });
-                                    let button = egui::Button::new(text)
-                                        .selected(selected)
-                                        .corner_radius(8)
-                                        .min_size(egui::vec2(ui.available_width(), 34.));
-                                    if ui.add(button).clicked() {
-                                        state.selected = index;
-                                    }
-                                }
-                            });
-                    });
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        topic_content(ui, state.selected, height);
-                    });
-                });
-            } else {
-                egui::ComboBox::from_id_salt("sleufbase-help-topic-picker")
-                    .selected_text(TOPICS[state.selected].title)
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for index in matches {
-                            ui.selectable_value(&mut state.selected, index, TOPICS[index].title);
-                        }
-                    });
-                let content_height = ui.available_height().max(40.);
-                topic_content(ui, state.selected, content_height);
-            }
         });
     state.open = open && !close;
 }
