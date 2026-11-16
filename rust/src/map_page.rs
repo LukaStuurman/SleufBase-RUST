@@ -91,10 +91,10 @@ pub fn layout(bounds: Bounds, settings: Settings) -> Result<Layout, String> {
     layout_with_margin(bounds, settings, 82)
 }
 
-/// Compact DXF templates use narrower paper margins than standalone A4 maps.
+/// Lay out the map with an explicit coordinate-frame margin in output pixels.
 pub fn layout_with_margin(bounds: Bounds, settings: Settings, margin: u32) -> Result<Layout, String> {
     if !valid(bounds)
-        || !(48..=82).contains(&margin)
+        || !(48..=164).contains(&margin)
         || !(30..=600).contains(&settings.dpi)
         || !settings.scale.is_finite()
         || settings.scale <= 0.

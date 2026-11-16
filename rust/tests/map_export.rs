@@ -310,7 +310,7 @@ fn virtual_rd_map_matches_an_actual_tiff_and_keeps_source_precedence_and_orienta
     }
 }
 #[test]
-fn template_virtual_emphasis_respects_opacity_and_keeps_compact_layout() {
+fn template_virtual_map_preserves_utility_strokes_without_point_discs() {
     use sleufbase_rust::{virtual_raster,virtual_trench::{TrenchPoint,VirtualTrench},Vertex};
     let mut trench=VirtualTrench::new("PS".into(),
         Vertex{x:155000.,y:463000.,z:Some(2.)},
@@ -322,31 +322,75 @@ fn template_virtual_emphasis_respects_opacity_and_keeps_compact_layout() {
     });
     let raster=virtual_raster::Source{trench,quality:4.,reverse:false};
     let bounds=virtual_raster::layout(&raster.trench,raster.quality).unwrap().bounds;
+    let native=virtual_raster::Source{quality:1.,..raster.clone()};
+    let native_layout=virtual_raster::layout(&native.trench,native.quality).unwrap();
     let cancel=AtomicBool::new(false);
     let mut renderer=map_export::Renderer::default();
-    let mut source=map_export::Source{
-        settings:map_page::Settings{dpi:72,scale:100.},
-        background:Background::Solid{color:[25,25,25,255]},
-        fonts:Some(font_paths()),include_tiff:false,..Default::default()
-    };
-    let blank=renderer.render_template_with_raster(&source,bounds,None,None,&cancel).unwrap();
-    source.include_tiff=true;source.tiff_opacity=0.;
-    let invisible=renderer.render_template_with_raster(&source,bounds,
-        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
-    pixels(&invisible.image,&blank.image,"zero opacity hides both raster and template emphasis");
-    source.tiff_opacity=0.5;
-    let partial=renderer.render_template_with_raster(&source,bounds,
-        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
-    source.tiff_opacity=1.;
-    let opaque=renderer.render_template_with_raster(&source,bounds,
-        Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
-    assert_eq!(opaque.layout.origin,[56.,56.]);
-    let [x,y]=opaque.layout.screen([155001.5,463000.]);
-    let (x,y)=((x+opaque.layout.origin[0]) as u32,(y+opaque.layout.origin[1]) as u32);
-    assert_eq!(opaque.image.get_pixel(x,y).0,[250,40,60,255]);
-    let transparent=partial.image.get_pixel(x,y).0;
-    assert!(transparent[0]>25&&transparent[0]<250,"partial opacity remains visible without becoming opaque: {transparent:?}");
-    assert_eq!(transparent[3],255);
+    let background=[25,25,25,255];
+    for scale in [75.,225.] {
+        let mut source=map_export::Source{
+            settings:map_page::Settings{dpi:300,scale},
+            background:Background::Solid{color:background},
+            fonts:Some(font_paths()),reference:Some([155000.,463000.]),
+            include_tiff:false,..Default::default()
+        };
+        let blank=renderer.render_template_with_raster(&source,bounds,None,None,&cancel).unwrap();
+        source.include_tiff=true;
+        for opacity in [0.,0.5,1.] {
+            source.tiff_opacity=opacity;
+            let page=renderer.render_template_with_raster(&source,bounds,
+                Some(map_export::Raster::Virtual(&raster)),None,&cancel).unwrap();
+            assert_eq!(page.layout.origin,[82.,82.]);
+            if opacity==0. {
+                pixels(&page.image,&blank.image,"zero opacity hides both raster and trench boundary");
+            }
+            // Compare a row through the real crossing against the original
+            // virtual utility raster. Extra circles would also color the
+            // neighboring background, or cover the native translucent stroke.
+            let mut expected=RgbaImage::from_pixel(page.layout.map_size[0],page.layout.map_size[1],Rgba(background));
+            map_raster::paint_with_opacity(&mut expected,virtual_raster::render(&native,&cancel).unwrap(),
+                native_layout.transform(),&page.layout,opacity,&cancel).unwrap();
+            let [x,y]=page.layout.screen([155001.5,463000.]);
+            let (x,y)=(x as u32,y as u32);
+            for column in x-24..=x+24 {
+                assert_eq!(page.image.get_pixel(column+82,y+82),expected.get_pixel(column,y),
+                    "1:{scale}, opacity {opacity}: original cable stroke with no added disc at x={column}");
+            }
+            if opacity>0. {
+                let color=expected.get_pixel(x,y).0;
+                assert!(color[0]>background[0] && color[0]>color[1],"utility remains visible: {color:?}");
+                assert_eq!(expected.get_pixel(x-12,y).0,background);
+                assert_eq!(expected.get_pixel(x+12,y).0,background);
+            }
+        }
+    }
+}
+#[test]
+fn template_coordinates_have_white_clearance_at_standard_and_high_dpi() {
+    let cancel=AtomicBool::new(false);
+    let bounds=sleufbase_rust::Bounds{min_x:155000.,min_y:463000.,max_x:155010.,max_y:463008.};
+    let mut renderer=map_export::Renderer::default();
+    for (dpi,margin) in [(300,82),(600,164)] {
+        let source=map_export::Source{
+            settings:map_page::Settings{dpi,scale:225.},
+            background:Background::Solid{color:[31,47,63,255]},
+            fonts:Some(font_paths()),reference:Some([155005.,463004.]),
+            include_tiff:false,..Default::default()
+        };
+        let page=renderer.render_template_with_raster(&source,bounds,None,None,&cancel).unwrap();
+        assert_eq!(page.layout.origin,[f64::from(margin);2]);
+        assert_eq!(page.layout.map_size,page.layout.page_size.map(|v|v-2*margin));
+        assert!((page.layout.meters_per_pixel-225./(f64::from(dpi)*39.37007874)).abs()<1e-10);
+        // The labels, frame, reference legend and north arrow must remain on
+        // the page with actual white paper outside them, including at 600 DPI.
+        let (w,h)=page.image.dimensions();
+        for d in 0..8 {
+            assert!((0..w).all(|x|page.image.get_pixel(x,d).0==[255;4]&&page.image.get_pixel(x,h-1-d).0==[255;4]),
+                "{dpi} DPI: top/bottom coordinate labels touch the page edge");
+            assert!((0..h).all(|y|page.image.get_pixel(d,y).0==[255;4]&&page.image.get_pixel(w-1-d,y).0==[255;4]),
+                "{dpi} DPI: side coordinate labels touch the page edge");
+        }
+    }
 }
 #[test]
 fn page_border_preserves_the_map_interior_and_cancel_rejects_before_fetch() {

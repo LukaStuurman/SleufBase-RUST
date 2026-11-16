@@ -240,9 +240,9 @@ fn overlays(
     }
     Ok(())
 }
-/// Keep RD-accurate cable and leiding positions readable when a narrow
-/// virtual trench is downsampled onto an aerial photograph.
-fn emphasize_virtual_trench(
+/// Draw the fine trench boundary at the final map resolution. Utility lines
+/// already come from the virtual raster and must not receive extra point discs.
+fn paint_virtual_outline(
     image: &mut RgbaImage,
     layout: &Layout,
     trench: &crate::virtual_trench::VirtualTrench,
@@ -252,17 +252,14 @@ fn emphasize_virtual_trench(
     input::check(cancel)?;
     if opacity == 0. { return Ok(()); }
     if opacity == 1. {
-        return draw_virtual_emphasis(image, layout, trench, [0.,0.], cancel);
+        return draw_virtual_outline(image, layout, trench, [0.,0.], cancel);
     }
-    // Raster and emphasis are separate layers with CAD between them; each uses
-    // the chosen opacity. Composite emphasis once so its halo/marker strokes
-    // cannot repeatedly increase that layer's opacity. Limit the temporary image
-    // to the clipped trench extent rather than allocating another A4 page.
+    // Raster and outline are separate layers with CAD between them; each uses
+    // the chosen opacity. Limit the temporary image to the clipped trench
+    // boundary rather than allocating another A4 page.
     let mut min = [f64::INFINITY;2];
     let mut max = [f64::NEG_INFINITY;2];
-    for (index,point) in trench.measured_boundary().into_iter()
-        .chain(trench.objects.iter().map(|object|(object.position.x,object.position.y)))
-        .enumerate()
+    for (index,point) in trench.measured_boundary().into_iter().enumerate()
     {
         if index % 256 == 0 { input::check(cancel)?; }
         let point = layout.screen([point.0,point.1]);
@@ -271,20 +268,20 @@ fn emphasize_virtual_trench(
             max[axis] = max[axis].max(point[axis]);
         }
     }
-    // The largest marker radius is 24px; include its rasterized outer edge.
+    // The outline is at most four pixels wide; include its rasterized edge.
     let size = [image.width(),image.height()];
-    let begin: [u32;2] = std::array::from_fn(|i|(min[i]-26.).floor().clamp(0.,f64::from(size[i])) as u32);
-    let end: [u32;2] = std::array::from_fn(|i|(max[i]+26.).ceil().clamp(0.,f64::from(size[i])) as u32);
+    let begin: [u32;2] = std::array::from_fn(|i|(min[i]-4.).floor().clamp(0.,f64::from(size[i])) as u32);
+    let end: [u32;2] = std::array::from_fn(|i|(max[i]+4.).ceil().clamp(0.,f64::from(size[i])) as u32);
     if (0..2).any(|i|end[i]<=begin[i]) { return Ok(()); }
     let mut emphasis = crate::raster_rotation::allocate(end[0]-begin[0],end[1]-begin[1])?;
-    draw_virtual_emphasis(&mut emphasis, layout, trench, begin.map(f64::from), cancel)?;
+    draw_virtual_outline(&mut emphasis, layout, trench, begin.map(f64::from), cancel)?;
     for (index,pixel) in emphasis.pixels_mut().enumerate() {
         if index % 16384 == 0 { input::check(cancel)?; }
         pixel[3] = (f64::from(pixel[3])*opacity) as u8;
     }
     map_raster::composite(image, &emphasis, begin.map(|v|v as i32), cancel)
 }
-fn draw_virtual_emphasis(
+fn draw_virtual_outline(
     image: &mut RgbaImage,
     layout: &Layout,
     trench: &crate::virtual_trench::VirtualTrench,
@@ -307,19 +304,6 @@ fn draw_virtual_emphasis(
             outline.push(outline[0]);
         }
         map_canvas::line(image, &outline, line_width, [0,0,0,255], cancel, &mut budget)?;
-    }
-    let radius = (9. * factor).round().clamp(6., 24.);
-    for (index, object) in trench.objects.iter().enumerate() {
-        if index % 256 == 0 { input::check(cancel)?; }
-        if matches!(object.role.to_lowercase().as_str(), "start" | "end") { continue; }
-        let [x,y] = screen([object.position.x, object.position.y]);
-        if x < -radius || y < -radius
-            || x > image.width() as f64 + radius
-            || y > image.height() as f64 + radius { continue; }
-        let color = crate::virtual_raster::display_rgb(&object.metadata).unwrap_or([37,99,235]);
-        map_canvas::ellipse(image, [x-radius,y-radius,x+radius,y+radius], [0,0,0,255], None, cancel, &mut budget)?;
-        map_canvas::ellipse(image, [x-radius+2.,y-radius+2.,x+radius-2.,y+radius-2.], [255,255,255,255], None, cancel, &mut budget)?;
-        map_canvas::ellipse(image, [x-radius+4.,y-radius+4.,x+radius-4.,y+radius-4.], [color[0],color[1],color[2],255], None, cancel, &mut budget)?;
     }
     Ok(())
 }
@@ -350,7 +334,8 @@ impl Renderer {
     ) -> Result<Page, String> {
         self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, cancel)
     }
-    /// The DXF template map needs less surrounding paper than standalone A4.
+    /// Leave room for coordinates around the DXF template map, including
+    /// their resolution-scaled labels on high-DPI pages.
     pub fn render_template_with_raster(
         &mut self,
         source: &Source,
@@ -361,7 +346,11 @@ impl Renderer {
     ) -> Result<Page, String> {
         // A supplied PNG map is already rasterized for the legacy A4 layout.
         // Do not change its expected dimensions or silently resample it.
-        let margin = if matches!(&source.background, Background::Png { .. }) { 82 } else { 56 };
+        let margin = if matches!(&source.background, Background::Png { .. }) {
+            82
+        } else {
+            (82. * f64::from(source.settings.dpi) / 300.).round_ties_even().max(82.) as u32
+        };
         self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, cancel)
     }
     fn render_with_margin(
@@ -422,7 +411,7 @@ impl Renderer {
                 }
                 Raster::Virtual(source) => {
                     // Validate the requested source even when a template map
-                    // can use 1x plus emphasis beside its full 4x detail pane.
+                    // can use 1x plus a fine outline beside its full 4x detail pane.
                     let mut info = crate::virtual_raster::layout(&source.trench, source.quality)?;
                     let reduced;
                     let map_source = if template_detail && source.quality > 1. {
@@ -443,7 +432,7 @@ impl Renderer {
         overlays(&mut map, source, &layout, cancel)?;
         if template_detail {
             if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
-                emphasize_virtual_trench(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;
+                paint_virtual_outline(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;
             }
         }
         let mut image = crate::raster_rotation::allocate(layout.page_size[0], layout.page_size[1])?;
@@ -480,7 +469,7 @@ mod virtual_map_visibility_tests {
             };
             let background = Rgba([23,47,71,255]);
             let mut image = RgbaImage::from_pixel(layout.map_size[0],layout.map_size[1],background);
-            emphasize_virtual_trench(&mut image,&layout,&trench,1.,&cancel).unwrap();
+            paint_virtual_outline(&mut image,&layout,&trench,1.,&cancel).unwrap();
             assert!(image.pixels().all(|p|*p==background||p.0==[0,0,0,255]),
                 "only the fine black edge may cover the background");
             let x = 140 * factor;
@@ -512,7 +501,7 @@ mod virtual_map_visibility_tests {
             let page=Renderer::default().render_template_with_raster(
                 &source,bounds,Some(Raster::Virtual(&virtual_source)),None,&cancel).unwrap();
             // Inspect the actual composed image, including the resampled virtual
-            // source. Merely testing the final emphasis layer misses fat edges.
+            // source. Merely testing the final outline layer misses fat edges.
             for edge_y in [463000.3,462999.7] {
                 let [x,y]=page.layout.screen([155006.,edge_y]);
                 let x=(x+page.layout.origin[0]) as u32;
@@ -524,12 +513,13 @@ mod virtual_map_visibility_tests {
                     "1:{scale}: no enlarged or antialiased source border remains");
             }
             let [x,y]=page.layout.screen([155001.5,463000.]);
-            assert_eq!(page.image.get_pixel((x+page.layout.origin[0]) as u32,(y+page.layout.origin[1]) as u32).0,
-                [220,40,40,255],"the real utility retains its colour");
+            let color=page.image.get_pixel((x+page.layout.origin[0]) as u32,(y+page.layout.origin[1]) as u32).0;
+            assert!(color[0]>color[1]+20 && color[0]>color[2]+20 && color[3]==255,
+                "the original translucent red utility remains visible: {color:?}");
         }
     }
     #[test]
-    fn cable_marker_remains_visible_on_dark_aerial_map() {
+    fn outline_does_not_add_point_discs_at_any_opacity() {
         let mut trench = VirtualTrench::new(
             "Virtuele PS".into(),
             Vertex { x: 155000., y: 463000., z: Some(0.) },
@@ -543,12 +533,15 @@ mod virtual_map_visibility_tests {
             attributes: Default::default(),
         });
         let bounds=Bounds { min_x: 154990., min_y: 462990., max_x: 155010., max_y: 463010. };
-        let layout=map_page::layout_with_margin(bounds, Settings { dpi: 72, scale: 100. },56).unwrap();
-        for (opacity,expected) in [(0.,[25,25,25,255]),(0.5,[137,32,42,255]),(1.,[250,40,60,255])] {
-            let mut image=RgbaImage::from_pixel(layout.map_size[0], layout.map_size[1], Rgba([25,25,25,255]));
-            emphasize_virtual_trench(&mut image, &layout, &trench, opacity, &AtomicBool::new(false)).unwrap();
-            let [x,y]=layout.screen([155001.5,463000.]);
-            assert_eq!(image.get_pixel(x as u32, y as u32).0, expected,"opacity {opacity}");
+        let layout=map_page::layout(bounds, Settings { dpi: 300, scale: 225. }).unwrap();
+        let mut empty=trench.clone();
+        empty.objects.clear();
+        for opacity in [0.,0.5,1.] {
+            let mut actual=RgbaImage::from_pixel(layout.map_size[0],layout.map_size[1],Rgba([25,25,25,255]));
+            let mut expected=actual.clone();
+            paint_virtual_outline(&mut actual,&layout,&trench,opacity,&AtomicBool::new(false)).unwrap();
+            paint_virtual_outline(&mut expected,&layout,&empty,opacity,&AtomicBool::new(false)).unwrap();
+            assert_eq!(actual,expected,"utility positions must not receive point discs at opacity {opacity}");
         }
     }
 }

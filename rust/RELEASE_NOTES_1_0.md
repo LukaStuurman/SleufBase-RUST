@@ -1,21 +1,14 @@
-## SleufBase Rust 1.0.6 voor Windows
+## SleufBase Rust 1.0.7 voor Windows
 
-### TechBase-pictogram voor het programma
+### Duidelijkere kaart in de DXF-sjabloonexport
 
-- De Windows-exe bevat nu het TechBase-pictogram, inclusief de verschillende formaten voor Verkenner en snelkoppelingen.
-- Het programmavenster, de taakbalk en de installer gebruiken hetzelfde TechBase-pictogram.
-- De Windows-build controleert het ingebouwde pictogram voordat de download wordt verpakt.
+- De grote ronde markeringen op kabels en leidingen van virtuele proefsleuven zijn verwijderd uit de kaart met legenda.
+- De kabel- en leidinglijnen blijven op hun juiste positie en in hun gekozen kleur zichtbaar, met de dunne zwarte sleufomtrek uit versie 1.0.6.
+- De witte rand rond de kaart is ruimer, zodat de coördinaten meer ruimte krijgen.
+- Het referentiepunt en de bijbehorende legenda blijven beschikbaar.
 
-### Rustiger beeld van proefsleuven
-
-- De extra dikke blauwe rand en de brede witte markering rond virtuele proefsleuven zijn vervangen door een dunne zwarte omtrek.
-- De dubbele markering in de kaart van de DXF-sjabloonexport is verwijderd. Kabels en leidingen binnen de sleuf blijven daardoor beter zichtbaar.
-- De rand wordt op de uiteindelijke kaartresolutie getekend en blijft dun wanneer je een andere kaartschaal kiest.
-- De omtrek is ook in de kaartweergave, het bovenaanzicht van de sleufeditor en de CAD-omtreklaag dun en zwart.
-- De automatische hulplijn van begin naar eind is verborgen in de kaart en het bovenaanzicht. De onderliggende meetas blijft beschikbaar voor posities, hoogtes en de doorsnede.
-- Lijnen die ingevoerde of geïmporteerde kabels en leidingen voorstellen, behouden hun positie en kleur. Nieuwe lege proefsleuven bevatten geen standaardkabel.
-- Een zelf gekozen kabelkleur wordt nu ook op de hoofdkaart gebruikt, gelijk aan de sleufeditor en rasterexport.
-
-### Downloaden
+### Downloaden en bijwerken
 
 De Windows-installer en portable ZIP hebben ieder een SHA-256-controlebestand. Sluit SleufBase voor het bijwerken. Pak de portable ZIP volledig uit voordat je het programma start.
+
+Maak na het bijwerken een nieuwe DXF-sjabloonexport om de aangepaste kaart te krijgen.
