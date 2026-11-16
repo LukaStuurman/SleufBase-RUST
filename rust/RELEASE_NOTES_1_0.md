@@ -7,6 +7,10 @@
 - De witte rand rond de kaart is ruimer, zodat de coördinaten meer ruimte krijgen.
 - Het referentiepunt en de bijbehorende legenda blijven beschikbaar.
 
+### Controle
+
+De gerichte kaartcontroles zijn geslaagd en de proefexports zijn visueel gecontroleerd op 300 en 600 DPI. Op verzoek zijn de volledige Windows-testreeks en Clippy voor deze release overgeslagen.
+
 ### Downloaden en bijwerken
 
 De Windows-installer en portable ZIP hebben ieder een SHA-256-controlebestand. Sluit SleufBase voor het bijwerken. Pak de portable ZIP volledig uit voordat je het programma start.

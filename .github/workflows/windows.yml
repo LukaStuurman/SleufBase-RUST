@@ -31,9 +31,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+      # Explicit release opt-out applies only to a marked main push; PRs and
+      # normal pushes keep the full suite and Clippy checks.
       - name: Test all native targets
+        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[skip full tests]')) }}
         run: cargo test --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
       - name: Review with Clippy
+        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[skip full tests]')) }}
         run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
       - name: Build optimized desktop app
         run: cargo build --locked --release --manifest-path rust/Cargo.toml --bin sleufbase-rust --jobs 2
