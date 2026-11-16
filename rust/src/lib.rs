@@ -87,6 +87,7 @@ pub mod cad_geometry;
 pub mod cad_mesh;
 pub mod cad_scene;
 mod cad_spatial;
+pub mod cad_lod;
 pub mod spline;
 mod dxf_tags;
 mod dxf_entities;

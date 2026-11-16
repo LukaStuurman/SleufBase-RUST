@@ -261,6 +261,10 @@ impl SleufBaseApp {
             Err(error)=>{self.message=error;return;}
         };
         let discipline_excel=settings.template_auto_export_discipline_excel;
+        let overview_settings=match sleufbase_rust::cadastral_overview::Settings::from_settings(&settings) {
+            Ok(settings)=>settings,
+            Err(error)=>{self.message=error;return;}
+        };
         let contact=settings.export_preferences.template_contact;
         let result = std::thread::Builder::new()
             .name("sleufbase-template-export".into())
@@ -269,6 +273,13 @@ impl SleufBaseApp {
                     let mut request = template_export::read_request(&manifest, &task_control)?;
                     request.settings.discipline_excel=discipline_excel;
                     request.settings.contact=contact;
+                    if let Some(overview)=&mut request.overview {
+                        // A prepared input must obey the same current overview
+                        // settings as the interactive route, including None+TIFF.
+                        let protected=std::mem::take(&mut overview.settings.protected_sources);
+                        overview.settings=overview_settings;
+                        overview.settings.protected_sources=protected;
+                    }
                     template_export::export_with_progress(&task_output, &request, &task_control,
                         |message| { let _ = tx.send(Event::Progress(message.to_owned())); })
                 })).unwrap_or_else(|_| Err("Sjabloonexport is onverwacht gestopt; uitvoer is niet gepubliceerd".into()));

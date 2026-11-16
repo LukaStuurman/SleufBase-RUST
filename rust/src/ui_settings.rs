@@ -409,6 +409,7 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         &mut p.include_tiffs_in_dxf_export,
         "GeoTIFF-afbeeldingen meenemen in DXF-export",
     );
+    ui.small("Geen laat de proefsleufnamen, hartlijnen en vlakken weg. Het GeoTIFF-vinkje bepaalt apart of de afbeeldingen worden meegenomen, ook bij Geen.");
     ui.small("Geldt voor de kadastrale DXF-export en het overzicht in de sjabloonexport. De export zet gekoppelde TIFFs in een map naast het DXF-bestand. Detail- en profielvakken stel je apart in het exportvenster in.");
     });
     ui.add_space(12.);

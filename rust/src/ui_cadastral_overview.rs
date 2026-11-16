@@ -4,10 +4,10 @@ use super::*;
 use sleufbase_rust::{cadastral_overview as overview,export_control::Control,project_exchange_worker::Worker};
 
 pub(super) struct State {
-    open:bool,settings:overview::Settings,offline:bool,include_bgt:bool,error:String,
+    open:bool,settings:overview::Settings,opening_settings:Option<overview::Settings>,offline:bool,include_bgt:bool,error:String,
     worker:Option<Worker>,events:Option<Receiver<String>>,deferred:Option<ProjectAction>,
 }
-impl Default for State {fn default()->Self{Self{open:false,settings:overview::Settings::default(),offline:false,include_bgt:false,error:String::new(),worker:None,events:None,deferred:None}}}
+impl Default for State {fn default()->Self{Self{open:false,settings:overview::Settings::default(),opening_settings:None,offline:false,include_bgt:false,error:String::new(),worker:None,events:None,deferred:None}}}
 impl State {pub(super) fn busy(&self)->bool{self.worker.as_ref().is_some_and(Worker::is_busy)}}
 fn request(project:&NativeProject,mut settings:overview::Settings,offline:bool,include_bgt:bool,control:&Control)->Result<overview::Request,String>{
     if project.rasters.iter().any(|r|r.epsg.is_some_and(|epsg|epsg!=28992)){return Err("Kadastrale export gebruikt RD (EPSG:28992). Transformeer afwijkende GeoTIFFs eerst.".into());}
@@ -49,7 +49,7 @@ impl SleufBaseApp {
         if self.project_sources_owned()||self.template_job.is_some()||self.export_intent.is_some()||self.file_intent.is_some()||self.pending_project_action.is_some()||self.trench_editor.is_some(){self.message="Rond de lopende taak of het sleufconcept eerst af".into();return;}
         if self.geotiffs.is_empty()&&self.virtual_trenches.is_empty(){self.message="Laad eerst GeoTIFFs of virtuele proefsleuven".into();return;}
         match self.project_export_settings().and_then(|s|overview::Settings::from_settings(&s)){
-            Ok(settings)=>{self.overview_ui.settings=settings;self.overview_ui.error.clear();self.overview_ui.open=true;},Err(error)=>self.message=error,
+            Ok(settings)=>{self.overview_ui.opening_settings=Some(settings.clone());self.overview_ui.settings=settings;self.overview_ui.error.clear();self.overview_ui.open=true;},Err(error)=>self.message=error,
         }
     }
     /// The original Acties menu asks immediately for an output DXF; options
@@ -71,7 +71,21 @@ impl SleufBaseApp {
         if self.project_sources_owned()||self.template_job.is_some()||self.export_intent.is_some()||self.file_intent.is_some()||self.pending_project_action.is_some()||self.trench_editor.is_some(){return Err("Rond de lopende taak eerst af".into());}
         if output.exists(){return Err("Het uitvoerbestand bestaat al; kies een andere naam".into());}
         if output.extension().is_none_or(|s|!s.eq_ignore_ascii_case("dxf")){return Err("Kies een uitvoerbestand met extensie .dxf".into());}
-        let mut settings=self.overview_ui.settings.clone();settings.protected_sources.extend(self.project_path.iter().cloned());
+        let mut settings=self.overview_ui.settings.clone();
+        if let Some(opening)=&self.overview_ui.opening_settings {
+            let current=overview::Settings::from_settings(&self.project_export_settings()?)?;
+            // A settings change made while this window is open also applies at
+            // export time. Keep fields explicitly overridden in this window.
+            macro_rules! refresh {
+                ($($field:ident),+ $(,)?) => {$(
+                    if current.$field!=opening.$field && settings.$field==opening.$field {
+                        settings.$field=current.$field;
+                    }
+                )+};
+            }
+            refresh!(trench_mode,include_tiff_images,label_gap,centerline_color,label_color);
+        }
+        settings.protected_sources.extend(self.project_path.iter().cloned());
         let offline=self.overview_ui.offline;let include_bgt=self.overview_ui.include_bgt;let(tx,rx)=mpsc::channel();
         let worker=Worker::with_processor(move|project,path,control|{
             let _=tx.send(if offline{"Geladen kaartgegevens voorbereiden…"}else{"Kadastrale gegevens ophalen…"}.into());

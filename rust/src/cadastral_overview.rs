@@ -518,6 +518,7 @@ pub struct Plan {
     pub images: Vec<crate::template_images::Image>,
     assignments: Vec<AffineImage>,
     first_handle: u64,
+    trench_labels: bool,
 }
 impl Plan {
     pub fn image_count(&self) -> usize {
@@ -533,6 +534,24 @@ impl Plan {
     }
     pub fn finalize(&self, document: &Document, control: &Control) -> Result<Document, String> {
         let mut doc = document.indexed_copy(control.flag())?;
+        if !self.trench_labels {
+            // A custom template or prepared manifest can already contain old
+            // overview names. Inspect the materialized document so pending
+            // geometry is included too. Blank only dedicated modelspace labels;
+            // keeping their handles preserves drawing-order and owner links.
+            let labels = doc.records().filter(|record| {
+                record.section() == Some("ENTITIES")
+                    && matches!(record.kind(), "TEXT" | "MTEXT")
+                    && record.first(67).is_none_or(|value| value.trim() != "1")
+                    && record.first(410).is_none_or(|name| name.eq_ignore_ascii_case("Model"))
+                    && record.first(8).is_some_and(|name|
+                        name.trim().eq_ignore_ascii_case("PROEFSLEUVEN_LABEL"))
+            }).filter_map(|record| record.first(5).map(str::to_owned)).collect::<Vec<_>>();
+            for handle in labels {
+                control.check()?;
+                doc.replace_text(&handle, "")?;
+            }
+        }
         let mut changes = Vec::new();
         let mut image_handles = Vec::new();
         for asset in &self.assignments {
@@ -860,6 +879,8 @@ pub fn populate(
     Ok(Plan {
         images,
         first_handle,
+        // TIFF inclusion never enables proefsleuf names on its own.
+        trench_labels: request.settings.trench_mode != TrenchMode::None,
         assignments: image_paths
             .into_iter()
             .zip(copies)

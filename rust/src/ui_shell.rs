@@ -44,6 +44,7 @@ pub(super) struct State {
     tiff_height: Option<f32>,
     klic_height: Option<f32>,
     last_sidebar_height: Option<f32>,
+    last_cable_selection: Option<(u64, usize, usize)>,
 }
 
 #[cfg(test)]
@@ -69,6 +70,7 @@ impl Default for State {
             tiff_height: None,
             klic_height: None,
             last_sidebar_height: None,
+            last_cable_selection: None,
         }
     }
 }
@@ -201,6 +203,77 @@ fn remove_selection_button(ui: &mut egui::Ui, count: usize, description: &str) -
     ui.add_enabled(count > 0, egui::Button::new("Verwijder selectie"))
         .on_hover_text(description)
         .clicked()
+}
+
+/// A fixed-size switch icon, independent of whether the system font has arrows.
+fn cable_switch_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let response = ui.add_enabled(enabled, egui::Button::new("")
+        .min_size(egui::vec2(30., 28.)).corner_radius(6));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button,
+        enabled && ui.is_enabled(), "Volgend overlappend object"));
+    if ui.is_rect_visible(response.rect) {
+        let color = if enabled && ui.is_enabled() {
+            ui.style().interact(&response).fg_stroke.color
+        } else { ui.visuals().weak_text_color() };
+        let center = response.rect.center();
+        let stroke = egui::Stroke::new(1.4_f32, color);
+        ui.painter().arrow(center + egui::vec2(-7., -4.), egui::vec2(14., 0.), stroke);
+        ui.painter().arrow(center + egui::vec2(7., 4.), egui::vec2(-14., 0.), stroke);
+    }
+    response.on_hover_text("Volgend object op deze plek")
+        .on_disabled_hover_text("Klik op een plek met meerdere objecten om ertussen te wisselen.")
+}
+
+/// Details are deliberately resolved only while the anchored list is open.
+fn cable_choice(ui: &mut egui::Ui, overlay: &DxfOverlay, feature_index: usize, selected: bool) -> bool {
+    let Some(feature) = overlay.inspect_feature(feature_index) else { return false; };
+    let layer = if feature.layer.is_empty() { "(geen laagnaam)" } else { feature.layer };
+    let details = overlay.inspect_details(feature_index);
+    let infracad = details.as_ref().and_then(|details| details.iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("XDATA InfraCAD")))
+        .map(|(_, value)| value.as_str()).filter(|value| !value.trim().is_empty());
+    let filename = overlay.path.file_name().unwrap_or_default().to_string_lossy();
+    let frame = egui::Frame::new().corner_radius(6).inner_margin(8)
+        .fill(if selected { Color32::from_rgb(255, 224, 199) } else { SURFACE_ALT })
+        .stroke(egui::Stroke::new(1_f32, if selected { ORANGE } else { theme::BORDER }))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 3.;
+            theme::strong(ui, if selected { format!("✓ {layer}") } else { layer.to_owned() });
+            ui.small(format!("{filename} · {}", feature.source.entity_type));
+            if let Some(value) = infracad {
+                ui.small("XDATA InfraCAD");
+                let preview = cad_preview(value);
+                ui.add(egui::Label::new(if preview.len() < value.len() {
+                    format!("{preview}…")
+                } else { preview.to_owned() }).wrap());
+            } else {
+                ui.small("Geen InfraCAD-informatie");
+            }
+        });
+    let response = frame.response.interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel,
+        ui.is_enabled(), selected, layer));
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_stroke(response.rect, 6_u8, egui::Stroke::new(1.5_f32, ORANGE), egui::StrokeKind::Inside);
+    }
+    let clicked = response.clicked();
+    response.on_hover_ui(|ui| {
+        ui.set_max_width(420.);
+        theme::strong(ui, layer);
+        ui.label(overlay.path.to_string_lossy());
+        if let Some(value) = infracad {
+            // Keep pathological DXF text from laying out megabytes in a tooltip;
+            // the exact full value is still available through explicit copying.
+            ui.add(egui::Label::new(if value.len() <= 4096 { value } else { cad_preview(value) }).wrap());
+            if value.len() > 4096 { ui.small("Selecteer dit object om de kabelinformatie te openen."); }
+            if ui.small_button("Volledige InfraCAD-informatie kopiëren").clicked() {
+                ui.ctx().copy_text(value.to_owned());
+            }
+        }
+    });
+    clicked
 }
 
 impl SleufBaseApp {
@@ -494,7 +567,51 @@ impl SleufBaseApp {
                 self.show_shell_overlays(ui, klic);
                 separator(ui, &mut klic, 150., available - tiff - 110., "klic-sash");
                 self.shell.tiff_height = Some(tiff); self.shell.klic_height = Some(klic);
-                theme::title(ui, "Kabelinformatie");
+                let selection_key = self.dxf_selection.as_ref()
+                    .map(|selection| (self.project_generation, selection.overlay, selection.feature));
+                let reset_cable_scroll = self.shell.last_cable_selection != selection_key;
+                self.shell.last_cable_selection = selection_key;
+                // Preserve the picker's distance/tie order and skip stale or hidden hits.
+                let cable_matches: Vec<_> = self.found_layers.iter().copied()
+                    .filter(|&(overlay, feature)| self.overlays.get(overlay).filter(|layer| layer.visible)
+                        .and_then(|layer| layer.inspect_feature(feature)).is_some_and(|feature| feature.visible))
+                    .collect();
+                ui.horizontal(|ui| {
+                    theme::title(ui, "Kabelinformatie");
+                    ui.spacing_mut().item_spacing.x = 6.;
+                    if cable_switch_button(ui, cable_matches.len() > 1).clicked() {
+                        let current = self.dxf_selection.as_ref().and_then(|selection| cable_matches.iter()
+                            .position(|&(overlay, feature)| selection.overlay == overlay && selection.feature == feature));
+                        let next = current.map_or(0, |index| (index + 1) % cable_matches.len());
+                        cable_selection = cable_matches.get(next).copied();
+                    }
+                    ui.add_enabled_ui(!cable_matches.is_empty(), |ui| {
+                        egui::menu::menu_custom_button(ui, egui::Button::new("Lijst")
+                            .min_size(egui::vec2(50., 28.)).corner_radius(6)
+                            .wrap_mode(egui::TextWrapMode::Extend), |ui| {
+                            ui.set_width((ui.ctx().screen_rect().width() - 48.).clamp(160., 420.));
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            egui::ScrollArea::vertical().id_salt("cable-information-choices")
+                                .auto_shrink([false, true])
+                                .max_height((ui.ctx().screen_rect().height() - 96.).clamp(120., 420.))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    for &(overlay_index, feature_index) in &cable_matches {
+                                        let Some(overlay) = self.overlays.get(overlay_index) else { continue; };
+                                        let selected = self.dxf_selection.as_ref().is_some_and(|selection|
+                                            selection.overlay == overlay_index && selection.feature == feature_index);
+                                        ui.push_id((overlay_index, feature_index), |ui| {
+                                            if cable_choice(ui, overlay, feature_index, selected) {
+                                                cable_selection = Some((overlay_index, feature_index));
+                                                ui.close_menu();
+                                            }
+                                        });
+                                    }
+                                });
+                        }).response.on_hover_text("Kies een object op deze plek op laag en InfraCAD-informatie")
+                            .on_disabled_hover_text("Klik eerst op een object in de kaart.");
+                    });
+                });
                 let height = (ui.available_height() - 30.).max(40.);
                 theme::card(18, 14, 14).show(ui, |ui| {
                     let width = ui.available_width();
@@ -502,10 +619,18 @@ impl SleufBaseApp {
                     ui.set_min_height(height);
                     // Fill the card instead of letting the scrollbar follow the
                     // width of whichever detail value happens to be longest.
-                    egui::ScrollArea::vertical().id_salt("cable-information")
+                    let scroll = egui::ScrollArea::vertical().id_salt("cable-information")
                         .auto_shrink([false, false]).max_width(width)
                         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                        .max_height(height).min_scrolled_height(height).show(ui, |ui| {
+                        .max_height(height).min_scrolled_height(height);
+                    let scroll = if reset_cable_scroll {
+                        // Reset inertia/animation too; an old scroll target must
+                        // not move the newly selected object's first fields away.
+                        let id = ui.make_persistent_id(egui::Id::new("cable-information"));
+                        egui::scroll_area::State::default().store(ui.ctx(), id);
+                        scroll.vertical_scroll_offset(0.)
+                    } else { scroll };
+                    scroll.show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         if let Some(selection) = &self.dxf_selection {
                             let priority = |key: &str| {
@@ -524,34 +649,12 @@ impl SleufBaseApp {
                                 }
                             }
                         } else { ui.label("Klik in de kaart op een kabel om KLIC-informatie en laagnamen te tonen.\n\nGebruik de rechtermuisknop op een proefsleuf in de lijst om draaien en opmerkingen te beheren.\n\nTip: zoom verder in voor een preciezere selectie als kabels dicht op elkaar liggen."); }
-                        if self.found_layers.len() > 1 {
-                            let is_alternative = |&(overlay, feature): &(usize, usize)| {
-                                !self.dxf_selection.as_ref().is_some_and(|selection|
-                                    selection.overlay == overlay && selection.feature == feature)
-                                    && self.overlays.get(overlay).filter(|layer| layer.visible)
-                                        .and_then(|layer| layer.inspect_feature(feature)).is_some_and(|feature| feature.visible)
-                            };
-                            let alternatives = self.found_layers.iter().filter(|candidate| is_alternative(candidate)).count();
-                            if alternatives > 0 {
-                                egui::CollapsingHeader::new(format!("Andere objecten op deze plek ({alternatives})"))
-                                    .id_salt("cable-information-alternatives").default_open(false).show(ui, |ui| {
-                                        for &(overlay_index, feature_index) in self.found_layers.iter().filter(|candidate| is_alternative(candidate)) {
-                                            let Some(layer) = self.overlays.get(overlay_index) else { continue; };
-                                            let Some(feature) = layer.inspect_feature(feature_index) else { continue; };
-                                            let filename = layer.path.file_name().unwrap_or_default().to_string_lossy();
-                                            let title = format!("{} — {} ({})", feature.layer, filename, feature.source.entity_type);
-                                            if ui.selectable_label(false, title).clicked() {
-                                                cable_selection = Some((overlay_index, feature_index));
-                                            }
-                                        }
-                                    });
-                            }
-                        }
                     });
                 });
             });
         if let Some((overlay, feature)) = cable_selection {
             self.select_dxf(overlay, feature);
+            self.shell.last_cable_selection = None;
             ctx.request_repaint();
         }
     }

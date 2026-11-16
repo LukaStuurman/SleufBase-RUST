@@ -1,40 +1,31 @@
-## SleufBase Rust 1.0.12 voor Windows
+## SleufBase Rust 1.0.13 voor Windows
 
-### Leesbare formulieren en gelijke proefsleufkaarten
+### Geen proefsleufnamen bij Weergave: Geen
 
-- Contactvelden in Instellingen en de Tekeningstempel in DXF-sjabloonexport gebruiken gemeten, vaste labelkolommen. Postcode, Telefoon, Website, Referentie Tekeningen, ProjectNr.BGM en TEK.NR. worden niet meer in losse woordfragmenten afgebroken.
-- Invoervakken staan uitgelijnd naast de labels. Bij weinig ruimte staan complete labels boven de invoervakken; de contactvelden worden op brede schermen niet onnodig lang.
-- Alle proefsleufkaarten in de sjabloonexport hebben dezelfde breedte, ook bij verschillende bronnen zoals Virtueel en KickTheMap. Lange bestandsnamen blijven binnen de kaart; de volledige naam is via de aanwijzer beschikbaar.
+- **Weergave proefsleuf: Geen** onderdrukt de proefsleufnamen in het DXF-overzicht, ook wanneer **GeoTIFF-afbeeldingen meenemen in DXF-export** aan staat.
+- Oude proefsleufnamen uit een eigen sjabloon of voorbereide exportinvoer worden op de gereserveerde modelspace-laag leeggemaakt. Afbeeldingen, entiteitshandles en tekenvolgordeverwijzingen blijven behouden.
+- Voorbereide sjabloonexporten gebruiken de actuele overzichtsinstellingen. Ook een al geopend kadastraal exportvenster neemt gewijzigde algemene instellingen mee, met behoud van expliciete keuzes in dat venster.
+- Hartlijn en Vlak behouden hun proefsleufnamen. Vaste koppen bij detail- en profielvakken en andere kaartteksten blijven buiten deze overzichtsinstelling.
 
-### Alle volgordeopties bij elkaar rechts
+### Kabels wisselen zonder scrollen
 
-- Omhoog en Omlaag blijven bovenaan het rechterpaneel bereikbaar.
-- Sorteren, selectie, nummering, varianten, profielschaal en lege/extra vakken staan daaronder. In de projectexport staan daar ook de acties voor alle proefsleuven en dwarsprofielen.
-- De bediening scrolt onafhankelijk van de proefsleufkaarten. Na verplaatsen blijft de gekozen regel zichtbaar; exporteren en annuleren blijven onderaan bereikbaar.
-- De standaardvenstermaat biedt meer ruimte voor deze verdeling en blijft begrensd door het scherm.
+Naast **Kabelinformatie** staan twee compacte knoppen:
 
-### Donkere achtergrond bij voortgang
+- De **wisselknop** kiest de volgende zichtbare kabel op dezelfde plek en gaat na de laatste weer naar de eerste.
+- **Lijst** opent een keuzelijst met laagnaam en XDATA InfraCAD-informatie, zodat je gericht een kabel kunt kiezen.
 
-Het voortgangsvenster houdt zijn lichte vormgeving, terwijl de kaart en andere inhoud erachter duidelijk donkerder worden. De bestaande blokkering van kaartbediening tijdens de taak blijft behouden.
+De knoppen blijven boven het informatievak bereikbaar. Bij een nieuwe keuze begint de detailinformatie weer bovenaan en volgt de kabelgloed de selectie. De oude keuzelijst onderaan het informatievak is verwijderd.
 
-### Kabelinformatie in het vaste paneel
+### Lichtere KLIC-overzichten bij uitzoomen
 
-- Kabelinformatie benut de hele kaartbreedte, met de scrollbar rechts langs het paneel.
-- XDATA InfraCAD en Laag staan boven de overige objectgegevens.
-- Een kabelklik vult het informatiepaneel zonder apart pop-upvenster. De geselecteerde kabel krijgt een vaste gloed met behoud van de oorspronkelijke kabelkleur in het midden.
-- Bij overlappende objecten kun je binnen Kabelinformatie de sectie Andere objecten op deze plek openen om een andere kabel te kiezen. Een klik naast de kabels heft de selectie op.
-
-### Grote KLIC-tekeningen op de werkkaart
-
-De kaartweergave en kabelselectie gebruiken een ruimtelijke selectie van de DXF-geometrie. De renderer verwerkt zichtbare delen en hergebruikt de kaartgeometrie zolang de camera en laagzichtbaarheid gelijk blijven. Bronentiteiten, kabelgegevens en exportgeometrie blijven behouden. Er is geen prestatiebenchmark uitgevoerd.
-
-### Alle jobpunten aan of uit
-
-Naast Verwijder selectie in Overlays staat Jobpunten. Hiermee toon of verberg je alle jobpunten tegelijk. Bij gedeeltelijke zichtbaarheid toont de schakelaar een gemengde toestand; aanklikken maakt alle jobpunten zichtbaar. DXF-overlays houden hun afzonderlijke zichtbaarheid. De keuze wordt in het project bewaard.
+- Drukke overzichten worden als een transparant, herbruikbaar kaartbeeld op schermresolutie bewaard. Hierdoor wordt een tekening die te groot is voor de vectorcache niet meer bij ieder schermframe volledig opnieuw opgebouwd.
+- Tijdens zoomen en verschuiven beweegt het bestaande overzicht direct mee. Kort na de beweging wordt het beeld voor de nieuwe uitsnede opnieuw opgebouwd; laagzichtbaarheid en kleuren worden meegenomen.
+- Lange paden krijgen een schaalafhankelijke vereenvoudiging. Details kleiner dan een beeldpunt worden compact weergegeven en onleesbaar kleine teksten komen terug bij inzoomen. De voorbereiding gebeurt tijdens het laden van de KLIC.
+- De volledige DXF-geometrie blijft beschikbaar voor kabelselectie, informatie en export. In een rustige of ingezoomde uitsnede blijven de gewone fijne vectorlijnen in gebruik.
 
 ### Build en release
 
-De geautomatiseerde tests, Clippy en installatieproeven worden op verzoek overgeslagen. De code wordt op compileerbaarheid gecontroleerd; de Windows-app, portable ZIP en installer worden gebouwd. De releasebestanden worden gecontroleerd op versie, inhoud en SHA-256-controlesom voor publicatie.
+Op verzoek worden geen runtime- of geautomatiseerde tests, Clippy of installatieproeven uitgevoerd. De compileercontrole en Windows-build verzorgen de uitvoerbare app, portable ZIP en installer. Versie, pakketinhoud en SHA-256-controlesommen worden voor publicatie gecontroleerd.
 
 ### Downloaden en bijwerken
 

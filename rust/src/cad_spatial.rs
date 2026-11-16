@@ -23,6 +23,7 @@ struct Node {
 pub(crate) struct Index {
     entries: Vec<Entry>,
     nodes: Vec<Node>,
+    positions: Vec<u32>,
     pub(crate) source_count: usize,
 }
 
@@ -70,9 +71,13 @@ impl Index {
             if let Some(bounds) = bounds(points) {
                 result.entries.push(Entry { index, bounds });
             }
+            result.positions.push(u32::MAX);
         }
         if !result.entries.is_empty() {
             result.partition(0, result.entries.len(), cancel)?;
+        }
+        for (position, entry) in result.entries.iter().enumerate() {
+            result.positions[entry.index] = position as u32;
         }
         crate::input::check(cancel)?;
         Ok(result)
@@ -111,6 +116,11 @@ impl Index {
         }
         found.sort_unstable();
         found
+    }
+
+    pub(crate) fn feature_bounds(&self, index: usize) -> Option<Bounds> {
+        self.positions.get(index).and_then(|&position| self.entries.get(position as usize))
+            .map(|entry| entry.bounds)
     }
 
     fn visit(&self, index: usize, viewport: Bounds, found: &mut Vec<usize>) {

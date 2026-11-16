@@ -69,6 +69,7 @@ pub struct Scene {
     pub features: Vec<RenderFeature>,
     instances: Vec<Instance>,
     spatial: Option<crate::cad_spatial::Index>,
+    display_lod: crate::cad_lod::Cache,
 }
 pub struct DrawRef<'a> {
     pub source: &'a DxfFeature,
@@ -511,6 +512,16 @@ impl DxfOverlay {
                 .chain(builder.scene.features.iter().map(|feature| feature.points.as_slice())),
             cancel,
         )?);
+        builder.scene.display_lod = crate::cad_lod::Cache::build(
+            self.features.len(),
+            self.features.iter().map(|feature| (
+                feature.points.as_slice(),
+                feature.cad.as_ref().map_or(&[][..], |cad| cad.path_breaks.as_slice()),
+            )).chain(builder.scene.features.iter().map(|feature| (
+                feature.points.as_slice(), feature.path_breaks.as_ref(),
+            ))),
+            cancel,
+        )?;
         warnings.extend(builder.warnings);
         self.expanded = Arc::new(builder.scene);
         self.block_warnings = warnings.into_iter().collect();
@@ -599,6 +610,20 @@ impl DxfOverlay {
                 .and_then(|feature| crate::cad_spatial::bounds(feature.points))
                 .is_some_and(|feature| crate::cad_spatial::intersects(feature, bounds))
         }).collect()
+    }
+    /// Prepared work-map bounds: do not rescan every vertex while zooming out.
+    pub fn feature_bounds(&self, index: usize) -> Option<crate::model::Bounds> {
+        if let Some(spatial) = self.expanded.spatial.as_ref()
+            .filter(|spatial| spatial.source_count == self.features.len())
+        {
+            return spatial.feature_bounds(index);
+        }
+        self.inspect_feature(index).and_then(|feature| crate::cad_spatial::bounds(feature.points))
+    }
+    /// Screen-scale simplification only; inspection and exports use full paths.
+    pub fn feature_lod(&self, index: usize) -> Option<crate::cad_lod::FeatureLod<'_>> {
+        if self.expanded.display_lod.source_count != self.features.len() { return None; }
+        self.expanded.display_lod.feature(index)
     }
     pub fn inspect_feature(&self, index: usize) -> Option<DrawRef<'_>> {
         if index < self.features.len() {
