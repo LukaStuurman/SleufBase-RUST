@@ -432,7 +432,10 @@ impl Renderer {
                         info = crate::virtual_raster::layout(&reduced.trench, reduced.quality)?;
                         &reduced
                     } else { *source };
-                    (crate::virtual_raster::render(map_source, cancel)?, info.transform())
+                    let image = if template_detail {
+                        crate::virtual_raster::render_for_template_map(map_source, cancel)?
+                    } else { crate::virtual_raster::render(map_source, cancel)? };
+                    (image, info.transform())
                 }
             };
             map_raster::paint_with_opacity(&mut map, image, transform, &layout, source.tiff_opacity, cancel)?;
@@ -485,6 +488,44 @@ mod virtual_map_visibility_tests {
             assert_eq!(edge_pixels,2 * factor as usize,"two thin edges at each output DPI");
             assert_eq!(*image.get_pixel(x,80 * factor),background,
                 "an empty trench must not gain an artificial transverse line");
+        }
+    }
+    #[test]
+    fn template_map_boundary_stays_thin_when_the_virtual_source_is_magnified() {
+        let cancel=AtomicBool::new(false);
+        let font=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/map-export/Hack-Regular.ttf");
+        let mut trench=VirtualTrench::new("PS".into(),
+            Vertex{x:155000.,y:463000.,z:None},Vertex{x:155008.,y:463000.,z:None},0.6).unwrap();
+        trench.objects.push(TrenchPoint {
+            role:"kabel".into(),object_name:"LS".into(),source_name:"LS".into(),
+            metadata:serde_json::json!({"display_rgb":[220,40,40]}),
+            position:Vertex{x:155001.5,y:463000.,z:None},attributes:Default::default(),
+        });
+        let virtual_source=crate::virtual_raster::Source{trench,quality:4.,reverse:false};
+        let bounds=crate::virtual_raster::layout(&virtual_source.trench,4.).unwrap().bounds;
+        let background=[250,250,250,255];
+        for scale in [75.,225.] {
+            let source=Source {
+                settings:Settings{dpi:300,scale},background:Background::Solid{color:background},
+                fonts:Some(Paths{regular:font.clone(),bold:font.clone()}),..Source::default()
+            };
+            let page=Renderer::default().render_template_with_raster(
+                &source,bounds,Some(Raster::Virtual(&virtual_source)),None,&cancel).unwrap();
+            // Inspect the actual composed image, including the resampled virtual
+            // source. Merely testing the final emphasis layer misses fat edges.
+            for edge_y in [463000.3,462999.7] {
+                let [x,y]=page.layout.screen([155006.,edge_y]);
+                let x=(x+page.layout.origin[0]) as u32;
+                let y=(y+page.layout.origin[1]) as u32;
+                let pixels=(y-10..=y+10).map(|row|page.image.get_pixel(x,row).0).collect::<Vec<_>>();
+                assert_eq!(pixels.iter().filter(|p|**p==[0,0,0,255]).count(),2,
+                    "1:{scale}: boundary is exactly two pixels at 300 DPI");
+                assert!(pixels.iter().all(|p|*p==background||*p==[0,0,0,255]),
+                    "1:{scale}: no enlarged or antialiased source border remains");
+            }
+            let [x,y]=page.layout.screen([155001.5,463000.]);
+            assert_eq!(page.image.get_pixel((x+page.layout.origin[0]) as u32,(y+page.layout.origin[1]) as u32).0,
+                [220,40,40,255],"the real utility retains its colour");
         }
     }
     #[test]

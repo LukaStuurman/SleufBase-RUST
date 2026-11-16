@@ -91,7 +91,7 @@ pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&Atomic
     let info=layout(&source.trench,source.quality)?;
     // Print detail uses stronger cable strokes without changing the general
     // virtual-raster contract used by previews and independent map sources.
-    let image=render_with_export_detail(source,cancel,true)?;
+    let image=render_with_style(source,cancel,true,true)?;
     let transform=info.transform();
     let start=[source.trench.start.x,source.trench.start.y];
     let end=[source.trench.end.x,source.trench.end.y];
@@ -110,9 +110,15 @@ pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&Atomic
 /// Render the original virtual-raster appearance at the requested resolution.
 /// Template export explicitly selects stronger strokes in its detail pane.
 pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
-    render_with_export_detail(source,cancel,false)
+    render_with_style(source,cancel,false,true)
 }
-fn render_with_export_detail(source:&Source,cancel:&AtomicBool,export_detail:bool)->Result<RgbaImage,String>{
+/// Template maps draw the boundary once at the final page resolution. Omitting
+/// it here prevents a preview-width border from growing when this raster zooms.
+/// The polygon mask and all utility/dekband geometry remain unchanged.
+pub(crate) fn render_for_template_map(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
+    render_with_style(source,cancel,false,false)
+}
+fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_border:bool)->Result<RgbaImage,String>{
     input::check(cancel)?;
     let t=&source.trench;
     let info=layout(t,source.quality)?;
@@ -168,7 +174,7 @@ fn render_with_export_detail(source:&Source,cancel:&AtomicBool,export_detail:boo
         draw::line(&mut result,&[a,b],point_width_px,[color[0],color[1],color[2],235],cancel,&mut budget)?;
     }
     let polygon=border.iter().map(|&(x,y)|pixel(info,x,y)).collect::<Vec<_>>();
-    draw::line(&mut result,&polygon,border_width,[0,0,0,255],cancel,&mut budget)?;
+    if draw_border {draw::line(&mut result,&polygon,border_width,[0,0,0,255],cancel,&mut budget)?;}
     if polygon.len()>=3 {
         let mut mask=vec![0u8;info.width as usize*info.height as usize];
         draw::polygon(&polygon,[info.width,info.height],cancel,&mut budget,|y,a,b|{
@@ -178,7 +184,7 @@ fn render_with_export_detail(source:&Source,cancel:&AtomicBool,export_detail:boo
             if i%65536==0{input::check(cancel)?;}
             p[3]=((u16::from(p[3])*u16::from(m))/255) as u8;
         }
-        draw::line(&mut result,&polygon,border_width,[0,0,0,255],cancel,&mut budget)?;
+        if draw_border {draw::line(&mut result,&polygon,border_width,[0,0,0,255],cancel,&mut budget)?;}
     }
     input::check(cancel)?;
     Ok(result)

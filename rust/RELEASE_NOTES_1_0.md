@@ -10,6 +10,7 @@
 
 - De extra dikke blauwe rand en de brede witte markering rond virtuele proefsleuven zijn vervangen door een dunne zwarte omtrek.
 - De dubbele markering in de kaart van de DXF-sjabloonexport is verwijderd. Kabels en leidingen binnen de sleuf blijven daardoor beter zichtbaar.
+- De rand wordt op de uiteindelijke kaartresolutie getekend en blijft dun wanneer je een andere kaartschaal kiest.
 - De omtrek is ook in de kaartweergave, het bovenaanzicht van de sleufeditor en de CAD-omtreklaag dun en zwart.
 - De automatische hulplijn van begin naar eind is verborgen in de kaart en het bovenaanzicht. De onderliggende meetas blijft beschikbaar voor posities, hoogtes en de doorsnede.
 - Lijnen die ingevoerde of geïmporteerde kabels en leidingen voorstellen, behouden hun positie en kleur. Nieuwe lege proefsleuven bevatten geen standaardkabel.
