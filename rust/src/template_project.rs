@@ -48,6 +48,27 @@ pub struct Choice {
 pub enum BackgroundKind {
     Blank,
     Pdok,
+    Osm,
+    Cadastral,
+}
+impl BackgroundKind {
+    pub fn from_setting(value: &str) -> Result<Self, String> {
+        match value {
+            "white" => Ok(Self::Blank),
+            "pdok" => Ok(Self::Pdok),
+            "osm" => Ok(Self::Osm),
+            "cadastral" => Ok(Self::Cadastral),
+            _ => Err("Onbekende sjabloonkaartachtergrond".into()),
+        }
+    }
+    pub fn map_source(self) -> Background {
+        match self {
+            Self::Blank => Background::Solid { color: [250, 250, 250, 255] },
+            Self::Pdok => Background::Pdok,
+            Self::Osm => Background::Osm,
+            Self::Cadastral => Background::Cadastral,
+        }
+    }
 }
 #[derive(Clone)]
 pub struct Options {
@@ -60,6 +81,8 @@ pub struct Options {
     pub paired: bool,
     pub project: String,
     pub drawn_by: String,
+    pub title_fields: crate::template_metadata::TitleFields,
+    pub contact: crate::template_branding::ContactDetails,
     pub font_directories: Vec<PathBuf>,
     pub dpi: u32,
     pub scale: f64,
@@ -81,6 +104,8 @@ impl Default for Options {
             paired: true,
             project: String::new(),
             drawn_by: String::new(),
+            title_fields: Default::default(),
+            contact: Default::default(),
             font_directories: Vec::new(),
             dpi: 300,
             scale: 225.,
@@ -236,6 +261,8 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
     let all_comments=crate::map_comments::combined_all(comments,rasters,trenches)?;
     crate::dxf_fonts::Catalog::validate_dirs(&opts.font_directories)?;
     opts.profile_style.validate()?;
+    opts.title_fields.validate()?;
+    opts.contact.validate()?;
     if !opts.template.as_os_str().is_empty() && !opts.template.is_file() {
         return Err("Kies een bestaand DXF-sjabloon".into());
     }
@@ -404,7 +431,8 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         }
         let local_index = datasets.len();
         let virtual_metadata=match choice.source{Source::Virtual(i)=>Some(&trenches[i]).filter(|t|t.metadata.is_object()),_=>None};
-        let map_reference=if let Some(t)=virtual_metadata{crate::virtual_map::reference(t)?}else{
+        let map_reference=if !opts.profile_style.show_reference {None}
+        else if let Some(t)=virtual_metadata{crate::virtual_map::reference(t)?}else{
             raster.and_then(|r|crate::raster_points::stored(r,crate::raster_points::REFERENCE).map(|p|(r,p)))
                 .map(|(r,p)|crate::raster_points::display(r,p)).transpose()?
         };
@@ -445,10 +473,7 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                 settings: map_page::Settings { dpi: opts.dpi, scale: opts.scale },
                 background: if opts.server_mode==crate::template_server::Mode::Offline {
                     Background::Solid { color: [250,250,250,255] }
-                } else {match opts.background {
-                    BackgroundKind::Blank => Background::Solid { color: [250,250,250,255] },
-                    BackgroundKind::Pdok => Background::Pdok,
-                }},
+                } else {opts.background.map_source()},
                 overlays: overlays.into(), reference:map_reference, ..MapSource::default()
             }),
             profile: (choice.profile&&has_dataset).then_some(Profile {
@@ -484,7 +509,10 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
             paired: opts.paired,
             project: (!opts.project.trim().is_empty()).then(||opts.project.trim().to_owned()),
             drawn_by: opts.drawn_by.trim().to_owned(),
+            title_fields: opts.title_fields.clone(),
+            contact: opts.contact.clone(),
             font_directories: opts.font_directories.clone(),
+            label_gap: opts.overview_settings.label_gap,
             protected_sources:jobs.iter().map(|d|d.source_path.clone()).chain(rasters.iter().filter_map(hydrate::local_path))
                 .chain(rasters.iter().flat_map(|r|std::iter::once(r.path.clone()).chain(r.kickthemap_job_sidecar.clone())))
                 .chain(trenches.iter().filter_map(|t|t.source_path.clone()))

@@ -371,6 +371,40 @@ fn export_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     });
     ui.small("Deze schaal en resolutie gelden voor Acties → Export kaarten.");
 }
+fn contact_fields(ui: &mut egui::Ui, contact: &mut sleufbase_rust::template_branding::ContactDetails) {
+    ui.small("Deze gegevens komen in de Techbase-onderhoek op elk gebruikt sjabloonblad.");
+    if ui.button("Standaard Techbase-gegevens herstellen").clicked() {
+        *contact = Default::default();
+    }
+    let width = ui.available_width();
+    let rows = [
+        ("Adres", &mut contact.street),
+        ("Postcode", &mut contact.postcode),
+        ("Plaats", &mut contact.city),
+        ("Telefoon", &mut contact.phone),
+        ("E-mail", &mut contact.email),
+        ("Website", &mut contact.website),
+    ];
+    if width >= 360. {
+        egui::Grid::new("settings-template-contact")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (label, value) in rows {
+                    ui.label(label);
+                    ui.add(egui::TextEdit::singleline(value)
+                        .id_salt(("template-contact", label)).desired_width((width - 110.).max(80.)));
+                    ui.end_row();
+                }
+            });
+    } else {
+        for (label, value) in rows {
+            ui.label(label);
+            ui.add(egui::TextEdit::singleline(value)
+                .id_salt(("template-contact", label)).desired_width(width));
+        }
+    }
+    ui.small("Laat een veld leeg om die contactregel weg te laten. Klik op Opslaan om de wijzigingen toe te passen.");
+}
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     section(ui,"Weergave proefsleuf in kadastrale DXF-export",|ui| {
     let p = &mut state.draft.export_preferences;
@@ -394,7 +428,7 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         &mut p.include_tiffs_in_dxf_export,
         "GeoTIFF-afbeeldingen meenemen in DXF-export",
     );
-    ui.small("De export zet hiervoor kopieën van de TIFFs in een map naast het DXF-bestand.");
+    ui.small("Geldt voor de kadastrale DXF-export en het overzicht in de sjabloonexport. De export zet gekoppelde TIFFs in een map naast het DXF-bestand. Detail- en profielvakken stel je apart in het exportvenster in.");
     });
     ui.add_space(12.);
     section(ui,"Labels en kleuren",|ui| {
@@ -412,6 +446,10 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             ui.text_edit_singleline(value);
         });
     }
+    });
+    ui.add_space(12.);
+    section(ui,"Contactgegevens op DXF-bladen",|ui| {
+        contact_fields(ui, &mut state.draft.export_preferences.template_contact);
     });
 }
 fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
@@ -567,7 +605,7 @@ pub(crate) fn show(
                         }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
-                            Category::Dxf => "Stel de proefsleufweergave, kleuren en gekoppelde rasters in.",
+                            Category::Dxf => "Stel de proefsleufweergave, kleuren, gekoppelde rasters en contactgegevens op de bladen in.",
                             Category::Trenches => "Stel dwarsprofielen, maaiveld en het opdrachtgeverlogo in.",
                             Category::KickTheMap => "Beheer materiaalkeuzes, kabelnamen en de woordenlijst voor DXF-lagen.",
                             Category::Backups => "Stel automatisch opslaan in en herstel een eerdere versie.",

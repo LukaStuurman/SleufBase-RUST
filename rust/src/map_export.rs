@@ -18,6 +18,7 @@ use std::{
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Background {
     Cadastral,
+    Osm,
     Solid {
         color: [u8; 4],
     },
@@ -149,6 +150,17 @@ fn background(
     cadastral: &mut Option<crate::cadastral_tiles::Client>,
 ) -> Result<RgbaImage, String> {
     match source {
+        Background::Osm => {
+            let map = crate::osm_tiles::request_export_map_with_cancel(
+                layout.bounds, layout.map_size[0], layout.map_size[1],
+                &crate::project::app_data_directory().join("osm-tiles"), cancel,
+            )?;
+            if map.stale_cache {
+                return Err("OSM-achtergrond gebruikt verlopen cache; probeer de export opnieuw met netwerk".into());
+            }
+            RgbaImage::from_raw(map.width, map.height, map.rgba)
+                .ok_or_else(|| "Ongeldige OSM-pixels".into())
+        }
         Background::Cadastral => {
             if cadastral.is_none() {
                 *cadastral = Some(crate::cadastral_tiles::Client::new(
@@ -396,6 +408,7 @@ impl Renderer {
             .as_deref()
             .or(match source.background {
                 Background::Pdok => Some("Luchtfoto: PDOK"),
+                Background::Osm => Some("(c) OpenStreetMap contributors"),
                 Background::Cadastral => Some("Kadastrale kaart: Kadaster / PDOK"),
                 _ => None,
             });

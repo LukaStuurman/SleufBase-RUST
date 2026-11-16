@@ -1,4 +1,4 @@
-//! Original paper-layout logos and fixed contact-address repair. Logo pixels
+//! Paper-layout logos and editable Techbase contact details. Logo pixels
 //! are prepared once per source and shared by all used sheets; IMAGE ownership
 //! and publication stay in the existing transactional image batch.
 use crate::{
@@ -36,25 +36,126 @@ const CLIENT: Bounds = Bounds {
     max_y: (34.0 + 53.96902090226447) / 2.0 + 12.40736127731883 / 2.0,
 };
 
-/// Match the original exact TEXT replacements throughout the document,
-/// including text inside block definitions; do not replace substrings/MTEXT.
+/// Editable contact lines in the Techbase drawing stamp.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ContactDetails {
+    pub street: String,
+    pub postcode: String,
+    pub city: String,
+    pub phone: String,
+    pub email: String,
+    pub website: String,
+}
+impl Default for ContactDetails {
+    fn default() -> Self {
+        Self {
+            street: "De Bloemendaal 10".into(),
+            postcode: "5221 EC".into(),
+            city: "'s-Hertogenbosch".into(),
+            phone: "073 220 0341".into(),
+            email: "contact@hdbtechbase.nl".into(),
+            website: "www.techbasebv.nl".into(),
+        }
+    }
+}
+impl ContactDetails {
+    pub fn is_default(&self) -> bool { self == &Self::default() }
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("Straat en huisnummer", &self.street), ("Postcode", &self.postcode),
+            ("Plaats", &self.city), ("Telefoon", &self.phone),
+            ("E-mail", &self.email), ("Website", &self.website),
+        ] {
+            if !contact_text(value) {
+                return Err(format!("Techbase {name}: kort deze contactregel in en gebruik één regel."));
+            }
+        }
+        Ok(())
+    }
+    /// Legacy settings are an allowlisted, tolerant import. Unknown fields are
+    /// retained by the project archive; invalid individual values keep defaults.
+    pub(crate) fn from_legacy(value: &serde_json::Value) -> Self {
+        let mut out = Self::default();
+        out.apply_legacy(value);
+        out
+    }
+    pub(crate) fn apply_legacy(&mut self, value: &serde_json::Value) {
+        for (key, target) in [
+            ("street", &mut self.street), ("postcode", &mut self.postcode),
+            ("city", &mut self.city), ("phone", &mut self.phone),
+            ("email", &mut self.email), ("website", &mut self.website),
+        ] {
+            if let Some(value) = value.get(key).and_then(serde_json::Value::as_str)
+                .filter(|value| contact_text(value))
+            {
+                *target = crate::python_values::trim(value).to_owned();
+            }
+        }
+    }
+}
+fn contact_text(value: &str) -> bool {
+    let value = crate::python_values::trim(value);
+    value.len() <= 4096 && !value.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+}
+fn contact_field(value: &str) -> Option<usize> {
+    match value {
+        "De Diepteweg 16" | "De Bloemendaal 10" => Some(0),
+        "5236 PV" | "5221 EC" => Some(1),
+        "'s-Hertogenbosch" => Some(2),
+        "073 - 220 0341" | "073 220 0341" | "0732200341" => Some(3),
+        "contact@hdbtechbase.nl" => Some(4),
+        "www.hdbtechbase.nl" | "hdbtechbase.nl"
+            | "http://www.hdbtechbase.nl" | "https://www.hdbtechbase.nl"
+            | "http://hdbtechbase.nl" | "https://hdbtechbase.nl"
+            | "www.techbasebv.nl" | "techbasebv.nl"
+            | "http://www.techbasebv.nl" | "https://www.techbasebv.nl"
+            | "http://techbasebv.nl" | "https://techbasebv.nl" => Some(5),
+        _ => None,
+    }
+}
+/// Keep the existing default-repair API for standalone template tooling.
 pub fn restore_contact(document: &mut Document, cancel: &AtomicBool) -> Result<usize, String> {
+    update_contact_impl(document, &ContactDetails::default(), cancel, false)
+}
+/// Fill complete recognized Techbase contact sets, including anonymous dynamic
+/// variants and cloned sheets. Unrelated text and custom source contacts remain
+/// intact. Empty fields deliberately leave that contact line visually blank.
+pub fn update_contact(document: &mut Document, contact: &ContactDetails, cancel: &AtomicBool) -> Result<usize, String> {
+    update_contact_impl(document, contact, cancel, true)
+}
+fn update_contact_impl(document: &mut Document, contact: &ContactDetails, cancel: &AtomicBool, complete_sets: bool) -> Result<usize, String> {
     crate::input::check(cancel)?;
+    contact.validate()?;
+    let mut owners = HashMap::<u64, u8>::new();
+    if complete_sets {
+        for r in document.records() {
+            if r.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+            if r.kind() != "TEXT" || r.section() != Some("BLOCKS") { continue; }
+            if let (Some(owner), Some(field)) = (copy::owner(r),
+                r.current_value(1)?.as_deref().and_then(contact_field))
+            {
+                *owners.entry(owner).or_default() |= 1 << field;
+            }
+        }
+    }
+    let values = [&contact.street, &contact.postcode, &contact.city,
+        &contact.phone, &contact.email, &contact.website];
     let mut changes = Vec::new();
+    let mut bytes = 0usize;
     for r in document.records() {
-        if r.index().is_multiple_of(1024) {
-            crate::input::check(cancel)?;
-        }
-        if r.kind() != "TEXT" {
-            continue;
-        }
-        let replacement = match r.current_value(1)?.as_deref() {
-            Some("De Diepteweg 16") => Some("De Bloemendaal 10"),
-            Some("5236 PV") => Some("5221 EC"),
-            _ => None,
-        };
-        if let Some(value) = replacement {
-            changes.push(document.tag_change(r.index(), 1, value)?);
+        if r.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if r.kind() != "TEXT" || (complete_sets && (r.section() != Some("BLOCKS")
+            || !copy::owner(r).is_some_and(|owner| owners.get(&owner) == Some(&0b11_1111))))
+        { continue; }
+        let current = r.current_value(1)?;
+        if let Some(field) = current.as_deref().and_then(contact_field) {
+            let value = crate::python_values::trim(values[field]);
+            if current.as_deref() == Some(value) { continue; }
+            let change = document.tag_change(r.index(), 1, value)?;
+            bytes = bytes.saturating_add(change.text.len() + std::mem::size_of_val(&change));
+            if bytes > 32 * 1024 * 1024 { return Err("Te veel contactwijzigingen in één export".into()); }
+            changes.push(change);
         }
     }
     let count = changes.len();

@@ -80,6 +80,9 @@ impl Viewport {
     /// Stable world-grid requests retain neighbouring pixels and share WMS
     /// tiles across pans. Quarter-octave levels keep detail within 19%.
     pub fn buffered(self) -> Self {
+        // OSM already caches reusable world tiles. A WMS overscan buffer both
+        // fetches unseen tiles and forces a coarser level under its tile budget.
+        if self.source == Provider::Osm { return self; }
         let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
             .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
         let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
@@ -260,12 +263,22 @@ pub struct Worker {
 }
 impl Worker {
     pub fn new(osm_cache: PathBuf) -> Result<Self, String> {
+        let mut osm = crate::osm_tiles::ViewportRenderer::default();
         Self::with_fetcher(move |request, cancel, preview| {
             let v = request.view;
             match v.source {
                 Provider::Osm => {
-                    let raster = crate::osm_tiles::request_export_map_with_cancel(
-                        v.bounds, v.size[0], v.size[1], &osm_cache, cancel,
+                    let mut update = |p: crate::osm_tiles::ViewportProgress<'_>| {
+                        preview(Pixels {
+                            bounds: p.bounds,
+                            width: p.width,
+                            height: p.height,
+                            rgba: p.rgba.to_vec(),
+                            stale_cache: p.stale_cache,
+                        }, p.completed, p.total)
+                    };
+                    let raster = osm.request(
+                        v.bounds, v.size[0], v.size[1], &osm_cache, cancel, &mut update,
                     )?;
                     Ok(Pixels {
                         bounds: raster.bounds,

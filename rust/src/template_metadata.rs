@@ -58,6 +58,45 @@ impl fmt::Display for Date {
         write!(f, "{:02}-{:02}-{:04}", self.day, self.month, self.year)
     }
 }
+/// Editable values in the drawing stamp. Missing persisted fields keep the
+/// defaults used by new exports, including projects saved before these fields.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TitleFields {
+    pub checked_by: String,
+    pub status: String,
+    pub version: String,
+    pub reference_drawings: String,
+    pub project_number: String,
+    pub drawing_number: String,
+}
+impl Default for TitleFields {
+    fn default() -> Self {
+        Self {
+            checked_by: String::new(),
+            status: String::new(),
+            version: "1.0".into(),
+            reference_drawings: "Proefsleuven".into(),
+            project_number: String::new(),
+            drawing_number: String::new(),
+        }
+    }
+}
+impl TitleFields {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("Gezien", &self.checked_by),
+            ("Status", &self.status),
+            ("Versie", &self.version),
+            ("Referentie Tekeningen", &self.reference_drawings),
+            ("ProjectNr.BGM", &self.project_number),
+            ("TEK.NR.", &self.drawing_number),
+        ] {
+            text(value).map_err(|error| format!("{name}: {error}"))?;
+        }
+        Ok(())
+    }
+}
 pub struct Values {
     pub date: Date,
     /// None preserves an existing project name; Some("") deliberately clears it.
@@ -104,7 +143,31 @@ pub fn update(
     values: &Values,
     cancel: &AtomicBool,
 ) -> Result<usize, String> {
+    update_impl(document, layouts, values, None, cancel)
+}
+/// Update editable stamp fields only in INSERT attributes of the used layouts.
+/// This deliberately leaves the dynamic block visibility option named Versie
+/// and all unused reference/revision rows unchanged.
+pub fn update_with_title_fields(
+    document: &mut Document,
+    layouts: &[String],
+    values: &Values,
+    title_fields: &TitleFields,
+    cancel: &AtomicBool,
+) -> Result<usize, String> {
+    update_impl(document, layouts, values, Some(title_fields), cancel)
+}
+fn update_impl(
+    document: &mut Document,
+    layouts: &[String],
+    values: &Values,
+    title_fields: Option<&TitleFields>,
+    cancel: &AtomicBool,
+) -> Result<usize, String> {
     crate::input::check(cancel)?;
+    if let Some(fields) = title_fields {
+        fields.validate()?;
+    }
     let project = values.project.as_deref().map(text).transpose()?;
     let drawn_by = text(&values.drawn_by)?;
     let date = values.date.to_string();
@@ -191,6 +254,43 @@ pub fn update(
                     &mut bytes,
                     document.tag_change(r.index(), 1, value)?,
                 )?;
+            }
+        }
+        if let Some(fields) = title_fields {
+            // The built-in dynamic stamp uses row 1 and VERSIE.NR. Older BAM
+            // stamps repeat unnumbered tags; update their first row only.
+            for (numbered, plain, value) in [
+                ("GEZIEN1", "GEZIEN", fields.checked_by.as_str()),
+                ("STATUS1", "STATUS", fields.status.as_str()),
+                ("VERSIE1", "VERSIE", fields.version.as_str()),
+                ("REFTEK1", "REFTEK", fields.reference_drawings.as_str()),
+            ] {
+                let numbered_exists = attributes.iter().any(|(_, tag)| tag == numbered);
+                let wanted = if numbered_exists { numbered } else { plain };
+                for (r, _) in attributes
+                    .iter()
+                    .filter(|(_, tag)| tag == wanted)
+                    .take(if numbered_exists { usize::MAX } else { 1 })
+                {
+                    stage(
+                        &mut changes,
+                        &mut bytes,
+                        document.tag_change(r.index(), 1, trim(value))?,
+                    )?;
+                }
+            }
+            for (wanted, value) in [
+                ("VERSIE.NR", fields.version.as_str()),
+                ("PROJECT.NR", fields.project_number.as_str()),
+                ("TEK.NR", fields.drawing_number.as_str()),
+            ] {
+                for (r, _) in attributes.iter().filter(|(_, tag)| tag == wanted) {
+                    stage(
+                        &mut changes,
+                        &mut bytes,
+                        document.tag_change(r.index(), 1, trim(value))?,
+                    )?;
+                }
             }
         }
         if let Some(project) = project {

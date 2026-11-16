@@ -91,6 +91,10 @@ impl SleufBaseApp {
         self.start_file_load(LoadPurpose::ExportedDxf(path.clone()),FileKind::Dxf,vec![path]);
     }
     pub(super) fn import_marxact(&mut self, paths: Vec<PathBuf>) {
+        let settings = match self.project_export_settings() {
+            Ok(settings) => settings,
+            Err(error) => { self.message = error; return; }
+        };
         let paths = self.new_paths(paths, |path| {
             self.virtual_trenches.iter().any(|t| {
                 t.source_path.as_deref() == Some(path.as_path()) && !t.boundary_3d.is_empty()
@@ -99,7 +103,7 @@ impl SleufBaseApp {
         self.start_file_load(
             LoadPurpose::MarXact,
             FileKind::MarXact(Arc::new(
-                self.migrated_settings.marxact_name_mappings.clone(),
+                settings.marxact_name_mappings,
             )),
             paths,
         );

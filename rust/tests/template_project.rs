@@ -52,6 +52,8 @@ fn real_template_pipeline_can_export_from_a_loaded_project_without_manifest_or_n
         paired:false,
         template:fixture.template.clone(),
         project:"Native projectport".into(), drawn_by:"Techbase".into(),
+        title_fields:Default::default(),
+        contact:Default::default(),
         background:BackgroundKind::Pdok, dpi:96, scale:225.,
         include_bgt:false, include_cadastral:false, include_cad:false,
         choices:vec![Choice {label:None,legacy_slot:None,manual_scale:None,

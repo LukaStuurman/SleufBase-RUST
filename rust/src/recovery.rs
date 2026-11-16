@@ -111,18 +111,23 @@ pub fn scan(directories: &[PathBuf], cancel: &AtomicBool) -> Result<Catalog, Str
 /// original autosaves can be either .json or .klicproject. Ordinary loaders still
 /// perform their complete version/schema/asset validation afterwards.
 pub fn load_kind(path: &Path, cancel: &AtomicBool) -> Result<LoadKind, String> {
-    let bytes = crate::input::read(path, crate::project::MAX_PROJECT_BYTES, "Autosave", cancel)?;
+    let mut reader = crate::input::open_reader(path, crate::project::MAX_PROJECT_BYTES, "Autosave", cancel)?;
     #[derive(serde::Deserialize)]
     struct Header {
         format: Option<String>,
         version: u32,
     }
-    let header: Header =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Ongeldige autosave: {e}"))?;
+    let parsed = serde_json::from_reader(&mut reader);
     crate::input::check(cancel)?;
+    let header: Header = parsed.map_err(|e| format!("Ongeldige autosave: {e}"))?;
     match (header.format.as_deref(), header.version) {
         (Some("sleufbase-native-rust"), 1..=crate::project::FORMAT_VERSION) => Ok(LoadKind::Native),
-        (None, 1) => Ok(LoadKind::Python),
+        (None, 1) => {
+            if reader.get_ref().bytes_read() > crate::legacy_project::MAX_PROJECT_BYTES {
+                return Err("Autosave is te groot".into());
+            }
+            Ok(LoadKind::Python)
+        },
         _ => Err("Onbekend autosaveformaat of niet ondersteunde versie".into()),
     }
 }

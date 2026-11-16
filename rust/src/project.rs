@@ -10,14 +10,14 @@ use crate::model::{Bounds, Dataset, Geometry, Vertex};
 use crate::storage::atomic_write;
 use crate::virtual_trench::VirtualTrench;
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const FORMAT_VERSION: u32 = 5;
-pub const MAX_PROJECT_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_PROJECT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,10 +229,11 @@ pub fn read_project(path: &Path) -> Result<NativeProject, String> {
     read_project_with_cancel(path,&crate::input::NEVER_CANCEL)
 }
 pub fn read_project_with_cancel(path:&Path,cancel:&std::sync::atomic::AtomicBool)->Result<NativeProject,String>{
-    let bytes=crate::input::read(path,MAX_PROJECT_BYTES,"Projectbestand",cancel)?;
-    let mut project: NativeProject =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Projectbestand ongeldig: {e}"))?;
+    let mut reader=crate::input::open_reader(path,MAX_PROJECT_BYTES,"Projectbestand",cancel)?;
+    let parsed=serde_json::from_reader(&mut reader);
     crate::input::check(cancel)?;
+    let mut project: NativeProject = parsed.map_err(|e| format!("Projectbestand ongeldig: {e}"))?;
+    drop(reader);
     // V3 stores source block/curve definitions separately from derived WCS
     // caches. V1/V2 remain readable; opening never rewrites their source bytes.
     if matches!(project.version,1..=4) {project.version=FORMAT_VERSION;}
@@ -261,13 +262,34 @@ pub fn save_project_new(path: &Path, project: &NativeProject) -> Result<(), Stri
 fn write_project(path: &Path, project: &NativeProject, overwrite: bool) -> Result<(), String> {
     project.validate()?;
     atomic_write(path, overwrite, |file| {
-        serde_json::to_writer_pretty(&mut *file, project).map_err(|e| e.to_string())?;
-        file.write_all(b"\n").map_err(|e| e.to_string())?;
-        if file.metadata().map_err(|e| e.to_string())?.len() > MAX_PROJECT_BYTES {
-            return Err("Projectbestand is te groot om veilig terug te lezen".into());
-        }
-        Ok(())
+        // Compact JSON preserves the schema without expanding repeated CAD
+        // attributes and coordinates into gigabytes of indentation.
+        let mut writer = ProjectWriter {
+            out: BufWriter::with_capacity(64 * 1024, file),
+            written: 0,
+        };
+        serde_json::to_writer(&mut writer, project).map_err(|e| e.to_string())?;
+        writer.write_all(b"\n").and_then(|_| writer.flush()).map_err(|e| e.to_string())
     })
+}
+struct ProjectWriter<W> {
+    out: W,
+    written: u64,
+}
+impl<W: Write> Write for ProjectWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() as u64 > MAX_PROJECT_BYTES.saturating_sub(self.written) {
+            return Err(std::io::Error::other(
+                "Projectbestand is te groot om veilig terug te lezen",
+            ));
+        }
+        let written = self.out.write(bytes)?;
+        self.written += written as u64;
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.flush()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -366,29 +388,38 @@ pub fn prune_backups(dir: &Path, limit: usize) -> Result<usize, String> {
 }
 /// A lightweight preview of saved metadata for compatibility diagnostics.
 pub fn preview_project_metadata(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    (&mut file)
-        .take(MAX_PROJECT_BYTES + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| e.to_string())?;
-    if buf.len() as u64 > MAX_PROJECT_BYTES {
-        return Err("Projectbestand is te groot".into());
+    struct Metadata {
+        count: usize,
+        names: Vec<String>,
     }
-    let value: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| e.to_string())?;
-    let Some(object) = value.as_object() else {
-        return Err("Project JSON is geen object".into());
-    };
-    Ok(format!(
-        "{} velden: {}",
-        object.len(),
-        object
-            .keys()
-            .take(40)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
+    impl<'de> Deserialize<'de> for Metadata {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Metadata;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("een project JSON-object")
+                }
+                fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Metadata, M::Error> {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut names = Vec::new();
+                    while let Some(name) = map.next_key::<String>()? {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                        if seen.insert(name.clone()) && names.len() < 40 {
+                            names.push(name);
+                        }
+                    }
+                    Ok(Metadata { count: seen.len(), names })
+                }
+            }
+            deserializer.deserialize_map(Visitor)
+        }
+    }
+    let reader = crate::input::open_reader(
+        path, MAX_PROJECT_BYTES, "Projectbestand", &crate::input::NEVER_CANCEL,
+    )?;
+    let metadata: Metadata = serde_json::from_reader(reader).map_err(|e| e.to_string())?;
+    Ok(format!("{} velden: {}", metadata.count, metadata.names.join(", ")))
 }
 
 #[cfg(test)]

@@ -181,6 +181,10 @@ impl SleufBaseApp {
             self.message="Zet de proefsleuf eerst zichtbaar om een beginpunt op de kaart te kiezen.".into();
             return false;
         }
+        let settings = match self.project_export_settings() {
+            Ok(settings) => settings,
+            Err(error) => { self.message = error; return false; }
+        };
         self.raster_points.mode = None;
         self.raster_points.rows.clear();
         let kind = if target.is_some() {
@@ -192,7 +196,7 @@ impl SleufBaseApp {
             kind,
             path: PathBuf::new(),
             selection: sleufbase_rust::object_selection::Selection::all(0, 0),
-            rules: self.migrated_settings.object_rules.clone(),
+            rules: settings.object_rules,
             extra_layers: false,
             options: Default::default(),
             template: None,

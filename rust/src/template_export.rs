@@ -85,6 +85,8 @@ pub struct Settings {
     pub logos: crate::template_branding::Logos,
     pub project: Option<String>,
     pub drawn_by: String,
+    pub title_fields: crate::template_metadata::TitleFields,
+    pub contact: crate::template_branding::ContactDetails,
     /// Year, month, day. None captures the Windows local date once per export.
     pub export_date: Option<[u16; 3]>,
     pub label_gap: f64,
@@ -104,6 +106,8 @@ impl Default for Settings {
             logos: Default::default(),
             project: None,
             drawn_by: String::new(),
+            title_fields: Default::default(),
+            contact: Default::default(),
             export_date: None,
             label_gap: 18.,
             discipline_excel: false,
@@ -527,6 +531,8 @@ fn export_with_asset_policy(
     policy: &crate::resource_policy::ResourcePolicy,
 ) -> Result<Exported, String> {
     control.check()?;
+    request.settings.title_fields.validate()?;
+    request.settings.contact.validate()?;
     if request.slots.is_empty() || !request.slots.iter().any(Option::is_some) {
         return Err("Voeg minimaal één gevuld proefsleufvak toe".into());
     }
@@ -610,7 +616,7 @@ fn export_with_asset_policy(
         .export_date
         .map(|[y, m, d]| Date::new(y, m, d))
         .transpose()?;
-    let prepared = template_setup::prepare_with_progress(
+    let prepared = template_setup::prepare_with_title_fields_and_progress(
         &mut doc,
         &bounds,
         &template_setup::Options {
@@ -620,6 +626,7 @@ fn export_with_asset_policy(
             label_gap: request.settings.label_gap,
             profile_layers: None,
         },
+        &request.settings.title_fields,
         control.flag(),
         &mut progress,
     )?;
@@ -628,7 +635,7 @@ fn export_with_asset_policy(
         return Err("Sjabloonrasters en logo's overschrijden samen het afbeeldingsbudget".into());
     }
     control.set_stage(Stage::Planning);
-    crate::template_branding::restore_contact(&mut doc, control.flag())?;
+    crate::template_branding::update_contact(&mut doc, &request.settings.contact, control.flag())?;
     template_geometry::add(&mut doc, &request.layers, &request.geometry, control.flag())?;
     let mut overview_plan=request.overview.as_ref().map(|overview| {
         progress("Kadastraal overzicht opbouwen");

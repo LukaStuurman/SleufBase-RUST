@@ -1,6 +1,11 @@
 //! On-demand OpenStreetMap raster tiles for the native RD (EPSG:28992) map.
 //! Only the user-requested viewport is fetched; no prefetch or offline bulk download.
 //! See https://operations.osmfoundation.org/policies/tiles/
+#[path = "osm_viewport.rs"]
+mod viewport;
+pub use viewport::{Progress as ViewportProgress, Renderer as ViewportRenderer,
+    MAX_PIXELS as VIEWPORT_MAX_PIXELS, MAX_SIDE as VIEWPORT_MAX_SIDE};
+
 use crate::{input, model::Bounds};
 use image::{ImageFormat, RgbaImage};
 use std::{
@@ -130,31 +135,34 @@ fn choose_grid(b:Bounds,width:u32,height:u32)->Result<Grid,String>{
     let target = (156_543.033_928 * center_lat.to_radians().cos() / meters_per_pixel)
         .log2().floor().clamp(0.0, 18.0) as u8;
     for z in (0..=target).rev() {
-        let mut min_x = u32::MAX;
-        let mut max_x = 0u32;
-        let mut min_y = u32::MAX;
-        let mut max_y = 0u32;
-        let side = (1u32 << z) - 1;
-        // Include middle samples, as the RD -> Mercator transform isn't linear.
-        for yi in 0..=4 {
-            for xi in 0..=4 {
-                let x = b.min_x + (b.max_x - b.min_x) * f64::from(xi) / 4.0;
-                let y = b.min_y + (b.max_y - b.min_y) * f64::from(yi) / 4.0;
-                let (tx, ty) = mercator(x, y, z);
-                let tx = (tx.floor().max(0.0) as u32).min(side);
-                let ty = (ty.floor().max(0.0) as u32).min(side);
-                min_x = min_x.min(tx);
-                max_x = max_x.max(tx);
-                min_y = min_y.min(ty);
-                max_y = max_y.max(ty);
-            }
-        }
-        let grid = Grid { z, min_x, max_x, min_y, max_y };
+        let grid = grid_at(b, z);
         if grid.count() <= MAX_TILES {
             return Ok(grid);
         }
     }
     Err("OSM-kaartgebied is te groot".into())
+}
+fn grid_at(b: Bounds, z: u8) -> Grid {
+    let mut min_x = u32::MAX;
+    let mut max_x = 0u32;
+    let mut min_y = u32::MAX;
+    let mut max_y = 0u32;
+    let side = (1u32 << z) - 1;
+    // Include middle samples, as the RD -> Mercator transform isn't linear.
+    for yi in 0..=4 {
+        for xi in 0..=4 {
+            let x = b.min_x + (b.max_x - b.min_x) * f64::from(xi) / 4.0;
+            let y = b.min_y + (b.max_y - b.min_y) * f64::from(yi) / 4.0;
+            let (tx, ty) = mercator(x, y, z);
+            let tx = (tx.floor().max(0.0) as u32).min(side);
+            let ty = (ty.floor().max(0.0) as u32).min(side);
+            min_x = min_x.min(tx);
+            max_x = max_x.max(tx);
+            min_y = min_y.min(ty);
+            max_y = max_y.max(ty);
+        }
+    }
+    Grid { z, min_x, max_x, min_y, max_y }
 }
 fn decode_png(bytes: &[u8]) -> Result<RgbaImage, String> {
     if bytes.len() as u64 > MAX_TILE_BYTES {
@@ -218,7 +226,8 @@ fn persistent_client() -> Result<&'static reqwest::blocking::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
     CLIENT.get_or_init(|| reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15)).connect_timeout(Duration::from_secs(8))
-        .user_agent("SleufBase-Rust/0.1 (+https://github.com/LukaStuurman/SleufBase)")
+        .user_agent(concat!("SleufBase-Rust/", env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/LukaStuurman/SleufBase)"))
         .build().map_err(|e| e.to_string())).as_ref().map_err(Clone::clone)
 }
 fn tile_lock(path: &Path) -> Arc<Mutex<()>> {
@@ -234,7 +243,8 @@ static ACTIVE_DOWNLOADS: AtomicUsize = AtomicUsize::new(0);
 struct DownloadPermit;
 impl Drop for DownloadPermit { fn drop(&mut self) { ACTIVE_DOWNLOADS.fetch_sub(1, Ordering::AcqRel); } }
 fn download_permit(cancel: &AtomicBool) -> Result<DownloadPermit, String> {
-    let limit = crate::resource_policy::get().network_workers.max(1);
+    // Keep the public OSM service bounded across viewport, jobs and export clients.
+    let limit = crate::resource_policy::get().network_workers.clamp(1, 2);
     loop {
         input::check(cancel)?;
         let active = ACTIVE_DOWNLOADS.load(Ordering::Acquire);
@@ -264,18 +274,48 @@ fn cached(path: &Path) -> Option<(RgbaImage, bool)> {
     tile_memory().lock().ok()?.remember(path, &image, timestamp);
     Some((image, fresh))
 }
-fn store(path: &Path, bytes: &[u8]) {
-    let Some(dir) = path.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() { return; }
+fn store(path: &Path, bytes: &[u8]) -> bool {
+    let Some(dir) = path.parent() else { return false; };
+    if std::fs::create_dir_all(dir).is_err() { return false; }
     if let Ok(mut temp) = tempfile::NamedTempFile::new_in(dir) {
         if temp.write_all(bytes).is_ok() && temp.flush().is_ok() {
             // Best effort: if replacement fails (e.g. Windows locks), the next
             // viewport request may refresh the tile again.
-            let _ = temp.persist(path);
+            return temp.persist(path).is_ok();
         }
     }
+    false
+}
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Validators {
+    etag: Option<String>,
+    modified: Option<String>,
+    #[serde(default)]
+    signature: Option<(u64, u64, u32)>,
+}
+fn disk_signature(path: &Path) -> Option<(u64, u64, u32)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let time = metadata.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    Some((metadata.len(), time.as_secs(), time.subsec_nanos()))
+}
+fn validators(path: &Path) -> Validators {
+    let signature = disk_signature(path);
+    let path = path.with_extension("http.json");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() <= 8192) {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(value) = serde_json::from_slice::<Validators>(&bytes) {
+                if signature.is_some() && value.signature == signature { return value; }
+            }
+        }
+    }
+    Validators::default()
 }
 fn load_tile(id: TileId, cache: &Path, cancel: &AtomicBool)
+    -> Result<(RgbaImage, bool, bool), String>
+{
+    load_tile_for(id, cache, cancel, false)
+}
+fn load_tile_for(id: TileId, cache: &Path, cancel: &AtomicBool, interactive: bool)
     -> Result<(RgbaImage, bool, bool), String>
 {
     input::check(cancel)?;
@@ -299,9 +339,39 @@ fn load_tile(id: TileId, cache: &Path, cancel: &AtomicBool)
         input::check(cancel)?;
         let _permit = download_permit(cancel)?;
         let client = persistent_client()?;
-        let response = client.get(id.url()).send()
-            .map_err(|e| format!("OSM-tegel onbereikbaar: {e}"))?
-            .error_for_status().map_err(|e| format!("OSM HTTP-fout: {e}"))?;
+        let mut request = client.get(id.url());
+        if old.is_some() {
+            let saved = validators(&path);
+            if let Some(etag) = saved.etag { request = request.header(reqwest::header::IF_NONE_MATCH, etag); }
+            if let Some(modified) = saved.modified { request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified); }
+        }
+        // A cancelled camera request must not hold up its replacement through
+        // three long network retries. Existing export retry behavior is retained.
+        if interactive { request = request.timeout(Duration::from_secs(5)); }
+        let response = request.send()
+            .map_err(|e| format!("OSM-tegel onbereikbaar: {e}"))?;
+        input::check(cancel)?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            // Validators identify the persisted PNG, which can differ from
+            // newer memory pixels if a previous best-effort disk write failed.
+            let bytes = std::fs::read(&path).map_err(|e| format!("OSM-cache bij herbevestiging: {e}"))?;
+            let tile = decode_png(&bytes)?;
+            let mut saved = validators(&path);
+            let now = SystemTime::now();
+            if let Ok(file) = std::fs::File::options().write(true).open(&path) {
+                let _ = file.set_times(std::fs::FileTimes::new().set_modified(now));
+            }
+            saved.signature = disk_signature(&path);
+            if let Ok(bytes) = serde_json::to_vec(&saved) { store(&path.with_extension("http.json"), &bytes); }
+            tile_memory().lock().map_err(|_| "OSM-geheugencache niet beschikbaar")?
+                .remember(&path, &tile, now);
+            return Ok(tile);
+        }
+        let response = response.error_for_status().map_err(|e| format!("OSM HTTP-fout: {e}"))?;
+        let header = |key| response.headers().get(key).and_then(|v| v.to_str().ok())
+            .filter(|v| v.len() <= 2048).map(str::to_owned);
+        let mut saved = Validators { etag: header(reqwest::header::ETAG),
+            modified: header(reqwest::header::LAST_MODIFIED), signature: None };
         if response.content_length().is_some_and(|size| size > MAX_TILE_BYTES) {
             return Err("OSM-tegel overschrijdt de downloadlimiet".into());
         }
@@ -309,18 +379,24 @@ fn load_tile(id: TileId, cache: &Path, cancel: &AtomicBool)
         let bytes = input::read_chunks(&mut response, MAX_TILE_BYTES, "OSM-tegel", cancel)?;
         let decoded = decode_png(&bytes)?;
         input::check(cancel)?;
-        store(&path, &bytes);
+        if store(&path, &bytes) {
+            // Bind validators to the actual PNG. A failed/partial sidecar write
+            // must never revalidate different pixels after an application restart.
+            saved.signature = disk_signature(&path);
+            if let Ok(bytes) = serde_json::to_vec(&saved) { store(&path.with_extension("http.json"), &bytes); }
+        }
         tile_memory().lock().map_err(|_| "OSM-geheugencache niet beschikbaar")?
             .remember(&std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()), &decoded,
                 SystemTime::now());
         Ok(decoded)
     };
     let mut remote = Err("OSM-tegel niet opgehaald".into());
-    for attempt in 0..3 {
+    let attempts = if interactive { 1 } else { 3 };
+    for attempt in 0..attempts {
         remote = fetch();
         if remote.is_ok() { break; }
         input::check(cancel)?;
-        if attempt < 2 { cancellable_delay(Duration::from_millis(400 * (attempt + 1)), cancel)?; }
+        if attempt + 1 < attempts { cancellable_delay(Duration::from_millis(400 * (attempt + 1)), cancel)?; }
     }
     match remote {
         Ok(tile) => Ok((tile, false, true)),

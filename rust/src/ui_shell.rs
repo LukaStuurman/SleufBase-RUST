@@ -192,14 +192,15 @@ fn sidebar_list(ui: &mut egui::Ui, id: &'static str, height: f32, content: impl 
     });
 }
 
+fn selection_count(ui: &mut egui::Ui, count: usize) {
+    ui.small(format!("{count} geselecteerd"))
+        .on_hover_text("Ctrl+klik: toevoegen of deselecteren. Shift+klik: een reeks. Ctrl+Shift+klik: reeks toevoegen.");
+}
+
 fn remove_selection_button(ui: &mut egui::Ui, count: usize, description: &str) -> bool {
-    ui.horizontal(|ui| {
-        ui.small(format!("{count} geselecteerd"))
-            .on_hover_text("Ctrl+klik: toevoegen of deselecteren. Shift+klik: een reeks. Ctrl+Shift+klik: reeks toevoegen.");
-        ui.add_enabled(count > 0, egui::Button::new("Verwijder selectie"))
-            .on_hover_text(description)
-            .clicked()
-    }).inner
+    ui.add_enabled(count > 0, egui::Button::new("Verwijder selectie"))
+        .on_hover_text(description)
+        .clicked()
 }
 
 impl SleufBaseApp {
@@ -659,9 +660,12 @@ impl SleufBaseApp {
                 else { self.shell.trench_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
                 self.apply_trench_list_selection();
             }
-            remove |= remove_selection_button(ui, self.shell.trench_selection.len(),
-                "Verwijder alle geselecteerde proefsleuven uit dit project");
-            if ui.button("Virtuele proefsleuf").clicked() { self.start_virtual_creation(); }
+            selection_count(ui, self.shell.trench_selection.len());
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Virtuele proefsleuf").clicked() { self.start_virtual_creation(); }
+                remove |= remove_selection_button(ui, self.shell.trench_selection.len(),
+                    "Verwijder alle geselecteerde proefsleuven uit dit project");
+            });
         });
         for (virtual_trench, index, visible) in visibility {
             if virtual_trench { self.set_trench_visibility(index, visible); }
@@ -744,8 +748,11 @@ impl SleufBaseApp {
                 else { self.shell.overlay_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
                 self.apply_overlay_list_selection();
             }
-            remove |= remove_selection_button(ui, self.shell.overlay_selection.len(),
-                "Verwijder alle geselecteerde overlays uit dit project");
+            ui.horizontal(|ui| {
+                selection_count(ui, self.shell.overlay_selection.len());
+                remove |= remove_selection_button(ui, self.shell.overlay_selection.len(),
+                    "Verwijder alle geselecteerde overlays uit dit project");
+            });
         });
         for response in contexts {
             response.context_menu(|ui| {

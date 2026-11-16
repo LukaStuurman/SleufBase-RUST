@@ -42,6 +42,8 @@ pub struct ExportPreferences {
     pub cadastral_template_path:String,
     pub template_client_logo_preset:String,
     pub template_client_logo_path:String,
+    #[serde(default,skip_serializing_if="crate::template_branding::ContactDetails::is_default")]
+    pub template_contact:crate::template_branding::ContactDetails,
     pub template_include_cross_sections:bool,
     pub template_generate_reverse_cross_section_sheet:bool,
     pub template_show_profile_direction:bool,
@@ -56,7 +58,7 @@ impl Default for ExportPreferences {
         dxf_trench_export_mode:"centerline".into(),include_tiffs_in_dxf_export:false,
         dxf_centerline_color:"#000000".into(),dxf_label_color:"#000000".into(),
         cadastral_template_path:String::new(),template_client_logo_preset:"bgm".into(),
-        template_client_logo_path:String::new(),template_include_cross_sections:true,
+        template_client_logo_path:String::new(),template_contact:Default::default(),template_include_cross_sections:true,
         template_generate_reverse_cross_section_sheet:false,template_show_profile_direction:true,
         template_enable_maaiveld_edit_points:true,template_avoid_multileader_collisions:true,
         template_clip_cross_section_markers_to_profile:true,
@@ -66,6 +68,9 @@ impl Default for ExportPreferences {
 impl ExportPreferences {
     fn from_legacy(value:&Value)->Self {
         let mut out=Self::default();
+        if let Some(contact)=value.get("template_contact") {
+            out.template_contact=crate::template_branding::ContactDetails::from_legacy(contact);
+        }
         macro_rules! flag {($($name:ident),*)=>{$(out.$name=legacy_boolean(value.get(stringify!($name)),out.$name);)*}}
         flag!(include_tiffs_in_dxf_export,template_include_cross_sections,
             template_generate_reverse_cross_section_sheet,template_show_profile_direction,
@@ -83,6 +88,7 @@ impl ExportPreferences {
         out
     }
     pub fn validate(&self)->Result<(),String>{
+        self.template_contact.validate()?;
         if self.cadastral_template_path.len()>32768||self.template_client_logo_path.len()>32768||self.template_cross_section_diameter_text.len()>32768||self.template_client_logo_preset.len()>256
             || !self.template_cross_section_marker_diameter.is_finite()||!(0.005..=0.2).contains(&self.template_cross_section_marker_diameter)
             || !matches!(self.dxf_trench_export_mode.as_str(),"centerline"|"polygon"|"none")
@@ -201,6 +207,18 @@ fn normalize_list(value:Option<&Value>)->Vec<String> {
     }
     out
 }
+/// Extra profile choices, trimmed and deduplicated against rule labels and
+/// keywords with the same Unicode rules used when importing settings.
+pub fn profile_extra_choices<'a>(extras:&'a [String],rules:&[crate::Rule])->Vec<&'a str> {
+    let mut seen:HashSet<String>=rules.iter()
+        .flat_map(|rule| std::iter::once(rule.display_label())
+            .chain(rule.keywords.iter().map(|word| word.as_ref())))
+        .map(crate::python_values::casefold).collect();
+    extras.iter().filter_map(|value| {
+        let value=crate::python_values::trim(value);
+        (!value.is_empty()&&seen.insert(crate::python_values::casefold(value))).then_some(value)
+    }).collect()
+}
 fn normalize_mappings(value:Option<&Value>)->BTreeMap<String,String> {
     let mut entries=Vec::new();
     if let Some(raw)=value.and_then(Value::as_object) {
@@ -257,8 +275,13 @@ pub fn with_project_overrides(base:&MigratedSettings,payload:&Value)->Result<Mig
     let mut out=base.clone();
     let mut preferences=serde_json::to_value(&base.export_preferences).map_err(|e|e.to_string())?;
     let fields=preferences.as_object_mut().unwrap();
-    for (key,value) in source{if fields.contains_key(key){fields.insert(key.clone(),value.clone());}}
+    for (key,value) in source{if fields.contains_key(key)||key=="template_contact"{fields.insert(key.clone(),value.clone());}}
     out.export_preferences=ExportPreferences::from_legacy(&preferences);
+    if let Some(contact)=source.get("template_contact") {
+        let mut effective=base.export_preferences.template_contact.clone();
+        effective.apply_legacy(contact);
+        out.export_preferences.template_contact=effective;
+    }
     if let Some(value)=source.get("dxf_label_gap"){out.dxf_label_gap=label_gap(Some(value));}
     if let Some(value)=source.get("include_klic_in_map_exports"){out.map_export.include_cad=boolean(Some(value),out.map_export.include_cad);}
     if let Some(value)=source.get("map_export_background_source"){

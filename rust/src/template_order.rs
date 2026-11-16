@@ -120,12 +120,18 @@ pub struct State {
     pub rows: Vec<Row>,
     pub project: String,
     pub drawn_by: String,
+    pub title_fields: crate::template_metadata::TitleFields,
+    #[serde(skip_serializing_if="crate::template_branding::ContactDetails::is_default")]
+    pub contact: crate::template_branding::ContactDetails,
     pub font_directories: Vec<PathBuf>,
     pub template: Option<PathBuf>,
     pub profiles: bool,
     pub paired: bool,
     pub reverse: bool,
     pub aerial: bool,
+    /// None retains the aerial/white choice of older project files.
+    pub map_background: Option<crate::template_project::BackgroundKind>,
+    pub include_cad: bool,
     pub auto_bgt: bool,
     pub show_reference: bool,
     pub avoid_collisions: bool,
@@ -144,12 +150,16 @@ impl Default for State {
             logos: Default::default(),
             project: String::new(),
             drawn_by: String::new(),
+            title_fields: Default::default(),
+            contact: Default::default(),
             font_directories: Vec::new(),
             template: None,
             profiles: true,
             paired: true,
             reverse: false,
             aerial: true,
+            map_background: None,
+            include_cad: true,
             auto_bgt: true,
             show_reference: true,
             avoid_collisions: true,
@@ -317,6 +327,13 @@ fn ascii_case_word(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, 'İ' | 'ı' | 'ſ' | 'K')
 }
 impl State {
+    pub fn effective_background(&self) -> crate::template_project::BackgroundKind {
+        self.map_background.unwrap_or(if self.aerial {
+            crate::template_project::BackgroundKind::Pdok
+        } else {
+            crate::template_project::BackgroundKind::Blank
+        })
+    }
     /// Keep explicit empty sheet slots anchored while sorting real raster slots.
     /// Returns new-index -> old-index for updating temporary UI selection.
     pub fn sort_rows(&mut self,mode:SortMode)->Vec<usize>{
@@ -433,6 +450,8 @@ impl State {
     }
     pub fn validate(&self) -> Result<(), String> {
         crate::dxf_fonts::Catalog::validate_dirs(&self.font_directories)?;
+        self.title_fields.validate()?;
+        self.contact.validate()?;
         if self.diameter_prefix.len()>32768 {return Err("Diametertekst is te lang".into());}
         if self.rows.len() > 5000 {
             return Err("Maximaal 5000 sjabloonvakken".into());

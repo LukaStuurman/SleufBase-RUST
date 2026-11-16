@@ -37,10 +37,13 @@ pub(super) fn logos(preferences:&ExportPreferences)->Logos{
 }
 pub(super) fn apply_order_defaults(state:&mut sleufbase_rust::template_order::State,settings:&MigratedSettings){
     state.overview_settings=sleufbase_rust::cadastral_overview::Settings::from_settings(settings).expect("validated project export settings");
+    state.contact=settings.export_preferences.template_contact.clone();
     let p=&settings.export_preferences;state.template=(!p.cadastral_template_path.is_empty()).then(||p.cadastral_template_path.clone().into());
     state.profiles=p.template_include_cross_sections;
-    // template_reverse_patch.py:412 always includes both variants, starting
-    // normally. The archived legacy reverse-sheet flag must not flip the base.
+    state.map_background=Some(sleufbase_rust::template_project::BackgroundKind::from_setting(&settings.map_export.background).expect("validated project map background"));
+    state.include_cad=settings.map_export.include_cad;
+    // The preference adds a second sheet; it never reverses the base sheet.
+    state.paired=p.template_generate_reverse_cross_section_sheet;
     state.show_reference=p.template_show_profile_direction;state.avoid_collisions=p.template_avoid_multileader_collisions;state.marker_diameter=p.template_cross_section_marker_diameter;
     state.use_custom_maaiveld=p.template_enable_maaiveld_edit_points;state.clip_markers=p.template_clip_cross_section_markers_to_profile;state.diameter_prefix=p.template_cross_section_diameter_text.clone();
     state.auto_bgt=settings.template_auto_fill_bgt_fysiek_voorkomen;state.label_gap=settings.dxf_label_gap;state.logos=logos(p);

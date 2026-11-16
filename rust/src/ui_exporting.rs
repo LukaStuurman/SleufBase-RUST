@@ -61,18 +61,28 @@ impl SleufBaseApp {
                 };crate::ui_preferences::apply_order_defaults(&mut state,&settings);state});
         self.template_dialog = None;
         self.project_template_dialog = None;
-        self.template_order_dialog = Some(crate::template_dialog::Dialog::new(
+        self.template_order_dialog = match crate::template_dialog::Dialog::new(
             state,
             &self.geotiffs,
             self.project_generation,
-        ));
+        ).with_settings(&settings) {
+            Ok(dialog)=>Some(dialog),
+            Err(error)=>{self.message=error;return;}
+        };
     }
     pub(super) fn finish_template_export(
         &mut self,
         path: PathBuf,
-        state: sleufbase_rust::template_order::State,
+        mut state: sleufbase_rust::template_order::State,
     ) {
         let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
+        if let Err(error)=crate::template_dialog::refresh_state(
+            &mut state,self.template_order_dialog.as_ref(),&settings
+        ) {
+            if let Some(dialog)=self.template_order_dialog.as_mut(){dialog.error=error.clone();}
+            self.message=error;
+            return;
+        }
         let state = match state.confirmed() {
             Ok(state) => state,
             Err(e) => {

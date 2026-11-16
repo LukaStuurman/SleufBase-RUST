@@ -232,9 +232,33 @@ pub fn prepare_with_progress(
     slots: &[Option<Bounds>],
     options: &Options,
     cancel: &AtomicBool,
+    progress: impl FnMut(&'static str),
+) -> Result<Prepared, String> {
+    prepare_impl(doc, slots, options, None, cancel, progress)
+}
+/// Fill the editable drawing stamp after every required sheet has been copied.
+pub fn prepare_with_title_fields_and_progress(
+    doc: &mut Document,
+    slots: &[Option<Bounds>],
+    options: &Options,
+    title_fields: &template_metadata::TitleFields,
+    cancel: &AtomicBool,
+    progress: impl FnMut(&'static str),
+) -> Result<Prepared, String> {
+    prepare_impl(doc, slots, options, Some(title_fields), cancel, progress)
+}
+fn prepare_impl(
+    doc: &mut Document,
+    slots: &[Option<Bounds>],
+    options: &Options,
+    title_fields: Option<&template_metadata::TitleFields>,
+    cancel: &AtomicBool,
     mut progress: impl FnMut(&'static str),
 ) -> Result<Prepared, String> {
     input::check(cancel)?;
+    if let Some(fields) = title_fields {
+        fields.validate()?;
+    }
     let names = template_layout::used_layout_names(slots.len())?;
     let date = match options.export_date {
         Some(date) => date,
@@ -274,16 +298,16 @@ pub fn prepare_with_progress(
     settings(&mut working, cancel)?;
     progress("Titelvelden en vensters invullen");
     input::check(cancel)?;
-    template_metadata::update(
-        &mut working,
-        &names,
-        &Values {
-            date,
-            project: options.project.clone(),
-            drawn_by: options.drawn_by.clone(),
-        },
-        cancel,
-    )?;
+    let values = Values {
+        date,
+        project: options.project.clone(),
+        drawn_by: options.drawn_by.clone(),
+    };
+    if let Some(fields) = title_fields {
+        template_metadata::update_with_title_fields(&mut working, &names, &values, fields, cancel)?;
+    } else {
+        template_metadata::update(&mut working, &names, &values, cancel)?;
+    }
     let pages = template_layout::configure(&mut working, slots, options.label_gap, cancel)?;
     let result = working.indexed_copy(cancel)?;
     input::check(cancel)?;

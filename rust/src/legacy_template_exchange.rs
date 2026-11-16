@@ -28,6 +28,9 @@ fn settings(active:&crate::settings_compat::MigratedSettings,raw:&mut Map<String
     if !active.export_preferences.cadastral_template_path.is_empty(){return Err(unsupported("DXF-sjabloonpad"));}
     if !matches!(active.map_export.background.as_str(),"pdok"|"osm"|"cadastral"){return Err(unsupported("kaartachtergrond"));}
     let preferences=serde_json::to_value(&active.export_preferences).map_err(|e|e.to_string())?;
+    if raw.contains_key("template_contact") || !active.export_preferences.template_contact.is_default() {
+        raw.insert("template_contact".into(),serde_json::to_value(&active.export_preferences.template_contact).map_err(|e|e.to_string())?);
+    }
     for(key,value)in preferences.as_object().unwrap(){if key!="cadastral_template_path"{raw.insert(key.clone(),value.clone());}}
     if !active.export_preferences.template_client_logo_path.is_empty(){raw.insert("template_client_logo_path".into(),path_value(Path::new(&active.export_preferences.template_client_logo_path)));}
     raw.insert("map_export_background_source".into(),active.map_export.background.clone().into());raw.insert("include_klic_in_map_exports".into(),active.map_export.include_cad.into());raw.insert("dxf_label_gap".into(),json!(active.dxf_label_gap));
@@ -45,9 +48,16 @@ fn overview(active:&crate::cadastral_overview::Settings,raw:&mut Map<String,Valu
 fn state(project:&NativeProject,state:&crate::template_order::State,raw:&mut Map<String,Value>,output:&mut Map<String,Value>,tiffs:&mut [Value],source_targets:&std::collections::HashMap<usize,usize>)->Result<(),String>{
     state.validate()?;
     if state.server_mode==crate::template_server::Mode::Offline{return Err(unsupported("offline servergegevens"));}
+    if state.effective_background()!=crate::template_project::BackgroundKind::Pdok || !state.include_cad {
+        return Err(unsupported("sjabloonkaartachtergrond of uitgeschakelde KLIC-overlays"));
+    }
+    if state.title_fields!=crate::template_metadata::TitleFields::default(){return Err(format!("{}; bewaar een Rust-project om deze velden te behouden.",unsupported("tekeningstempel")));}
     for(field,bad)in [("ongepaarde export",!state.paired),("omgekeerde basisrichting",state.reverse),("DXF-sjabloonpad",state.template.as_ref().is_some_and(|p|!p.as_os_str().is_empty())),("lettertypemappen",!state.font_directories.is_empty()),("getekend door",!state.drawn_by.is_empty()),("afwijkende sjabloonprojectnaam",!state.project.is_empty()&&state.project!=project.name),("geen luchtfoto",!state.aerial),("automatisch BGT uit",!state.auto_bgt),("eigen Techbase-logo",state.logos.techbase.as_ref().is_some_and(|path|!standard_techbase(path))) ]{if bad{return Err(unsupported(field));}}
     if !(0.005..=0.2).contains(&state.marker_diameter){return Err(unsupported("markerdiameter buiten Python-bereik"));}
     overview(&state.overview_settings,raw);
+    if project.project_settings.is_none() && (raw.contains_key("template_contact") || !state.contact.is_default()) {
+        raw.insert("template_contact".into(),serde_json::to_value(&state.contact).map_err(|e|e.to_string())?);
+    }
     for(key,value)in [("template_include_cross_sections",state.profiles),("template_show_profile_direction",state.show_reference),("template_enable_maaiveld_edit_points",state.use_custom_maaiveld),("template_avoid_multileader_collisions",state.avoid_collisions),("template_clip_cross_section_markers_to_profile",state.clip_markers)]{raw.insert(key.into(),value.into());}
     raw.insert("template_cross_section_marker_diameter".into(),json!(state.marker_diameter));raw.insert("template_cross_section_diameter_text".into(),state.diameter_prefix.clone().into());raw.insert("dxf_label_gap".into(),json!(state.label_gap));
     if let Some(path)=&state.logos.client{raw.insert("template_client_logo_preset".into(),"custom".into());raw.insert("template_client_logo_path".into(),path_value(path));}else{raw.insert("template_client_logo_preset".into(),"".into());raw.insert("template_client_logo_path".into(),"".into());}
@@ -86,7 +96,7 @@ fn preferences(project:&NativeProject,prefs:&crate::template_prefs::TemplatePref
     }
     for(field,bad)in [("DXF-sjabloonpad",!prefs.template.as_os_str().is_empty()),("lege kaartachtergrond",prefs.background!=BackgroundKind::Pdok),("uitgeschakelde BGT/Kadaster/CAD-lagen",!prefs.include_bgt||!prefs.include_cadastral||!prefs.include_cad)]{if bad{return Err(unsupported(field));}}
     let options=prefs.restore(&project.datasets,&project.rasters,&project.virtual_trenches);let style=&prefs.profile_style;
-    let mut active=crate::template_order::State{server_mode:prefs.server_mode,overview_settings:prefs.overview_settings.clone(),label_gap:prefs.overview_settings.label_gap,logos:prefs.logos.clone(),template:None,paired:prefs.paired,project:if prefs.legacy_layout_only{project.name.clone()}else{prefs.project.clone()},drawn_by:prefs.drawn_by.clone(),font_directories:prefs.font_directories.clone(),auto_bgt:style.auto_fill_bgt,show_reference:style.show_reference,avoid_collisions:style.avoid_collisions,marker_diameter:style.marker_diameter,use_custom_maaiveld:style.use_custom_maaiveld,clip_markers:style.clip_markers,diameter_prefix:style.diameter_prefix.clone(),..Default::default()};
+    let mut active=crate::template_order::State{server_mode:prefs.server_mode,overview_settings:prefs.overview_settings.clone(),label_gap:prefs.overview_settings.label_gap,logos:prefs.logos.clone(),template:None,paired:prefs.paired,map_background:Some(prefs.background),include_cad:prefs.include_cad,project:if prefs.legacy_layout_only{project.name.clone()}else{prefs.project.clone()},drawn_by:prefs.drawn_by.clone(),title_fields:prefs.title_fields.clone(),contact:prefs.contact.clone(),font_directories:prefs.font_directories.clone(),auto_bgt:style.auto_fill_bgt,show_reference:style.show_reference,avoid_collisions:style.avoid_collisions,marker_diameter:style.marker_diameter,use_custom_maaiveld:style.use_custom_maaiveld,clip_markers:style.clip_markers,diameter_prefix:style.diameter_prefix.clone(),..Default::default()};
     let flags=options.choices.iter().filter(|c|!matches!(c.source,Source::Empty(_))).map(|c|c.profile).collect::<HashSet<_>>();if flags.len()>1{return Err(unsupported("verschillende profielopties per slot"));}active.profiles=flags.iter().next().copied().unwrap_or(true);
     let expression=regex::Regex::new(r"(?i)^PS\s*(\d+)([A-Z]*)$").map_err(|e|e.to_string())?;let mut targets=std::collections::HashMap::new();
     for choice in options.choices{

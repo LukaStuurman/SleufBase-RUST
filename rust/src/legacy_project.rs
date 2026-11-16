@@ -9,7 +9,7 @@ use crate::{
     geotiff::read_geotiff_metadata,
     marxact_alignment::MarXactAlignment,
     model::Vertex,
-    project::{Comment, NativeProject, MAX_PROJECT_BYTES},
+    project::{Comment, NativeProject},
     virtual_trench::{TrenchPoint, VirtualTrench},
 };
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+// Python exchange keeps its original bound independently of native storage.
+pub(crate) const MAX_PROJECT_BYTES: u64 = 128 * 1024 * 1024;
 #[path="legacy_exchange.rs"]
 mod exchange;
 pub use exchange::{ProjectUiState,legacy_payload,write_legacy_project,write_legacy_project_controlled};

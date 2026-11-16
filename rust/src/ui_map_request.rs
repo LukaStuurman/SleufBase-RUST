@@ -46,9 +46,13 @@ pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewpo
     let mut width = (view.rect.width() * ratio).ceil().max(1.) as u32;
     let mut height = (view.rect.height() * ratio).ceil().max(1.) as u32;
     // Keep full world coverage even on an unusually large/high-DPI display.
-    let scale = (10_000. / width as f64)
-        .min(10_000. / height as f64)
-        .min((50_000_000. / (width as f64 * height as f64)).sqrt())
+    let (side, pixels) = if source == Provider::Osm {
+        (f64::from(sleufbase_rust::osm_tiles::VIEWPORT_MAX_SIDE),
+            sleufbase_rust::osm_tiles::VIEWPORT_MAX_PIXELS as f64)
+    } else { (10_000., 50_000_000.) };
+    let scale = (side / width as f64)
+        .min(side / height as f64)
+        .min((pixels / (width as f64 * height as f64)).sqrt())
         .min(1.);
     width = (width as f64 * scale).floor().max(1.) as u32;
     height = (height as f64 * scale).floor().max(1.) as u32;
@@ -164,7 +168,9 @@ impl SleufBaseApp {
         if !terminal {
             // Keep the last complete image visible while missing edge tiles
             // arrive; replacing it with a partial frame makes every pan flash.
-            if self.map_requests.complete_image { return; }
+            // OSM interim frames already retain/reproject the previous complete
+            // background beneath new tiles, so they can safely refresh its edges.
+            if self.map_requests.complete_image && request.view.source != Provider::Osm { return; }
             self.map_requests.scheduler.preview(request);
         }
         if let Some((completed, total)) = progress {

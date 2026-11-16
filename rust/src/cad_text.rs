@@ -294,6 +294,7 @@ pub(crate) fn prepare_overlay(
         let Some(cad) = feature.cad.as_deref_mut() else {
             return Ok(());
         };
+        let hidden = cad.is_hidden();
         let Some(text) = cad.text.as_deref_mut() else {
             return Ok(());
         };
@@ -301,6 +302,7 @@ pub(crate) fn prepare_overlay(
             text.font = style.font.clone();
             text.big_font = style.big_font.clone();
             if style.vertical
+                && !hidden
                 && !(in_block && feature.entity_type == "ATTDEF")
                 && warnings.len() < 100
             {
@@ -308,6 +310,17 @@ pub(crate) fn prepare_overlay(
             }
         } else {
             text.font = "txt".into();
+        }
+        // Hidden GIS attributes remain available as source data and in the
+        // block's details, but never need glyph geometry. Preparing hundreds of
+        // thousands of them can exhaust the shared contour budget even though
+        // neither the map nor an export would draw them. Do not use layer
+        // visibility here: users can turn a hidden layer back on later.
+        if hidden {
+            text.contours = Default::default();
+            feature.points.clear();
+            cad.path_breaks.clear();
+            return Ok(());
         }
         // The original virtual-entity route excludes ATTDEF from INSERTs.
         // Preserve its source/style without resolving fonts or preparing ink.

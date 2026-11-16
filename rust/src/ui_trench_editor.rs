@@ -612,7 +612,7 @@ impl SleufBaseApp {
                         if let Some(index)=remove{editor.draft.dekband_rows.remove(index);}
                     });
                     }else{
-                    pick_requested=editor.show_objects_workspace(ui,&settings.object_rules,&settings.kickthemap_material_choices);
+                    pick_requested=editor.show_objects_workspace(ui,&settings.object_rules,&settings.kickthemap_material_choices,&settings.kickthemap_profile_extra_choices);
                     ui.collapsing("Excel: meerdere meetobjecten importeren / kopiëren",|ui|{
                         ui.small("Plak tab-gescheiden cellen uit Excel: Rol, Object, Bron, Kettingmaat, Dwarsafstand, optionele Z en 3 attributen. Komma als decimaalteken is toegestaan.");
                         ui.add(egui::TextEdit::multiline(&mut editor.paste)

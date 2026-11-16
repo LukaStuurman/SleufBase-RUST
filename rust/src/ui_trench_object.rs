@@ -13,6 +13,7 @@ pub(super) fn show(
     ui: &mut egui::Ui,
     rules: &[sleufbase_rust::Rule],
     materials: &[String],
+    extras: &[String],
 ) -> bool {
     let form = &mut editor.object;
     let length = (editor.end.x - editor.start.x).hypot(editor.end.y - editor.start.y);
@@ -112,6 +113,23 @@ pub(super) fn show(
                             } else {
                                 sleufbase_rust::cad::aci_rgb(i32::from(rule.color_aci))
                             });
+                        }
+                    }
+                    for value in sleufbase_rust::settings_compat::profile_extra_choices(extras, rules) {
+                        if ui.selectable_label(form.source == value, value).clicked() {
+                            form.name = value.to_owned();
+                            form.source = value.to_owned();
+                            form.role = if value.to_lowercase().contains("leiding") {
+                                "leiding"
+                            } else {
+                                "kabel"
+                            }.into();
+                            form.rgb = sleufbase_rust::disciplines::matching_rule(value, rules)
+                                .map(|rule| if rule.color_aci == 7 {
+                                    [17, 24, 39]
+                                } else {
+                                    sleufbase_rust::cad::aci_rgb(i32::from(rule.color_aci))
+                                });
                         }
                     }
                 });

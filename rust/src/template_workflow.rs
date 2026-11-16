@@ -108,7 +108,7 @@ pub fn request_with_bgt(
         lineweight: None,
     }];
     let mut points = 0usize;
-    for overlay in &inputs.overlays {
+    for overlay in inputs.overlays.iter().filter(|_| state.include_cad) {
         if !overlay.visible {
             continue;
         }
@@ -256,8 +256,8 @@ pub fn request_with_bgt(
             photos: Vec::new(),
             map_png: Default::default(),
             map_source: Some(Source {
-                background: if state.aerial && state.server_mode==crate::template_server::Mode::Fresh {
-                    Background::Pdok
+                background: if state.server_mode==crate::template_server::Mode::Fresh {
+                    state.effective_background().map_source()
                 } else {
                     Background::Solid {
                         color: [245, 245, 245, 255],
@@ -308,6 +308,8 @@ pub fn request_with_bgt(
             paired: state.paired,
             project: Some(crate::python_values::trim(&state.project).into()),
             drawn_by: state.drawn_by.clone(),
+            title_fields: state.title_fields.clone(),
+            contact: state.contact.clone(),
             font_directories: state.font_directories.clone(),
             label_gap: state.label_gap,
             ..Default::default()

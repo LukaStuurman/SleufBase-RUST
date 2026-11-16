@@ -60,6 +60,10 @@ pub struct TemplatePreferences {
     pub project:String,
     pub drawn_by:String,
     #[serde(default)]
+    pub title_fields:crate::template_metadata::TitleFields,
+    #[serde(default,skip_serializing_if="crate::template_branding::ContactDetails::is_default")]
+    pub contact:crate::template_branding::ContactDetails,
+    #[serde(default)]
     pub font_directories:Vec<PathBuf>,
     pub dpi:u32,
     pub scale:f64,
@@ -107,12 +111,16 @@ impl TemplatePreferences {
             profile_style:opts.profile_style.clone(),
             logos:opts.logos.clone(),
             drawn_by:opts.drawn_by.clone(),font_directories:opts.font_directories.clone(),dpi:opts.dpi,scale:opts.scale,
+            title_fields:opts.title_fields.clone(),
+            contact:opts.contact.clone(),
             background:opts.background,include_bgt:opts.include_bgt,
             include_cadastral:opts.include_cadastral,include_cad:opts.include_cad,
             choices}
     }
     pub fn validate(&self)->Result<(),String>{
         self.profile_style.validate()?;
+        self.title_fields.validate()?;
+        self.contact.validate()?;
         crate::dxf_fonts::Catalog::validate_dirs(&self.font_directories)?;
         if self.choices.len()>20_000 {return Err("Te veel sjabloonvoorkeuren".into());}
         if self.project.len()>2048 {return Err("Projectnaam is te lang. Kort de projectnaam in.".into());}
@@ -154,6 +162,11 @@ impl TemplatePreferences {
         }
         Ok(())
     }
+    /// Match durable source identity when applying defaults to newly loaded slots.
+    pub fn contains_source(&self,source:Source,jobs:&[Dataset],rasters:&[GeoTiffInfo],trenches:&[VirtualTrench])->bool{
+        key(source,jobs,rasters,trenches).is_some_and(|current|
+            self.choices.iter().any(|old|same_key(&old.source,&current)))
+    }
     pub fn contains_raster_slot(&self,raster:&GeoTiffInfo)->bool{
         let origin=raster.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64);
         self.choices.iter().any(|choice|match &choice.source{
@@ -174,6 +187,8 @@ impl TemplatePreferences {
             logos:self.logos.clone(),
             template:self.template.clone(),paired:self.paired,project:self.project.clone(),
             drawn_by:self.drawn_by.clone(),font_directories:self.font_directories.clone(),dpi:self.dpi,scale:self.scale,
+            title_fields:self.title_fields.clone(),
+            contact:self.contact.clone(),
             background:self.background,include_bgt:self.include_bgt,
             include_cadastral:self.include_cadastral,include_cad:self.include_cad,
             // A saved raster-only layout must not conceal imported KickTheMap jobs.
@@ -247,6 +262,7 @@ pub fn import_legacy(project:&crate::project::NativeProject)->Result<Option<Temp
         // Otherwise an untouched import cannot be exported back losslessly.
         dpi:legacy::MAP_DPI,scale:legacy::MAP_SCALE,
         profile_style:crate::settings_compat::ProfilePreferences::from_settings(&settings),
+        contact:settings.export_preferences.template_contact.clone(),
         overview_settings:crate::cadastral_overview::Settings::from_settings(&settings)?,
         ..Default::default()
     };

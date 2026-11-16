@@ -45,17 +45,18 @@ impl Editor {
         ui: &mut egui::Ui,
         rules: &[sleufbase_rust::Rule],
         materials: &[String],
+        extras: &[String],
     ) -> bool {
         let mut pick = false;
         if ui.available_width() >= 820. {
             ui.columns(2, |columns| {
                 self.show_object_overview(&mut columns[0], true);
-                pick = self.show_entry_panel(&mut columns[1], rules, materials);
+                pick = self.show_entry_panel(&mut columns[1], rules, materials, extras);
             });
         } else {
             self.show_object_overview(ui, false);
             ui.add_space(6.);
-            pick = self.show_entry_panel(ui, rules, materials);
+            pick = self.show_entry_panel(ui, rules, materials, extras);
             if !self.draft.objects.is_empty() {
                 ui.add_space(6.);
                 theme::card(10, 10, 10).show(ui, |ui| {
@@ -91,6 +92,7 @@ impl Editor {
         ui: &mut egui::Ui,
         rules: &[sleufbase_rust::Rule],
         materials: &[String],
+        extras: &[String],
     ) -> bool {
         theme::card(10, 12, 10).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -125,7 +127,7 @@ impl Editor {
                 }
             });
             ui.separator();
-            object_ui::show(self, ui, rules, materials)
+            object_ui::show(self, ui, rules, materials, extras)
         }).inner
     }
 

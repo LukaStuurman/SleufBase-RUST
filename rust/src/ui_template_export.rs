@@ -99,7 +99,7 @@ impl SleufBaseApp {
 
     pub(super) fn start_project_template_export(
         &mut self,
-        options: sleufbase_rust::template_project::Options,
+        mut options: sleufbase_rust::template_project::Options,
         output: PathBuf,
     ) {
         if self.project_sources_owned(){self.message="Wacht tot de lopende taak is afgerond".into();return;}
@@ -116,6 +116,12 @@ impl SleufBaseApp {
             self.message = "De uitvoernaam moet eindigen op .dxf.".into();
             return;
         }
+        // Refresh settings after the dialog was opened, while preserving its
+        // explicit per-export choices. Capture only this final effective plan.
+        let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
+        if let Err(error)=project_template_ui::refresh_options(
+            &mut options,self.project_template_dialog.as_ref(),&settings
+        ){self.message=error;return;}
         if !options.template.as_os_str().is_empty() && !options.template.is_file() {
             self.message = "Het eigen DXF-sjabloon ontbreekt. Kies het opnieuw of gebruik het ingebouwde sjabloon.".into();
             return;
@@ -137,7 +143,6 @@ impl SleufBaseApp {
         if let Err(error)=project_template_ui::validate_export_sources(&options,&self.datasets,&self.geotiffs,&self.virtual_trenches){
             self.message=error;return;
         }
-        let settings=match self.project_export_settings(){Ok(settings)=>settings,Err(error)=>{self.message=error;return;}};
         use sleufbase_rust::template_project::hydrate;
         let needs_snapshot=requires_live_snapshot(&options,&self.geotiffs);
         let verified_session=self.live_session.as_ref().is_some_and(|session|
@@ -251,13 +256,19 @@ impl SleufBaseApp {
         let control = Arc::new(Control::default());
         let task_control = Arc::clone(&control);
         let task_output = output.clone();
-        let discipline_excel=self.migrated_settings.template_auto_export_discipline_excel;
+        let settings=match self.project_export_settings(){
+            Ok(settings)=>settings,
+            Err(error)=>{self.message=error;return;}
+        };
+        let discipline_excel=settings.template_auto_export_discipline_excel;
+        let contact=settings.export_preferences.template_contact;
         let result = std::thread::Builder::new()
             .name("sleufbase-template-export".into())
             .spawn(move || {
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut request = template_export::read_request(&manifest, &task_control)?;
                     request.settings.discipline_excel=discipline_excel;
+                    request.settings.contact=contact;
                     template_export::export_with_progress(&task_output, &request, &task_control,
                         |message| { let _ = tx.send(Event::Progress(message.to_owned())); })
                 })).unwrap_or_else(|_| Err("Sjabloonexport is onverwacht gestopt; uitvoer is niet gepubliceerd".into()));

@@ -1,7 +1,7 @@
 //! Bounded, cancellable file reads shared by local importers.
 use std::{
     fs::File,
-    io::Read,
+    io::{BufReader, Read},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -26,6 +26,70 @@ pub(crate) fn check(cancel: &AtomicBool) -> Result<(), String> {
         Ok(())
     }
 }
+/// A bounded file stream for serde readers. The buffer sits outside the limit
+/// so every operating-system read is checked, including a file that grows.
+pub(crate) struct BoundedReader<'a, R> {
+    inner: R,
+    limit: u64,
+    read: u64,
+    label: &'a str,
+    cancel: &'a AtomicBool,
+}
+impl<R> BoundedReader<'_, R> {
+    pub(crate) fn bytes_read(&self) -> u64 {
+        self.read
+    }
+}
+impl<R: Read> Read for BoundedReader<'_, R> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        check(self.cancel).map_err(std::io::Error::other)?;
+        if output.is_empty() {
+            return Ok(0);
+        }
+        // Probe one byte beyond the remaining budget instead of treating the
+        // limit as EOF, which could otherwise accept a truncated JSON value.
+        let allowed = self.limit.saturating_sub(self.read).saturating_add(1)
+            .min(output.len() as u64)
+            .min(64 * 1024) as usize;
+        let count = loop {
+            check(self.cancel).map_err(std::io::Error::other)?;
+            match self.inner.read(&mut output[..allowed]) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(std::io::Error::other(format!(
+                    "{} lezen mislukt: {e}", self.label,
+                ))),
+                Ok(count) => break count,
+            }
+        };
+        check(self.cancel).map_err(std::io::Error::other)?;
+        self.read = self.read.saturating_add(count as u64);
+        if self.read > self.limit {
+            return Err(std::io::Error::other(format!("{} is te groot", self.label)));
+        }
+        Ok(count)
+    }
+}
+pub(crate) fn open_reader<'a>(
+    path: &Path,
+    limit: u64,
+    label: &'a str,
+    cancel: &'a AtomicBool,
+) -> Result<BufReader<BoundedReader<'a, File>>, String> {
+    check(cancel)?;
+    let file = File::open(path)
+        .map_err(|e| format!("{label} niet bereikbaar ({}): {e}", path.display()))?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > limit {
+        return Err(format!("{label} is te groot"));
+    }
+    Ok(BufReader::with_capacity(64 * 1024, BoundedReader {
+        inner: file,
+        limit,
+        read: 0,
+        label,
+        cancel,
+    }))
+}
+
 pub(crate) fn read(
     path: &Path,
     limit: u64,

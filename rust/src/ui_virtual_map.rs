@@ -742,6 +742,7 @@ impl SleufBaseApp {
                 x.path.file_stem().map(|v|v.to_string_lossy()))));
         let result=(||{
             use sleufbase_rust::{raster_points,template_project::hydrate,virtual_trench_editor};
+            let settings=self.project_export_settings()?;
             let mut copy=VirtualTrench::new(name,
                 Vertex{x:start.0,y:start.1,z:None},
                 Vertex{x:end.0,y:end.1,z:None},width)?;
@@ -765,7 +766,7 @@ impl SleufBaseApp {
                     return Err("De gekoppelde KickTheMap-job bevat geen objectmetingen.".into());
                 }
                 virtual_trench_editor::copy_kickthemap_objects(
-                    &mut copy,dataset,&self.migrated_settings.object_rules,raster_points::start_in(&raster.metadata),
+                    &mut copy,dataset,&settings.object_rules,raster_points::start_in(&raster.metadata),
                 )?;
             }else if raster.kickthemap_job_id.is_some_and(|id|id>0)||hydrate::local_path(raster).is_some(){
                 return Err("Laad eerst de objectpunten van deze KickTheMap-job via Jobs en maak daarna de kopie.".into());

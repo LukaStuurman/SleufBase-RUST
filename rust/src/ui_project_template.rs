@@ -4,26 +4,49 @@ use sleufbase_rust::template_project::{self, BackgroundKind, Options, Source};
 use sleufbase_rust::template_order::{self, SortMode};
 
 fn configure_options(mut options:Options,settings:&MigratedSettings,saved:Option<&sleufbase_rust::template_prefs::TemplatePreferences>,jobs:&[Dataset],rasters:&[GeoTiffInfo],trenches:&[VirtualTrench])->Options{
-    let preferences=&settings.export_preferences;
-    options.overview_settings=sleufbase_rust::cadastral_overview::Settings::from_settings(settings).expect("validated project export settings");
-    options.template=preferences.cadastral_template_path.clone().into();
-    options.profile_style=sleufbase_rust::settings_compat::ProfilePreferences::from_settings(settings);
-    options.logos=crate::ui_preferences::logos(preferences);
-    // template_reverse_patch.py:412 always includes both variants, starting
-    // normally. The archived legacy reverse-sheet flag must not flip the base.
-    for choice in &mut options.choices{choice.profile=preferences.template_include_cross_sections;}
-    if let Some(saved)=saved{
+    let defaults=crate::template_dialog::ExportDefaults::from_settings(settings)
+        .expect("validated project export settings");
+    let mut configured=if let Some(saved)=saved{
         let mut restored=saved.restore(jobs,rasters,trenches);
-        if saved.legacy_layout_only{
-            for choice in &mut restored.choices{choice.profile=preferences.template_include_cross_sections;}
-            options.choices=restored.choices;options.raster_layout=restored.raster_layout;
-            options.background=restored.background;
-            return options;
+        for choice in &mut restored.choices {
+            if saved.legacy_layout_only || !saved.contains_source(choice.source,jobs,rasters,trenches) {
+                choice.profile=defaults.profiles;
+            }
         }
-        return restored;
+        if saved.legacy_layout_only{
+            options.choices=restored.choices;options.raster_layout=restored.raster_layout;
+            options
+        } else {
+            restored
+        }
+    } else {
+        for choice in &mut options.choices { choice.profile=defaults.profiles; }
+        options.include_bgt=true;
+        options
+    };
+    // Settings own the general defaults; saved source choices and drawing
+    // metadata remain explicit and must survive reopening this dialog.
+    defaults.apply_project(&mut configured);
+    configured
+}
+
+/// Refresh only changed global defaults that the user has not overridden in
+/// this dialog. Call before validation/capture, while the baseline still exists.
+pub(super) fn refresh_options(options:&mut Options,dialog:Option<&Dialog>,settings:&MigratedSettings)->Result<(),String>{
+    let current=crate::template_dialog::ExportDefaults::from_settings(settings)?;
+    options.overview_settings=current.overview.clone();
+    options.contact=current.contact.clone();
+    if let Some(dialog)=dialog {
+        current.refresh_project(&dialog.opening_defaults,options);
+        if current.profiles!=dialog.opening_defaults.profiles {
+            for choice in &mut options.choices {
+                if dialog.profile_baseline.get(&choice.source).is_some_and(|opening|choice.profile==*opening) {
+                    choice.profile=current.profiles;
+                }
+            }
+        }
     }
-    options.include_bgt=true;
-    options
+    Ok(())
 }
 
 fn trench_raster(raster:&GeoTiffInfo)->bool{
@@ -88,10 +111,13 @@ fn placement_caption(ui:&mut egui::Ui,placement:&ExportPlacement,choice:&templat
 fn effective_map_label(options: &Options) -> &'static str {
     if options.server_mode==sleufbase_rust::template_server::Mode::Offline {
         "Offline · witte kaart, zonder luchtfoto"
-    } else if options.background==BackgroundKind::Pdok {
-        "Online · PDOK-luchtfoto"
     } else {
-        "Online · witte kaart"
+        match options.background {
+            BackgroundKind::Blank=>"Online · witte kaart",
+            BackgroundKind::Pdok=>"Online · PDOK-luchtfoto",
+            BackgroundKind::Osm=>"Online · OpenStreetMap",
+            BackgroundKind::Cadastral=>"Online · Kadaster",
+        }
     }
 }
 /// Run filesystem checks only when starting an export, never for every UI frame.
@@ -101,6 +127,7 @@ pub(super) fn validate_export_sources(options:&Options,jobs:&[Dataset],rasters:&
     if !options.scale.is_finite()||!(1. ..=100_000.).contains(&options.scale){return Err("Kies een kaartschaal tussen 1:1 en 1:100000.".into());}
     sleufbase_rust::dxf_fonts::Catalog::validate_dirs(&options.font_directories)?;
     options.profile_style.validate()?;
+    options.title_fields.validate()?;
     let selected=options.choices.iter().filter(|choice|choice.include).collect::<Vec<_>>();
     if !selected.iter().any(|choice|!matches!(choice.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee; lege vakken alleen zijn niet voldoende.".into());}
     if selected.len()>template_project::MAX_SLOTS{return Err(format!("Neem maximaal {} proefsleufvakken mee, inclusief lege vakken.",template_project::MAX_SLOTS));}
@@ -149,6 +176,9 @@ pub(super) struct Dialog {
     pub automatic: Vec<sleufbase_rust::template_match::Suggestion>,
     pub editor:sleufbase_rust::template_editor::Editor,
     sort_mode: Option<SortMode>,
+    reveal_row: Option<usize>,
+    opening_defaults: crate::template_dialog::ExportDefaults,
+    profile_baseline: std::collections::HashMap<Source,bool>,
     jobs:Vec<(u64,PathBuf)>,
     rasters:Vec<(PathBuf,Option<u64>,Option<u64>)>,
     trenches:Vec<(u64,String)>,
@@ -161,7 +191,7 @@ impl Dialog {
             choices: if app.datasets.is_empty(){template_project::suggest_rasters(&app.geotiffs,&app.virtual_trenches)}else{template_project::suggest(&app.datasets,&app.geotiffs,&app.virtual_trenches)},
             ..Options::default()
         };
-        // Saved project choices override the user's general export defaults.
+        // Retain saved per-source choices and read current general settings.
         let mut options=configure_options(options,settings,app.template_preferences.as_ref(),&app.datasets,&app.geotiffs,&app.virtual_trenches);
         // A raster-only project may use unlabelled TIFFs deliberately. When
         // actual trench sources are present, keep unrelated images available
@@ -184,8 +214,15 @@ impl Dialog {
             Source::Raster(i)=>sleufbase_rust::template_match::Suggestion{raster:Some(i),reason:sleufbase_rust::template_match::MatchKind::Missing},
             Source::Empty(_)=>sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing},
         }).collect();
+        let opening_defaults=crate::template_dialog::ExportDefaults::from_settings(settings)
+            .expect("validated project export settings");
+        let profile_baseline=options.choices.iter()
+            .filter(|choice|!matches!(choice.source,Source::Empty(_)))
+            .map(|choice|(choice.source,choice.profile)).collect();
         Self { options, output: None, error: String::new(), automatic, editor,
             sort_mode: fresh.then_some(SortMode::NumberAsc),
+            reveal_row: None,
+            opening_defaults, profile_baseline,
             jobs:app.datasets.iter().map(|d|(d.job_id,d.source_path.clone())).collect(),
             rasters:app.geotiffs.iter().map(|r|(r.path.clone(),r.kickthemap_job_id,r.metadata.get("_sleufbase_python_tiff_index").and_then(serde_json::Value::as_u64))).collect(),
             trenches:app.virtual_trenches.iter().map(|t|(t.job_id,t.label.clone())).collect(),
@@ -215,6 +252,7 @@ impl Dialog {
     /// In-memory readiness only: network paths must not be probed every frame.
     /// Availability and overwrite checks run on the explicit export action.
     fn readiness(&self)->Result<(),String>{
+        self.options.title_fields.validate()?;
         let selected=self.options.choices.iter().filter(|c|c.include).collect::<Vec<_>>();
         if !selected.iter().any(|c|!matches!(c.source,Source::Empty(_))){return Err("Neem minimaal één proefsleuf mee; vink Meenemen aan bij de gewenste sleuven.".into());}
         let output=self.output.as_ref().ok_or("Kies eerst een nieuwe uitvoer-DXF.")?;
@@ -246,6 +284,7 @@ fn project_output_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
             ui.label("Projectnaam");ui.add(egui::TextEdit::singleline(&mut dialog.options.project).desired_width(field_width));ui.end_row();
             ui.label("Tekenaar");ui.add(egui::TextEdit::singleline(&mut dialog.options.drawn_by).desired_width(field_width));ui.end_row();
         });
+        crate::template_dialog::title_fields(ui, &mut dialog.options.title_fields);
         if dialog.options.template.as_os_str().is_empty(){ui.small("Sjabloon: ingebouwd SleufBase-sjabloon");}
         else{ui.small(format!("Eigen sjabloon: {}",dialog.options.template.file_name().unwrap_or_default().to_string_lossy())).on_hover_text(dialog.options.template.display().to_string());}
         if let Some(path)=&dialog.output {
@@ -270,11 +309,13 @@ fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Achtergrond");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Pdok,"Luchtfoto");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::Osm,"OpenStreetMap");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::Cadastral,"Kadaster");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Blank,"Wit");
             });
         }else{
             ui.small("Witte kaart · geladen gegevens")
-                .on_hover_text("Je keuze voor de online luchtfoto blijft bewaard.");
+                .on_hover_text("Je keuze voor de online achtergrond blijft bewaard.");
         }
         ui.horizontal_wrapped(|ui| {
             ui.label("Kaartkwaliteit");
@@ -363,11 +404,16 @@ impl SleufBaseApp {
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
                     let footer_height = if dialog.error.is_empty(){118.}else{142.}
                         + if ui.available_width()<440.{34.}else{0.};
-                    egui::ScrollArea::vertical().id_salt("project-template-compact-body")
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                        .max_height((ui.available_height()-footer_height).max(64.))
-                        .auto_shrink([false,false]).show(ui, |ui| {
-                        if ui.available_width()>=720. {
+                    let body_height=(ui.available_height()-footer_height).max(64.);
+                    let reveal_row=dialog.reveal_row.take();
+                    let (mut body_ui,mut controls_ui)=crate::template_dialog::order_columns(ui,body_height);
+                    {
+                        let ui=&mut body_ui;
+                        egui::ScrollArea::vertical().id_salt("project-template-compact-body")
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                            .max_height(body_height)
+                            .auto_shrink([false,false]).show(ui, |ui| {
+                        if ui.available_width()>=600. {
                             ui.columns(2,|columns| {
                                 project_output_card(&mut columns[0],dialog);
                                 project_map_card(&mut columns[1],dialog);
@@ -425,7 +471,6 @@ impl SleufBaseApp {
                             if ui.small_button("Selectie wissen").clicked(){dialog.editor.select_all(&dialog.options.choices,false);}
                             if ui.small_button("Selectie meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,true);}
                             if ui.small_button("Selectie uitsluiten").clicked(){dialog.editor.included(&mut dialog.options.choices,false);}
-                            for(label,direction)in[("Omhoog",-1),("Omlaag",1)]{if ui.small_button(label).clicked(){let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);if !swaps.is_empty(){dialog.sort_mode=None;}for(a,b)in swaps{dialog.automatic.swap(a,b);}}}
                             if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
                             if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
                         });
@@ -449,7 +494,10 @@ impl SleufBaseApp {
                             });
                         }));
                         if let Some(index)=add_raster{
-                            dialog.options.choices.push(template_project::raster_choice(index,&rasters[index]));
+                            let mut choice=template_project::raster_choice(index,&rasters[index]);
+                            choice.profile=dialog.opening_defaults.profiles;
+                            dialog.profile_baseline.insert(choice.source,choice.profile);
+                            dialog.options.choices.push(choice);
                             dialog.automatic.push(sleufbase_rust::template_match::Suggestion{raster:Some(index),reason:sleufbase_rust::template_match::MatchKind::Missing});
                             dialog.editor=sleufbase_rust::template_editor::Editor::new(
                                 &mut dialog.options.choices,rasters,&self.virtual_trenches,
@@ -461,7 +509,7 @@ impl SleufBaseApp {
                         let mut placements=dialog.placements();
                         for idx in 0..dialog.options.choices.len() {
                             ui.push_id(idx, |ui| {
-                                theme::card(10,10,8).stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
+                                let card=theme::card(10,10,8).stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
                                     let mut placement_changed=false;
                                     ui.horizontal_wrapped(|ui| {
                                         let slot=&mut dialog.options.choices[idx];
@@ -620,14 +668,43 @@ impl SleufBaseApp {
                                     });
                                     });
                                 });
+                                if reveal_row==Some(idx) {
+                                    ui.scroll_to_rect(card.response.rect,Some(egui::Align::Min));
+                                }
                             });
                         }
-                    });
+                        });
+                    }
+                        // Commit this frame's draft edits before moving its rows,
+                        // so label caches and automatic TIFF matches move together.
+                        if let Some(index)=edited_label.take() {
+                            dialog.editor.update_typed_label(&dialog.options.choices,index);
+                        }
+                        if let Some((index,control,shift))=clicked_row.take() {
+                            dialog.editor.select(&dialog.options.choices,index,control,shift);
+                        } else if sync_editor {
+                            dialog.editor.sync(&dialog.options.choices);
+                        }
+                    {
+                        let ui=&mut controls_ui;
+                        if let Some(direction)=crate::template_dialog::order_controls(ui,&dialog.editor.selected,body_height) {
+                                let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);
+                                if !swaps.is_empty() {
+                                    dialog.sort_mode=None;
+                                    for(a,b)in swaps {dialog.automatic.swap(a,b);}
+                                    dialog.reveal_row=if direction<0 {
+                                        dialog.editor.selected.iter().position(|selected|*selected)
+                                    } else {
+                                        dialog.editor.selected.iter().rposition(|selected|*selected)
+                                    };
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                    }
                         ui.separator();
                         if !dialog.error.is_empty() {
                             ui.add(egui::Label::new(egui::RichText::new(format!("Laatste poging: {}",dialog.error)).color(DARK)).truncate()).on_hover_text(&dialog.error);
                         }
-                        if let Some(index)=edited_label {dialog.editor.update_typed_label(&dialog.options.choices,index);}
                         let summary=export_summary(&dialog.options);
                         ui.add(egui::Label::new(egui::RichText::new(format!("{} sleuven · {} profielen · {}",summary.trenches,summary.profiles,
                             if dialog.options.paired{"beide kijkrichtingen"}else{"één kijkrichting"})).strong()).truncate());
@@ -651,7 +728,6 @@ impl SleufBaseApp {
                             if ui.button("Annuleren").clicked() { cancel = true; }
                         });
                 });
-            if let Some((index,control,shift))=clicked_row{dialog.editor.select(&dialog.options.choices,index,control,shift);}else if sync_editor{dialog.editor.sync(&dialog.options.choices);}
 
         }
         if !open || cancel { self.project_template_dialog = None; return; }
@@ -711,16 +787,16 @@ mod preference_tests {
         assert!(!configured.choices[0].profile);assert!(!configured.choices[0].reverse);assert!(configured.paired);
     }
     #[test]
-    fn project_dialog_restores_saved_choices_ahead_of_general_defaults(){
+    fn project_dialog_keeps_saved_choices_with_current_general_defaults(){
         let jobs=jobs();let settings=settings();
         let mut saved_options=Options{template:"project.dxf".into(),choices:template_project::suggest(&jobs,&[],&[]),..Default::default()};
         saved_options.profile_style.marker_diameter=0.03;
         saved_options.logos.client=Some("project-logo.png".into());saved_options.include_bgt=false;
         let saved=sleufbase_rust::template_prefs::TemplatePreferences::capture(&saved_options,&jobs,&[],&[]);
         let configured=configure_options(Options::default(),&settings,Some(&saved),&jobs,&[],&[]);
-        assert_eq!(configured.template,PathBuf::from("project.dxf"));
-        assert_eq!(configured.logos.client,Some(PathBuf::from("project-logo.png")));
-        assert_eq!(configured.profile_style.marker_diameter,0.03);assert!(!configured.include_bgt);
+        assert_eq!(configured.template,PathBuf::from("general.dxf"));
+        assert_eq!(configured.logos.client,Some(PathBuf::from("general-logo.png")));
+        assert_eq!(configured.profile_style.marker_diameter,0.075);assert!(!configured.include_bgt);
         assert!(configured.choices[0].profile);assert!(!configured.choices[0].reverse);
     }
     #[test]
