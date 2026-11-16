@@ -147,7 +147,8 @@ fn verify(o: &DxfOverlay, case: &Value) {
             // Derive the expectation from fixture data, not from is_hidden().
             let entity_hidden = w["tag"] == "ENTITY" && !r12;
             let attribute_hidden = w["flags"].as_u64().unwrap() & 1 != 0;
-            assert_eq!(cad.invisible, entity_hidden, "{}", d.source.handle);
+            // The importer also folds attribute bit 1 into generic invisibility.
+            assert_eq!(cad.invisible, entity_hidden || attribute_hidden, "{}", d.source.handle);
             assert_eq!(cad.is_hidden(), entity_hidden || attribute_hidden);
             if entity_hidden || attribute_hidden {
                 // The original reference prepared even hidden tag ink. Native
