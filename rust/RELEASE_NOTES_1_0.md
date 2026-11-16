@@ -1,47 +1,21 @@
-## SleufBase Rust 1.0.14 voor Windows
+## SleufBase Rust 1.0.15 voor Windows
 
-### Kandidatenlijst naast de kaart
+### Kabels selecteren met een lijn
 
-- **Lijst (3)** naast **Kabelinformatie** toont het actuele aantal gevonden kabels bij de laatste kaartklik.
-- De knop opent een paneel rechts naast de kaart met alle kandidaten, hun laagnaam en beschikbare **XDATA InfraCAD**-informatie.
-- Klik op een regel om die kabel te selecteren. Het paneel blijft open om andere kandidaten te vergelijken; een nieuwe kaartklik werkt de lijst en de telling bij.
+- Rechts van **Lijst (aantal)** bij **Kabelinformatie** staat een nieuwe compacte knop met een getekend lijnicoon.
+- Klik op de knop, klik op het beginpunt in de kaart en klik daarna op het eindpunt. De lijn volgt de muis tijdens het tekenen.
+- Alle zichtbare kabels en lijnobjecten die het getekende lijnstuk raken of kruisen komen in de kandidatenlijst rechts naast de kaart. Verborgen tekeningen en lagen worden overgeslagen.
+- **Lijst (aantal)** toont het nieuwe aantal. De eerste kandidaat is direct geselecteerd; de wisselknop, de lijst, de kabelinformatie en de gloed op de kaart blijven dezelfde selectie gebruiken.
+- De selectie gebruikt de oorspronkelijke voorbereide lijngeometrie, ook bij uitgezoomde weergave en kabels in blokken. Eindpunten en overlappende lijnstukken tellen mee; teksten, losse punten en gevulde vlakken niet.
+- Grote selecties worden in kleine stappen verwerkt met zichtbare voortgang, zodat de kaart bedienbaar blijft. Resultaten worden niet afgekapt.
+- **Escape**, rechtsklikken of opnieuw op de lijnknop klikken annuleert de lopende selectie. De vorige kandidatenlijst blijft dan behouden.
+- De ingebouwde handleiding legt de lijnselectie en het wisselen tussen de resultaten uit.
 
-### Eenduidig wisselen en selecteren
+### Afgeronde knoppen en passende indeling
 
-- De wisselknop kiest daadwerkelijk de volgende kabel uit dezelfde kandidatenlijst en gaat na de laatste terug naar de eerste.
-- De actieve lijstregel, **Kabelinformatie** en de gloed op de kaart volgen steeds hetzelfde geselecteerde object. De detailinformatie begint na een nieuwe keuze weer bovenaan.
-- De ingebouwde handleiding beschrijft de kandidatenlijst, de actuele telling en het wisselen tussen kabels.
-
-### PS-naam naast de TIFF bij Weergave: Geen
-
-- **Weergave proefsleuf: Geen** laat de hartlijn en het sleufvlak weg. Als **GeoTIFF-afbeeldingen meenemen in DXF-export** aan staat, blijven de TIFF én het PS-nummer of de proefsleufnaam naast het beeld zichtbaar.
-- De correctie geldt voor het kadastrale DXF-overzicht en het overzicht in de sjabloonexport. Bij **Geen** met GeoTIFF-afbeeldingen uit worden ook de TIFFs en hun proefsleufnamen weggelaten.
-- De toelichting in Instellingen en de ingebouwde handleiding beschrijft deze combinatie.
-
-### Luchtfoto of OpenStreetMap met percelen
-
-- **PDOK Luchtfoto + percelen** en **OpenStreetMap + percelen** zijn beschikbaar als achtergrond voor de werkkaart en kaartuitvoer.
-- Beide combineren de gekozen achtergrond met transparante perceelgrenzen, perceelnummers en bijpijlingen uit de kadastrale kaart van Kadaster/PDOK. De achtergrond blijft zichtbaar; de perceeldetails volgen het zoomniveau van de kaartdienst.
-- De keuze wordt bewaard in de instellingen en het Rust-project. Bestaande kaarttegels, cache en achtergrondtaken worden hergebruikt.
-
-### Consistente vormgeving
-
-- Alle scrollbalken gebruiken dezelfde duidelijk zichtbare stijl, breedte en kleuren, in **Proefsleuven**, **Overlays**, **Kabelinformatie**, de kandidatenlijst, instellingen, exportvensters, de handleiding en menu’s.
-- De overbodige tekst **GeoTIFF en KLIC** boven de kaart is verwijderd; de titel **Kaart** blijft staan.
-
-### Eigen DXF-sjabloon beheren
-
-- **Instellingen > DXF-export > DXF-sjabloon** bevat drie acties: **Ingebouwd sjabloon opslaan…**, **Aangepast sjabloon laden…** en **Origineel herstellen**.
-- Sla de originele DXF op, pas die aan in een CAD-programma en laad de bewerkte versie terug. SleufBase controleert het bestand en bewaart een eigen kopie voor de sjabloonexport.
-- **Opslaan** past de sjabloonkeuze toe; **Annuleren** behoudt de bestaande keuze. Herstellen schakelt terug naar de ongewijzigde ingebouwde versie en laat de aangepaste bestanden bewaard.
-- Het opslaan en verwerken van sjabloonbestanden gebeurt op de achtergrond, met een zichtbare status in Instellingen.
-
-### Sneller doorgaan bij bewerkpunten
-
-- **Proefsleufnaam** staat links van **Maaiveld invullen** en schakelt de namen op de werkkaart direct aan of uit. De knop bewaart dezelfde voorkeur als Instellingen.
-- **Acties > Laad alle maaiveldgegevens** bereidt de maaiveldpunten van de geladen proefsleuven vooraf voor, met een compacte voortgangsbalk en annulering. Geldige voorbereidingen worden hergebruikt; ingevoerde tekst, kleuren en gemeten hoogten blijven behouden.
-- Bij het kiezen van een andere GeoTIFF blijft **Beginpunt kiezen** beschikbaar en worden de nieuwe kandidaten automatisch voorbereid. **Maaiveld invullen** blijft actief bij het wisselen tussen proefsleuven, zowel via de kaart als de lijst.
-- Een klik op een bestaande bewerkmarker houdt voorrang. Een open maaiveldtekst wordt beschermd tegen een onbedoelde selectiewissel.
+- **Proefsleufnaam** behoudt zijn afgeronde hoeken wanneer de knop oranje en ingeschakeld is.
+- De nieuwe lijnknop sluit aan bij de bestaande wisselknop. Beide hebben een compact, scherp getekend icoon en uitleg bij het aanwijzen.
+- De knoppen naast **Kabelinformatie** houden hun ruimte bij een smalle zijbalk; de titel breekt niet op in losse letters.
 
 ### Build en release
 

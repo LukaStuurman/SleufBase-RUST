@@ -46,6 +46,10 @@ pub(super) fn visible_matches(overlays: &[DxfOverlay], candidates: &[Candidate])
 }
 
 impl State {
+    pub fn open_and_reveal(&mut self) {
+        self.open = true;
+        self.reveal_selection = true;
+    }
     pub fn toggle(&mut self) {
         self.open = !self.open;
         self.reveal_selection = self.open;
@@ -179,12 +183,12 @@ pub(super) fn show(
                     ui.is_enabled(), "Objectlijst sluiten"));
                 close = response.clicked();
             });
-            ui.small(format!("{} objecten op deze plek", candidates.len()));
+            ui.small(format!("{} gevonden objecten", candidates.len()));
             ui.add_space(6.);
             if candidates.is_empty() {
                 theme::card(12, 12, 12).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.add(egui::Label::new("Klik in de kaart op een kabel of object. Hier verschijnen alle zichtbare objecten op die plek.").wrap());
+                    ui.add(egui::Label::new("Klik op een object in de kaart, of gebruik de lijnknop naast Lijst en klik twee punten. Hier verschijnen de gevonden zichtbare objecten.").wrap());
                 });
                 return;
             }

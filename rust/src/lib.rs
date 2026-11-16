@@ -87,6 +87,7 @@ mod cad_layers;
 pub mod cad_geometry;
 pub mod cad_mesh;
 pub mod cad_scene;
+pub mod cable_line_selection;
 mod cad_spatial;
 pub mod cad_lod;
 pub mod spline;

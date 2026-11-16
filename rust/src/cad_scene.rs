@@ -611,6 +611,11 @@ impl DxfOverlay {
                 .is_some_and(|feature| crate::cad_spatial::intersects(feature, bounds))
         }).collect()
     }
+    /// Borrow the prepared index without collecting candidates on the UI thread.
+    pub(crate) fn spatial_index(&self) -> Option<&crate::cad_spatial::Index> {
+        self.expanded.spatial.as_ref()
+            .filter(|index| index.source_count == self.features.len())
+    }
     /// Prepared work-map bounds: do not rescan every vertex while zooming out.
     pub fn feature_bounds(&self, index: usize) -> Option<crate::model::Bounds> {
         if let Some(spatial) = self.expanded.spatial.as_ref()

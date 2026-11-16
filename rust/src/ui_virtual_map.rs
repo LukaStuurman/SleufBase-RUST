@@ -510,6 +510,7 @@ pub(super) struct State {
     rotate_drag:Option<(f64,f64)>,
 }
 impl State {
+    pub(super) fn has_dialog(&self)->bool {self.chainage.is_some() || self.dekband.is_some()}
     pub(super) fn reference_active(&self)->bool {matches!(self.mode,Some(Mode::Reference(_)))}
     pub fn captures(&self) -> bool {
         self.mode.is_some() || self.capture || self.rotating.is_some()

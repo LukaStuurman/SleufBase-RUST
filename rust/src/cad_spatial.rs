@@ -27,6 +27,26 @@ pub(crate) struct Index {
     pub(crate) source_count: usize,
 }
 
+/// A resumable traversal: one step visits one node or one leaf entry. A long
+/// diagonal selection need not collect every feature in its enclosing box.
+#[derive(Debug)]
+pub(crate) struct SegmentCursor {
+    pending: Vec<usize>,
+    leaf: std::ops::Range<usize>,
+}
+
+impl Default for SegmentCursor {
+    fn default() -> Self {
+        Self { pending: vec![0], leaf: 0..0 }
+    }
+}
+
+pub(crate) enum SegmentStep {
+    Pending,
+    Candidate(usize),
+    Done,
+}
+
 pub(crate) fn bounds(points: &[Vertex]) -> Option<Bounds> {
     let mut result: Option<Bounds> = None;
     for point in points {
@@ -55,6 +75,30 @@ fn union(a: Bounds, b: Bounds) -> Bounds {
         max_x: a.max_x.max(b.max_x),
         max_y: a.max_y.max(b.max_y),
     }
+}
+
+fn segment_intersects_bounds(start: [f64; 2], end: [f64; 2], bounds: Bounds) -> bool {
+    let mut low: f64 = 0.;
+    let mut high: f64 = 1.;
+    for (axis, min, max) in [(0, bounds.min_x, bounds.max_x), (1, bounds.min_y, bounds.max_y)] {
+        // Only the broad phase is padded, by a few coordinate-scale rounding
+        // units. Exact prepared segments decide the eventual selection.
+        let magnitude = start[axis].abs().max(end[axis].abs()).max(min.abs()).max(max.abs()).max(1.);
+        let padding = magnitude * (32. * f64::EPSILON);
+        let min = min - padding;
+        let max = max + padding;
+        let direction = end[axis] - start[axis];
+        if direction == 0. {
+            if start[axis] < min || start[axis] > max { return false; }
+        } else {
+            let first = (min - start[axis]) / direction;
+            let second = (max - start[axis]) / direction;
+            low = low.max(first.min(second));
+            high = high.min(first.max(second));
+            if low > high { return false; }
+        }
+    }
+    true
 }
 
 impl Index {
@@ -121,6 +165,33 @@ impl Index {
     pub(crate) fn feature_bounds(&self, index: usize) -> Option<Bounds> {
         self.positions.get(index).and_then(|&position| self.entries.get(position as usize))
             .map(|entry| entry.bounds)
+    }
+
+    pub(crate) fn segment_step(
+        &self,
+        cursor: &mut SegmentCursor,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> SegmentStep {
+        if let Some(position) = cursor.leaf.next() {
+            let entry = &self.entries[position];
+            return if segment_intersects_bounds(start, end, entry.bounds) {
+                SegmentStep::Candidate(entry.index)
+            } else {
+                SegmentStep::Pending
+            };
+        }
+        let Some(index) = cursor.pending.pop() else { return SegmentStep::Done; };
+        let Some(node) = self.nodes.get(index) else { return SegmentStep::Done; };
+        if segment_intersects_bounds(start, end, node.bounds) {
+            if let Some([left, right]) = node.children {
+                cursor.pending.push(right);
+                cursor.pending.push(left);
+            } else {
+                cursor.leaf = node.start..node.end;
+            }
+        }
+        SegmentStep::Pending
     }
 
     fn visit(&self, index: usize, viewport: Bounds, found: &mut Vec<usize>) {

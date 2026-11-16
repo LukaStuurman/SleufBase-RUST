@@ -39,6 +39,9 @@ struct Drag {
     point: [f64; 2],
 }
 impl State {
+    pub(super) fn has_draft(&self) -> bool {
+        self.editor.is_some()
+    }
     pub(super) fn captures(&self) -> bool {
         self.mode.is_some() || self.drag.is_some()
     }

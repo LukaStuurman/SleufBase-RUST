@@ -670,7 +670,8 @@ impl SleufBaseApp {
         // Visibility is keyed to the original JobFeatures file, never the
         // unstable index of the selected row or a duplicate temporary DXF.
         self.navigation.hidden_object_layers.clone_from(&self.project_view.hidden_object_layers);
-        self.navigation.pointer_tool = self.raster_rotation.active()
+        self.navigation.pointer_tool = self.cable_line.active()
+            || self.raster_rotation.active()
             || self.virtual_map.captures()
             || self.comment_tools.captures()
             || self.maaiveld_ui.captures()
@@ -748,7 +749,8 @@ impl SleufBaseApp {
             self.project_view.camera = Some(camera);
             let old_virtual = self.virtual_map.selected;
             let old_raster = self.raster_points.selected.clone();
-            if !self.handle_point_mode_selection(&view) && !self.handle_manual_maaiveld(&view) {
+            if !self.handle_cable_line_selection(&view)
+                && !self.handle_point_mode_selection(&view) && !self.handle_manual_maaiveld(&view) {
                 self.handle_cable_information(&view);
                 self.handle_raster_rotation(&view);
                 self.handle_raster_points(&view);
@@ -757,6 +759,7 @@ impl SleufBaseApp {
             }
             self.update_view_selection(old_virtual, old_raster.as_deref());
             self.paint_selected_cable(&view);
+            self.paint_cable_line_selection(&view);
             if let Some(osm) = hybrid_credit {
                 let credit = view.painter.layout_no_wrap("Kadaster / PDOK".into(),
                     egui::FontId::proportional(12.), INK);

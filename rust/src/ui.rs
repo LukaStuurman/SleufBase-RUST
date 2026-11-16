@@ -86,6 +86,8 @@ mod settings_store;
 mod cad_canvas_ui;
 #[path="ui_cable_information.rs"]
 mod cable_information_ui;
+#[path="ui_cable_line.rs"]
+mod cable_line_ui;
 #[path="ui_maaiveld.rs"]
 mod maaiveld_ui;
 #[path="ui_theme.rs"]
@@ -199,6 +201,7 @@ pub struct SleufBaseApp {
     overlays: Vec<DxfOverlay>,
     dxf_selection:Option<DxfSelection>,
     found_layers:Vec<(usize,usize)>,
+    cable_line:cable_line_ui::State,
     virtual_trenches: Vec<VirtualTrench>,
     trench_markers:Vec<Vec<sleufbase_rust::cross_section::Marker>>,
     show_trench_dialog: bool,
@@ -306,6 +309,7 @@ impl Default for SleufBaseApp {
             overlays:Vec::new(),
             dxf_selection:None,
             found_layers:Vec::new(),
+            cable_line:Default::default(),
             virtual_trenches:Vec::new(),
             trench_markers:Vec::new(),
             show_trench_dialog:false,
@@ -394,6 +398,7 @@ impl SleufBaseApp {
         if let Some(worker)=&mut self.pending_ahn {worker.cancel();}
         self.recovery_dialog=None;
         self.overview_ui=Default::default();
+        self.cable_line.clear();
         self.reset_maaiveld_state();
         self.virtual_map=Default::default();
         self.raster_rotation=Default::default();
@@ -1584,6 +1589,7 @@ impl eframe::App for SleufBaseApp {
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
         if !self.shell.installed { theme::install(ctx); self.shell.installed=true; }
+        self.poll_cable_line_selection(ctx);
         if self.maaiveld_ui.preloading() {
             if ctx.input(|i| i.viewport().close_requested()) {
                 // The worker only owns a preparation snapshot; cancelling it

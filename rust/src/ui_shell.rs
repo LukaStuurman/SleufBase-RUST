@@ -202,7 +202,7 @@ fn cable_switch_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     let response = ui.add_enabled(enabled, egui::Button::new("")
         .min_size(egui::vec2(30., 28.)).corner_radius(6));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button,
-        enabled && ui.is_enabled(), "Volgend overlappend object"));
+        enabled && ui.is_enabled(), "Volgend gevonden object"));
     if ui.is_rect_visible(response.rect) {
         let color = if enabled && ui.is_enabled() {
             ui.style().interact(&response).fg_stroke.color
@@ -212,11 +212,47 @@ fn cable_switch_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
         ui.painter().arrow(center + egui::vec2(-7., -4.), egui::vec2(14., 0.), stroke);
         ui.painter().arrow(center + egui::vec2(7., 4.), egui::vec2(-14., 0.), stroke);
     }
-    response.on_hover_text("Volgend object op deze plek")
-        .on_disabled_hover_text("Klik op een plek met meerdere objecten om ertussen te wisselen.")
+    response.on_hover_text("Volgend gevonden object selecteren")
+        .on_disabled_hover_text("Zoek meerdere objecten met een kaartklik of lijnselectie om ertussen te wisselen.")
+}
+
+/// Three cable strokes crossed by a two-point selection line, drawn without
+/// relying on a system-font glyph or bitmap scaling.
+fn cable_line_button(ui: &mut egui::Ui, enabled: bool, active: bool, busy: bool) -> egui::Response {
+    let selected = active || busy;
+    let response = ui.add_enabled(enabled, egui::Button::new("")
+        .selected(selected).min_size(egui::vec2(30., 28.)).corner_radius(6));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button,
+        enabled && ui.is_enabled(), selected, "Kabels met een lijn selecteren"));
+    if ui.is_rect_visible(response.rect) {
+        let color = if !enabled || !ui.is_enabled() { ui.visuals().weak_text_color() }
+            else if selected { Color32::WHITE }
+            else { ui.style().interact(&response).fg_stroke.color };
+        let accent = if !enabled || !ui.is_enabled() { color }
+            else if selected { Color32::WHITE } else { ORANGE };
+        let center = response.rect.center();
+        for y in [-5., 0., 5.] {
+            ui.painter().line_segment([center + egui::vec2(-9., y), center + egui::vec2(9., y)],
+                Stroke::new(1.2_f32, color));
+        }
+        let ends = [center + egui::vec2(-6., 8.), center + egui::vec2(6., -8.)];
+        ui.painter().line_segment(ends, Stroke::new(1.8_f32, accent));
+        for endpoint in ends { ui.painter().circle_filled(endpoint, 1.7, accent); }
+    }
+    response.on_hover_text(if busy {
+        "Lijnselectie annuleren. De gekruiste kabels worden verzameld."
+    } else if active {
+        "Klik twee punten op de kaart. Alle kabels die de lijn kruist verschijnen in Lijst. Esc of deze knop annuleert."
+    } else {
+        "Kabels met een lijn selecteren: klik twee punten op de kaart. Alle gekruiste kabels verschijnen in Lijst."
+    }).on_disabled_hover_text("Open de kaart met een zichtbare KLIC-tekening. Sla een open maaiveldtekst eerst op of sluit het tekstvenster.")
 }
 
 impl SleufBaseApp {
+    pub(super) fn open_cable_candidate_list(&mut self) {
+        self.shell.cable_list.open_and_reveal();
+        self.shell.last_cable_selection = None;
+    }
     pub(super) fn show_original_menu(&mut self, ctx: &egui::Context) {
         let mut action = None;
         egui::TopBottomPanel::top("sleufbase-menu")
@@ -509,26 +545,69 @@ impl SleufBaseApp {
                 separator(ui, &mut klic, 150., available - tiff - 110., "klic-sash");
                 self.shell.tiff_height = Some(tiff); self.shell.klic_height = Some(klic);
                 let cable_matches = cable_list::visible_matches(&self.overlays, &self.found_layers);
-                ui.horizontal(|ui| {
-                    theme::title(ui, "Kabelinformatie");
+                let list_label = format!("Lijst ({})", cable_matches.len());
+                let list_width = egui::WidgetText::from(list_label.clone()).into_galley(ui,
+                    Some(egui::TextWrapMode::Extend), f32::INFINITY,
+                    egui::FontSelection::Style(egui::TextStyle::Button)).size().x
+                    + 2. * ui.spacing().button_padding.x;
+                let list_width = list_width.ceil().max(70.);
+                let controls_width = 30. + 6. + list_width + 6. + 30.;
+                let available_width = ui.available_width();
+                let title_width = (available_width - controls_width - 8.).max(0.);
+                let named = egui::FontFamily::Name("SleufBase title".into());
+                let family = if ui.fonts(|fonts| fonts.families().contains(&named)) {
+                    named
+                } else { egui::FontFamily::Proportional };
+                let title = egui::RichText::new("Kabelinformatie")
+                    .font(egui::FontId::new(theme::FONT_SIZE, family));
+                let line_active = self.cable_line.active();
+                let line_busy = self.cable_line.busy();
+                let line_enabled = line_active || line_busy || (!self.browser_ui.web_visible
+                    && !self.maaiveld_ui.has_draft() && self.overlays.iter().any(|overlay| overlay.visible));
+                let (mut swap, mut toggle_list, mut toggle_line) = (false, false, false);
+                let mut controls = |ui: &mut egui::Ui| {
                     ui.spacing_mut().item_spacing.x = 6.;
-                    if cable_switch_button(ui, cable_matches.len() > 1).clicked() {
-                        let current = self.dxf_selection.as_ref().and_then(|selection| cable_matches.iter()
-                            .position(|&(overlay, feature)| selection.overlay == overlay && selection.feature == feature));
-                        let next = current.map_or(0, |index| (index + 1) % cable_matches.len());
-                        cable_selection = cable_matches.get(next).copied();
-                    }
-                    if ui.add_enabled(!self.browser_ui.web_visible,
-                        egui::Button::new(format!("Lijst ({})", cable_matches.len()))
-                            .selected(self.shell.cable_list.open).min_size(egui::vec2(70., 28.))
-                            .corner_radius(6).wrap_mode(egui::TextWrapMode::Extend))
-                        .on_hover_text("Open of sluit de objectlijst rechts naast de kaart")
-                        .on_disabled_hover_text("Ga terug naar de kaart om de objectlijst te openen.").clicked()
-                    {
-                        self.shell.cable_list.toggle();
-                        ctx.request_repaint();
-                    }
-                });
+                    swap = cable_switch_button(ui, cable_matches.len() > 1).clicked();
+                    toggle_list = ui.add_enabled_ui(!self.browser_ui.web_visible, |ui|
+                        ui.add_sized([list_width, 28.], egui::Button::new(&list_label)
+                            .selected(self.shell.cable_list.open).corner_radius(6)
+                            .wrap_mode(egui::TextWrapMode::Extend)))
+                        .inner.on_hover_text("Open of sluit de objectlijst rechts naast de kaart")
+                        .on_disabled_hover_text("Ga terug naar de kaart om de objectlijst te openen.").clicked();
+                    toggle_line = cable_line_button(ui, line_enabled, line_active, line_busy).clicked();
+                };
+                if title_width < 64. {
+                    // On a very narrow panel keep the full controls together;
+                    // the title gets its own line rather than breaking words.
+                    ui.add_sized([available_width, 22.], egui::Label::new(title)
+                        .truncate().halign(egui::Align::Min)).on_hover_text("Kabelinformatie");
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.;
+                        ui.add_space((available_width - controls_width).max(0.));
+                        controls(ui);
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.;
+                        ui.add_sized([title_width, 28.], egui::Label::new(title)
+                            .truncate().halign(egui::Align::Min)).on_hover_text("Kabelinformatie");
+                        controls(ui);
+                    });
+                }
+                if swap {
+                    let current = self.dxf_selection.as_ref().and_then(|selection| cable_matches.iter()
+                        .position(|&(overlay, feature)| selection.overlay == overlay && selection.feature == feature));
+                    let next = current.map_or(0, |index| (index + 1) % cable_matches.len());
+                    cable_selection = cable_matches.get(next).copied();
+                }
+                if toggle_list {
+                    self.shell.cable_list.toggle();
+                    ctx.request_repaint();
+                }
+                if toggle_line {
+                    self.toggle_cable_line_selection();
+                    ctx.request_repaint();
+                }
                 // Commit a switch before painting the details; the right-hand
                 // list and map halo subsequently read this same selection.
                 if let Some((overlay, feature)) = cable_selection.take() {
@@ -1099,7 +1178,7 @@ impl SleufBaseApp {
                                 self.toggle_maaiveld_mode();
                             }
                             if ui.add(egui::Button::new("Proefsleufnaam")
-                                .selected(self.migrated_settings.viewer.show_trench_labels))
+                                .selected(self.migrated_settings.viewer.show_trench_labels).corner_radius(6))
                                 .on_hover_text("Namen van proefsleuven op de werkkaart tonen of verbergen")
                                 .clicked()
                             {
