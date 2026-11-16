@@ -212,6 +212,7 @@ impl SleufBaseApp {
             match outcome.result {
                 Ok(FileContent::Dxf(loaded)) => {
                     self.overlays[index] = *loaded;
+                    self.found_layers.retain(|(overlay, _)| *overlay != index);
                     self.dirty = true;
                     if self
                         .dxf_selection

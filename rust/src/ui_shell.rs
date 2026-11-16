@@ -439,6 +439,7 @@ impl SleufBaseApp {
     }
     pub(super) fn show_original_sidebar(&mut self, ctx: &egui::Context) {
         self.shell.focused_layer = None;
+        let mut cable_selection = None;
         let width = (ctx.screen_rect().width().max(1200.) * 0.255).clamp(360., 400.);
         egui::SidePanel::left("original-sidebar").default_width(width).min_width(340.)
             .frame(egui::Frame::new().fill(APP_BG).inner_margin(egui::Margin { left: 18, right: 14, top: 18, bottom: 18 }))
@@ -496,21 +497,63 @@ impl SleufBaseApp {
                 theme::title(ui, "Kabelinformatie");
                 let height = (ui.available_height() - 30.).max(40.);
                 theme::card(18, 14, 14).show(ui, |ui| {
-                    ui.set_min_size(egui::vec2(ui.available_width(),height));
-                    egui::ScrollArea::vertical().id_salt("cable-information").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).max_height(height).min_scrolled_height(height).show(ui, |ui| {
+                    let width = ui.available_width();
+                    ui.set_width(width);
+                    ui.set_min_height(height);
+                    // Fill the card instead of letting the scrollbar follow the
+                    // width of whichever detail value happens to be longest.
+                    egui::ScrollArea::vertical().id_salt("cable-information")
+                        .auto_shrink([false, false]).max_width(width)
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                        .max_height(height).min_scrolled_height(height).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         if let Some(selection) = &self.dxf_selection {
-                            for (key, value) in &selection.details {
-                                theme::strong(ui,cad_preview(key));
-                                let preview=cad_preview(value);
-                                ui.add(egui::Label::new(preview).wrap());
-                                if preview.len()<value.len() {
-                                    if ui.small_button("Volledige tekst kopiëren").clicked(){ui.ctx().copy_text(value.clone());}
+                            let priority = |key: &str| {
+                                if key.eq_ignore_ascii_case("XDATA InfraCAD") { 0 }
+                                else if key == "Laag" { 1 }
+                                else { 2 }
+                            };
+                            for group in 0..3 {
+                                for (key, value) in selection.details.iter().filter(|(key, _)| priority(key) == group) {
+                                    theme::strong(ui,cad_preview(key));
+                                    let preview=cad_preview(value);
+                                    ui.add(egui::Label::new(preview).wrap());
+                                    if preview.len()<value.len() {
+                                        if ui.small_button("Volledige tekst kopiëren").clicked(){ui.ctx().copy_text(value.clone());}
+                                    }
                                 }
                             }
                         } else { ui.label("Klik in de kaart op een kabel om KLIC-informatie en laagnamen te tonen.\n\nGebruik de rechtermuisknop op een proefsleuf in de lijst om draaien en opmerkingen te beheren.\n\nTip: zoom verder in voor een preciezere selectie als kabels dicht op elkaar liggen."); }
+                        if self.found_layers.len() > 1 {
+                            let is_alternative = |&(overlay, feature): &(usize, usize)| {
+                                !self.dxf_selection.as_ref().is_some_and(|selection|
+                                    selection.overlay == overlay && selection.feature == feature)
+                                    && self.overlays.get(overlay).filter(|layer| layer.visible)
+                                        .and_then(|layer| layer.inspect_feature(feature)).is_some_and(|feature| feature.visible)
+                            };
+                            let alternatives = self.found_layers.iter().filter(|candidate| is_alternative(candidate)).count();
+                            if alternatives > 0 {
+                                egui::CollapsingHeader::new(format!("Andere objecten op deze plek ({alternatives})"))
+                                    .id_salt("cable-information-alternatives").default_open(false).show(ui, |ui| {
+                                        for &(overlay_index, feature_index) in self.found_layers.iter().filter(|candidate| is_alternative(candidate)) {
+                                            let Some(layer) = self.overlays.get(overlay_index) else { continue; };
+                                            let Some(feature) = layer.inspect_feature(feature_index) else { continue; };
+                                            let filename = layer.path.file_name().unwrap_or_default().to_string_lossy();
+                                            let title = format!("{} — {} ({})", feature.layer, filename, feature.source.entity_type);
+                                            if ui.selectable_label(false, title).clicked() {
+                                                cable_selection = Some((overlay_index, feature_index));
+                                            }
+                                        }
+                                    });
+                            }
+                        }
                     });
                 });
             });
+        if let Some((overlay, feature)) = cable_selection {
+            self.select_dxf(overlay, feature);
+            ctx.request_repaint();
+        }
     }
 
     fn trench_rows(&self) -> Vec<TrenchRow> {
@@ -588,6 +631,7 @@ impl SleufBaseApp {
             }
         }
         self.dxf_selection = None;
+        self.found_layers.clear();
         self.dirty |= old != self.project_view.selected_dxf;
     }
 
@@ -748,10 +792,43 @@ impl SleufBaseApp {
                 else { self.shell.overlay_selection.click(row, modifiers.ctrl || modifiers.command, modifiers.shift); }
                 self.apply_overlay_list_selection();
             }
-            ui.horizontal(|ui| {
-                selection_count(ui, self.shell.overlay_selection.len());
+            selection_count(ui, self.shell.overlay_selection.len());
+            ui.horizontal_wrapped(|ui| {
+                // Wrap whole controls together; never split the short labels.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 remove |= remove_selection_button(ui, self.shell.overlay_selection.len(),
                     "Verwijder alle geselecteerde overlays uit dit project");
+                let visible_count = {
+                    let hidden: std::collections::HashSet<_> = self.project_view.hidden_object_layers.iter().collect();
+                    self.datasets.iter().filter(|job| !hidden.contains(&job.source_path)).count()
+                };
+                let count = self.datasets.len();
+                let mixed = visible_count > 0 && visible_count < count;
+                let mut all_visible = count > 0 && visible_count == count;
+                let description = if mixed {
+                    "Een deel van de jobpunten is zichtbaar. Klik om alle jobpunten en objectlijnen te tonen."
+                } else if all_visible {
+                    "Verberg alle jobpunten en objectlijnen op de werkkaart."
+                } else {
+                    "Toon alle jobpunten en objectlijnen op de werkkaart."
+                };
+                if ui.add_enabled(count > 0, egui::Checkbox::new(&mut all_visible, "Jobpunten")
+                    .indeterminate(mixed)).on_hover_text(description)
+                    .on_disabled_hover_text("Laad een KickTheMap-job om objectpunten te tonen.").changed()
+                {
+                    let mut job_paths: std::collections::HashSet<_> = self.datasets.iter().map(|job| &job.source_path).collect();
+                    if all_visible {
+                        self.project_view.hidden_object_layers.retain(|path| !job_paths.contains(path));
+                    } else {
+                        for path in &self.project_view.hidden_object_layers { job_paths.remove(path); }
+                        for job in &self.datasets {
+                            if job_paths.remove(&job.source_path) {
+                                self.project_view.hidden_object_layers.push(job.source_path.clone());
+                            }
+                        }
+                    }
+                    self.dirty = true;
+                }
             });
         });
         for response in contexts {
@@ -837,7 +914,7 @@ impl SleufBaseApp {
         self.selected = None;
         self.project_view.selected_dxf = None;
         self.dxf_selection = None;
-        self.found_layers.clear(); self.found_layers_open = false; self.found_layers_pos = None;
+        self.found_layers.clear();
         self.shell.overlay_selection = Default::default();
         self.shell.focused_layer = None;
         self.close_maaiveld_mode();

@@ -82,12 +82,14 @@ mod settings_ui;
 #[path="ui_settings_store.rs"]
 mod settings_store;
 
+#[path="ui_cad_canvas.rs"]
+mod cad_canvas_ui;
 #[path="ui_cable_information.rs"]
 mod cable_information_ui;
 #[path="ui_maaiveld.rs"]
 mod maaiveld_ui;
 #[path="ui_theme.rs"]
-mod theme;
+pub(crate) mod theme;
 #[path="ui_map_labels.rs"]
 mod map_labels_ui;
 #[path="ui_layer_visibility.rs"]
@@ -197,8 +199,6 @@ pub struct SleufBaseApp {
     overlays: Vec<DxfOverlay>,
     dxf_selection:Option<DxfSelection>,
     found_layers:Vec<(usize,usize)>,
-    found_layers_open:bool,
-    found_layers_pos:Option<Pos2>,
     virtual_trenches: Vec<VirtualTrench>,
     trench_markers:Vec<Vec<sleufbase_rust::cross_section::Marker>>,
     show_trench_dialog: bool,
@@ -305,7 +305,7 @@ impl Default for SleufBaseApp {
             raster_errors:Vec::new(),
             overlays:Vec::new(),
             dxf_selection:None,
-            found_layers:Vec::new(),found_layers_open:false,found_layers_pos:None,
+            found_layers:Vec::new(),
             virtual_trenches:Vec::new(),
             trench_markers:Vec::new(),
             show_trench_dialog:false,
@@ -438,7 +438,7 @@ impl SleufBaseApp {
         self.template_state=doc.template_export;
         self.raster_textures=vec![None;self.geotiffs.len()]; self.overlays=doc.overlays;
         self.dxf_selection=None;
-        self.found_layers.clear();self.found_layers_open=false;self.found_layers_pos=None;
+        self.found_layers.clear();
         self.bgt_layers=doc.bgt_layers; self.cadastral=doc.cadastral;
         self.virtual_trenches=doc.virtual_trenches; self.comments=doc.comments;
         self.trench_markers=markers;
@@ -578,6 +578,7 @@ impl SleufBaseApp {
     }
 
     fn select_dxf(&mut self,overlay:usize,feature:usize) {
+        if !self.found_layers.contains(&(overlay, feature)) { self.found_layers.clear(); }
         if let Some(layer)=self.overlays.get(overlay){
             if self.project_view.selected_dxf.as_ref()!=Some(&layer.path){self.project_view.selected_dxf=Some(layer.path.clone());self.dirty=true;}
         }
@@ -1495,22 +1496,7 @@ fn canvas(
             }
         }
     }
-    for overlay in overlays.iter().filter(|o|o.visible) {
-        for feature in overlay.rendered_features() {
-            if !feature.visible{continue;}
-            let [r,g,b]=feature.rgb;
-            let stroke=Stroke::new(1.6_f32,Color32::from_rgb(r,g,b));
-            if matches!(feature.source.entity_type.as_str(),"POINT"|"INSERT") {
-                if let Some(point)=feature.points.first(){painter.circle_filled(project(point.x,point.y),2.5,stroke.color);}
-            }
-            for (path,[r,g,b]) in feature.painted_paths() { let stroke=Stroke::new(1.6_f32,Color32::from_rgb(r,g,b)); for pair in path.windows(2) {
-                painter.line_segment([
-                    project(pair[0].x,pair[0].y),
-                    project(pair[1].x,pair[1].y)
-                ],stroke);
-            }}
-        }
-    }
+    cad_canvas_ui::paint(&painter,overlays,rect,center,[cx,cy],scale);
     for dataset in datasets.iter().filter(|ds|
         navigation.as_ref().is_none_or(|nav|!nav.hidden_object_layers.contains(&ds.source_path))
     ) {
@@ -1706,7 +1692,6 @@ impl SleufBaseApp {
 
 
 
-        self.show_found_layers_popup(ctx);
         self.show_virtual_form_dialogs(ctx);
         self.show_marxact_orientation(ctx);
         self.show_settings_window(ctx);

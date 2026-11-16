@@ -91,7 +91,7 @@ fn placement_caption(ui:&mut egui::Ui,placement:&ExportPlacement,choice:&templat
             ExportPlacement::Excluded=>{ui.weak("Niet in export");None},
             ExportPlacement::Empty(position)=>{
                 ui.small(format!("Exportvak {position} · leeg"))
-                    .on_hover_text("Dit vak blijft leeg in het sjabloon. Verwijder het bij Volgorde en meerdere sleuven aanpassen om de volgende sleuven te laten aansluiten.");
+                    .on_hover_text("Dit vak blijft leeg in het sjabloon. Selecteer de regel en kies rechts bij Lege en extra vakken voor Lege vakken verwijderen om de volgende sleuven te laten aansluiten.");
                 None
             },
             ExportPlacement::Trench{position,label:Some(label)}=>{
@@ -239,6 +239,12 @@ impl Dialog {
             choice.profile=enabled;
         }
     }
+    fn sort_choices(&mut self, mode: SortMode) {
+        self.sort_mode=Some(mode);
+        let order=self.editor.sort_choices(&mut self.options.choices,mode);
+        template_order::reorder(&mut self.automatic,&order);
+        self.reveal_row=self.editor.selected.iter().position(|selected|*selected);
+    }
     fn placements(&self)->Vec<ExportPlacement> {
         let (labels,_)=self.editor.preview(&self.options.choices);
         let mut position=0;
@@ -356,6 +362,178 @@ fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
     });
 }
 
+fn order_tool_button(ui:&mut egui::Ui,label:&str,enabled:bool)->egui::Response {
+    let response=ui.add_enabled(enabled,egui::Button::new(label)
+        .min_size(egui::vec2(ui.available_width(),28.)));
+    // Source cards were painted before this independent panel. Repaint after
+    // an action so their selection, labels and inclusion update immediately.
+    if response.clicked() {ui.ctx().request_repaint();}
+    response
+}
+
+/// The tools have their own scroll area. Row selection and movement stay above
+/// it, while source cards and the export footer have independent geometry.
+fn project_order_panel(ui:&mut egui::Ui,dialog:&mut Dialog,rasters:&[GeoTiffInfo],trenches:&[VirtualTrench],height:f32) {
+    if let Some(direction)=crate::template_dialog::order_controls(ui,&dialog.editor.selected,height) {
+        let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);
+        if !swaps.is_empty() {
+            dialog.sort_mode=None;
+            for(a,b)in swaps {dialog.automatic.swap(a,b);}
+            dialog.reveal_row=if direction<0 {
+                dialog.editor.selected.iter().position(|selected|*selected)
+            } else {
+                dialog.editor.selected.iter().rposition(|selected|*selected)
+            };
+            ui.ctx().request_repaint();
+        }
+    }
+    ui.separator();
+    let tools_height=ui.available_height().max(0.);
+    if tools_height<1. { return; }
+    egui::ScrollArea::vertical().id_salt("project-template-order-tools")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(tools_height).auto_shrink([false,false]).show(ui,|ui| {
+            ui.set_width(ui.available_width());
+            ui.small("Klik links op een regelnummer. Ctrl/Cmd selecteert losse regels; Shift een reeks. Selecteren verandert niet wat wordt geëxporteerd.");
+
+            ui.add_space(8.);
+            ui.strong("Sorteren");
+            let mut requested_sort=dialog.sort_mode;
+            egui::ComboBox::from_id_salt("project-template-sort")
+                .width(ui.available_width()).truncate()
+                .selected_text(requested_sort.map_or("Handmatig / opgeslagen",SortMode::label))
+                .show_ui(ui,|ui| {
+                    for mode in SortMode::ALL {
+                        ui.selectable_value(&mut requested_sort,Some(mode),mode.label());
+                    }
+                });
+            let sort_again=order_tool_button(ui,"Opnieuw sorteren",!dialog.options.choices.is_empty()).clicked();
+            if requested_sort!=dialog.sort_mode || sort_again {
+                if let Some(mode)=requested_sort.or_else(||sort_again.then_some(SortMode::NumberAsc)) {
+                    dialog.sort_choices(mode);
+                    ui.ctx().request_repaint();
+                }
+            }
+
+            ui.separator();
+            ui.strong("Selectie");
+            if order_tool_button(ui,"Alle regels selecteren",!dialog.options.choices.is_empty()).clicked() {
+                dialog.editor.select_all(&dialog.options.choices,true);
+            }
+            let has_selection=dialog.editor.selected.iter().any(|selected|*selected);
+            if order_tool_button(ui,"Selectie wissen",has_selection).clicked() {
+                dialog.editor.select_all(&dialog.options.choices,false);
+            }
+            let selected_trenches=dialog.options.choices.iter().zip(&dialog.editor.selected)
+                .any(|(choice,selected)|*selected&&!matches!(choice.source,Source::Empty(_)));
+            for (label,included) in [("Selectie meenemen",true),("Selectie uitsluiten",false)] {
+                if order_tool_button(ui,label,selected_trenches).clicked() {
+                    dialog.editor.included(&mut dialog.options.choices,included);
+                }
+            }
+
+            ui.separator();
+            ui.strong("Nummering en schaal");
+            ui.add_enabled_ui(selected_trenches,|ui| {
+                ui.label("PS-nummer");
+                ui.add(egui::TextEdit::singleline(&mut dialog.editor.number)
+                    .desired_width(ui.available_width()));
+                ui.label("Variant");
+                egui::ComboBox::from_id_salt("mixed-template-variant")
+                    .width(ui.available_width()).truncate()
+                    .selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant})
+                    .show_ui(ui,|ui| {
+                        ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");
+                        ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");
+                        for code in 'B'..='Z' {
+                            ui.selectable_value(&mut dialog.editor.variant,code.to_string(),format!("Variant {code}"));
+                        }
+                    });
+                if order_tool_button(ui,"Nummer/variant toepassen",true).clicked() {
+                    match dialog.editor.apply_label(&mut dialog.options.choices) {
+                        Ok(())=>{
+                            dialog.error.clear();
+                            if let Some(mode)=dialog.sort_mode { dialog.sort_choices(mode); }
+                        },
+                        Err(error)=>dialog.error=error,
+                    }
+                }
+                ui.small("Labels gelden voor de geselecteerde, meegenomen sleuven.");
+                ui.add_space(4.);
+                ui.label("Profielschaal");
+                ui.add(egui::TextEdit::singleline(&mut dialog.editor.scale)
+                    .desired_width(ui.available_width()).hint_text("Auto of 1:200"));
+                if order_tool_button(ui,"Schaal toepassen",true).clicked() {
+                    dialog.error=dialog.editor.apply_scale(&mut dialog.options.choices).err().unwrap_or_default();
+                }
+            });
+
+            ui.separator();
+            ui.strong("Lege en extra vakken");
+            if order_tool_button(ui,"Leeg vak invoegen",dialog.options.choices.len()<20_000).clicked() {
+                match dialog.editor.insert_empty(&mut dialog.options.choices) {
+                    Ok(at)=>{
+                        dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion {
+                            raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing,
+                        });
+                        dialog.reveal_row=Some(at);
+                    },
+                    Err(error)=>dialog.error=error,
+                }
+            }
+            let selected_empty=dialog.options.choices.iter().zip(&dialog.editor.selected)
+                .any(|(choice,selected)|*selected&&matches!(choice.source,Source::Empty(_)));
+            if order_tool_button(ui,"Lege vakken verwijderen",selected_empty).clicked() {
+                for index in dialog.editor.remove_empty(&mut dialog.options.choices) {
+                    dialog.automatic.remove(index);
+                }
+                dialog.reveal_row=dialog.editor.selected.iter().position(|selected|*selected);
+            }
+            let mut add_raster=None;
+            ui.add_enabled_ui(dialog.options.choices.len()<20_000,|ui| {
+                ui.menu_button("GeoTIFF als vak toevoegen…",|ui| {
+                    egui::ScrollArea::vertical().max_height(230.).show(ui,|ui| {
+                        for (index,raster) in rasters.iter().enumerate() {
+                            if dialog.options.choices.iter().any(|choice|choice.raster==Some(index)||choice.source==Source::Raster(index)) {continue;}
+                            let name=raster.path.file_name().unwrap_or_default().to_string_lossy();
+                            if ui.button(name).clicked() {add_raster=Some(index);ui.close_menu();}
+                        }
+                    });
+                });
+            });
+            if let Some(index)=add_raster {
+                let mut choice=template_project::raster_choice(index,&rasters[index]);
+                choice.profile=dialog.opening_defaults.profiles;
+                dialog.profile_baseline.insert(choice.source,choice.profile);
+                dialog.options.choices.push(choice);
+                dialog.automatic.push(sleufbase_rust::template_match::Suggestion {
+                    raster:Some(index),reason:sleufbase_rust::template_match::MatchKind::Missing,
+                });
+                dialog.editor=sleufbase_rust::template_editor::Editor::new(
+                    &mut dialog.options.choices,rasters,trenches,
+                );
+                let at=dialog.options.choices.len()-1;
+                dialog.editor.select(&dialog.options.choices,at,false,false);
+                dialog.reveal_row=Some(at);
+                dialog.sort_mode=None;
+            }
+
+            ui.separator();
+            ui.strong("Alle proefsleuven");
+            for (label,included) in [("Alles meenemen",true),("Alles uitsluiten",false)] {
+                if order_tool_button(ui,label,!dialog.options.choices.is_empty()).clicked() {
+                    dialog.include_all(included);
+                }
+            }
+            ui.label("Dwarsprofielen voor meegenomen sleuven");
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Aan").clicked() {dialog.profiles_for_included(true);ui.ctx().request_repaint();}
+                if ui.button("Uit").clicked() {dialog.profiles_for_included(false);ui.ctx().request_repaint();}
+            });
+            if dialog.reveal_row.is_some() {ui.ctx().request_repaint();}
+        });
+}
+
 impl SleufBaseApp {
     pub(super) fn open_project_template_dialog(&mut self) {
         if self.template_job.is_some() || self.export_intent.is_some() ||
@@ -389,12 +567,13 @@ impl SleufBaseApp {
             let screen = ctx.screen_rect();
             let maximum = egui::vec2((screen.width()-64.).max(280.), (screen.height()-88.).max(200.));
             egui::Window::new("DXF-sjabloon exporteren")
-                // A fresh identity drops the old nearly-fullscreen remembered size.
-                .id(egui::Id::new("project-template-compact-v1"))
+                // Reserve readable space for the permanent tool panel, including
+                // when an older release saved a much narrower window size.
+                .id(egui::Id::new("project-template-tools-v2"))
                 .open(&mut open)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .default_size(egui::vec2(800.,510.).min(maximum))
-                .min_size(egui::vec2(360.,240.).min(maximum))
+                .default_size(egui::vec2(940.,560.).min(maximum))
+                .min_size(egui::vec2(680.,320.).min(maximum))
                 .max_size(maximum)
                 .constrain_to(screen.shrink(16.))
                 .collapsible(false)
@@ -413,6 +592,7 @@ impl SleufBaseApp {
                             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                             .max_height(body_height)
                             .auto_shrink([false,false]).show(ui, |ui| {
+                        let card_width=ui.available_width();
                         if ui.available_width()>=600. {
                             ui.columns(2,|columns| {
                                 project_output_card(&mut columns[0],dialog);
@@ -430,86 +610,26 @@ impl SleufBaseApp {
                             ui.heading("3. Proefsleuven kiezen").on_hover_text("Meenemen bepaalt wat wordt geëxporteerd. Uitgesloten sleuven krijgen geen vak; lege vakken blijven behouden.");
                             ui.small(format!("{} mee · {excluded} uit · {} leeg",summary.trenches,summary.empty));
                         });
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.small_button("Alles meenemen").clicked(){dialog.include_all(true);}
-                            if ui.small_button("Alles uitsluiten").clicked(){dialog.include_all(false);}
-                            ui.label("Dwarsprofielen voor meegenomen sleuven:");
-                            if ui.small_button("Aan").clicked(){dialog.profiles_for_included(true);}
-                            if ui.small_button("Uit").clicked(){dialog.profiles_for_included(false);}
-                        });
-                        if summary.trenches+summary.empty>template_project::MAX_SLOTS {ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");}
-                        ui.collapsing("Volgorde en meerdere sleuven aanpassen",|ui| {
-                        ui.small("Klik op een regelnummer om regels te verplaatsen of samen aan te passen. Ctrl/Cmd selecteert losse regels, Shift een reeks. De oranje selectie verandert niet wat wordt geëxporteerd.");
-                        let mut requested_sort=dialog.sort_mode;
-                        ui.horizontal_wrapped(|ui|{
-                            ui.label("Sorteren op");
-                            egui::ComboBox::from_id_salt("project-template-sort")
-                                .selected_text(requested_sort.map_or("Handmatig / opgeslagen",SortMode::label))
-                                .show_ui(ui,|ui|{
-                                    for mode in SortMode::ALL {
-                                        ui.selectable_value(&mut requested_sort,Some(mode),mode.label());
-                                    }
-                                });
-                            if ui.small_button("Opnieuw sorteren").clicked(){
-                                // After editing a PS-label, apply the current sort again.
-                                let mode=requested_sort.unwrap_or(SortMode::NumberAsc);
-                                requested_sort=Some(mode);
-                                dialog.sort_mode=Some(mode);
-                                let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);
-                                template_order::reorder(&mut dialog.automatic,&order);
-                            }
-                        });
-                        if requested_sort!=dialog.sort_mode {
-                            dialog.sort_mode=requested_sort;
-                            if let Some(mode)=requested_sort {
-                                let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);
-                                template_order::reorder(&mut dialog.automatic,&order);
-                            }
+                        if summary.trenches+summary.empty>template_project::MAX_SLOTS {
+                            ui.colored_label(DARK,"Te veel proefsleufvakken voor één export");
                         }
-                        ui.horizontal_wrapped(|ui|{
-                            if ui.small_button("Alle regels selecteren").clicked(){dialog.editor.select_all(&dialog.options.choices,true);}
-                            if ui.small_button("Selectie wissen").clicked(){dialog.editor.select_all(&dialog.options.choices,false);}
-                            if ui.small_button("Selectie meenemen").clicked(){dialog.editor.included(&mut dialog.options.choices,true);}
-                            if ui.small_button("Selectie uitsluiten").clicked(){dialog.editor.included(&mut dialog.options.choices,false);}
-                            if ui.small_button("Leeg vak invoegen").clicked(){match dialog.editor.insert_empty(&mut dialog.options.choices){Ok(at)=>dialog.automatic.insert(at,sleufbase_rust::template_match::Suggestion{raster:None,reason:sleufbase_rust::template_match::MatchKind::Missing}),Err(e)=>dialog.error=e}}
-                            if ui.small_button("Lege vakken verwijderen").clicked(){for i in dialog.editor.remove_empty(&mut dialog.options.choices){dialog.automatic.remove(i);}}
-                        });
-                        ui.collapsing("Meerdere vakken aanpassen", |ui| {
-                        ui.horizontal_wrapped(|ui|{
-                            ui.label("PS-nummer");ui.add(egui::TextEdit::singleline(&mut dialog.editor.number).desired_width(75.));
-                            ui.label("Variant");egui::ComboBox::from_id_salt("mixed-template-variant").selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant}).show_ui(ui,|ui|{ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");for c in 'B'..='Z'{ui.selectable_value(&mut dialog.editor.variant,c.to_string(),format!("Variant {c}"));}});
-                            if ui.small_button("Nummer/variant toepassen").clicked(){match dialog.editor.apply_label(&mut dialog.options.choices){Ok(())=>{dialog.error.clear();if let Some(mode)=dialog.sort_mode{let order=dialog.editor.sort_choices(&mut dialog.options.choices,mode);template_order::reorder(&mut dialog.automatic,&order);}},Err(e)=>dialog.error=e}}
-                            ui.label("Profielschaal");ui.add(egui::TextEdit::singleline(&mut dialog.editor.scale).desired_width(75.));
-                            if ui.small_button("Schaal toepassen").clicked(){dialog.error=dialog.editor.apply_scale(&mut dialog.options.choices).err().unwrap_or_default();}
-                        });
-                        });
-                        let mut add_raster=None;
-                        ui.add_enabled_ui(dialog.options.choices.len()<20_000,|ui|ui.menu_button("Losse GeoTIFF als vak toevoegen",|ui|{
-                            egui::ScrollArea::vertical().max_height(230.).show(ui,|ui|{
-                                for (index,raster) in rasters.iter().enumerate(){
-                                    if dialog.options.choices.iter().any(|choice|choice.raster==Some(index)||choice.source==Source::Raster(index)){continue;}
-                                    let name=raster.path.file_name().unwrap_or_default().to_string_lossy();
-                                    if ui.button(name).clicked(){add_raster=Some(index);ui.close_menu();}
-                                }
-                            });
-                        }));
-                        if let Some(index)=add_raster{
-                            let mut choice=template_project::raster_choice(index,&rasters[index]);
-                            choice.profile=dialog.opening_defaults.profiles;
-                            dialog.profile_baseline.insert(choice.source,choice.profile);
-                            dialog.options.choices.push(choice);
-                            dialog.automatic.push(sleufbase_rust::template_match::Suggestion{raster:Some(index),reason:sleufbase_rust::template_match::MatchKind::Missing});
-                            dialog.editor=sleufbase_rust::template_editor::Editor::new(
-                                &mut dialog.options.choices,rasters,&self.virtual_trenches,
-                            );
-                            dialog.editor.select(&dialog.options.choices,dialog.options.choices.len()-1,false,false);
-                            dialog.sort_mode=None;
-                        }
-                        });
                         let mut placements=dialog.placements();
+                        // All cards use the viewport width, not their different
+                        // source labels or the length of the current TIFF name.
                         for idx in 0..dialog.options.choices.len() {
                             ui.push_id(idx, |ui| {
-                                let card=theme::card(10,10,8).stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER})).show(ui,|ui| {
+                                let frame=theme::card(10,10,8)
+                                    .stroke(Stroke::new(1.0_f32,if dialog.editor.selected[idx]{ORANGE}else{theme::BORDER}));
+                                let content_width=(card_width-frame.total_margin().sum().x).max(0.);
+                                let card=frame.show(ui,|ui| {
+                                    ui.set_width(content_width);
+                                    // Keep the scroll area's vertical clip: this
+                                    // card can grow taller when details expand.
+                                    let mut clip=ui.clip_rect();
+                                    clip.min.x=clip.min.x.max(ui.max_rect().min.x);
+                                    clip.max.x=clip.max.x.min(ui.max_rect().max.x);
+                                    ui.set_clip_rect(clip);
+                                    ui.spacing_mut().item_spacing.y=8.;
                                     let mut placement_changed=false;
                                     ui.horizontal_wrapped(|ui| {
                                         let slot=&mut dialog.options.choices[idx];
@@ -542,11 +662,9 @@ impl SleufBaseApp {
                                         ui.colored_label(DARK, "Kies bij Details een GeoTIFF, of zet Meenemen uit.");
                                     }
                                     ui.collapsing("Details: bron, schaal en werkfoto’s", |ui| {
-                                    ui.horizontal(|ui| {
                                         ui.label("Naam");
-                                        ui.text_edit_singleline(&mut slot.title);
-                                    });
-                                    ui.horizontal_wrapped(|ui| {
+                                        ui.add(egui::TextEdit::singleline(&mut slot.title)
+                                            .desired_width(ui.available_width()));
                                         ui.label("GeoTIFF:");
                                         let selected_name = slot.raster.and_then(|i| rasters.get(i))
                                             .and_then(|r|r.path.file_name())
@@ -558,7 +676,8 @@ impl SleufBaseApp {
                                                 Source::Empty(_)=>"Leeg vak".into(),
                                             });
                                         egui::ComboBox::from_id_salt("raster")
-                                            .selected_text(selected_name)
+                                            .width(ui.available_width()).truncate()
+                                            .selected_text(&selected_name)
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut slot.raster, None,
                                                     if matches!(slot.source,Source::Virtual(_)){
@@ -572,9 +691,8 @@ impl SleufBaseApp {
                                                         format!("{} ({})", filename,
                                                             info.kickthemap_job_id.map_or("?".into(),|id|id.to_string())));
                                                 }
-                                            });
+                                            }).response.on_hover_text(selected_name);
                                         ui.add_enabled(!dialog.options.paired,egui::Checkbox::new(&mut slot.reverse,"Alleen omgekeerde richting"));
-                                    });
                                     ui.add_enabled_ui(slot.profile, |ui| {let previous=slot.manual_scale;template_profile_ui::scale(ui, &mut slot.manual_scale);if previous!=slot.manual_scale{sync_editor=true;}});
                                     if slot.include && slot.raster.is_none() && matches!(slot.source,Source::Job(_)) {
                                         ui.colored_label(DARK, "Koppel eerst een GeoTIFF voordat dit vak geëxporteerd kan worden.");
@@ -600,7 +718,8 @@ impl SleufBaseApp {
                                             ui.collapsing("GeoTIFF-voorbeeld en kaartgegevens", |ui| {
                                               ui.horizontal_wrapped(|ui| {
                                                 if let Some(Some(preview))=raster_previews.get(raster_index) {
-                                                    ui.add(egui::Image::new((preview.id(),egui::vec2(190.,120.))));
+                                                    let width=ui.available_width().min(190.).max(1.);
+                                                    ui.add(egui::Image::new((preview.id(),egui::vec2(width,width*120./190.))));
                                                 }
                                                 ui.vertical(|ui| {
                                                     ui.small(format!("RD X {:.1}–{:.1}",info.bounds.min_x,info.bounds.max_x));
@@ -636,11 +755,13 @@ impl SleufBaseApp {
                                         let mut remove=None;
                                         for (photo_index,photo) in slot.photos.iter_mut().enumerate() {
                                             ui.push_id(photo_index,|ui|{
-                                                ui.horizontal(|ui|{
-                                                    ui.label(photo.path.file_name()
+                                                    ui.add(egui::Label::new(photo.path.file_name()
                                                         .map(|s|s.to_string_lossy().to_string())
-                                                        .unwrap_or_else(||"Werkfoto".into())).on_hover_text(photo.path.display().to_string());
+                                                        .unwrap_or_else(||"Werkfoto".into())).truncate())
+                                                        .on_hover_text(photo.path.display().to_string());
+                                                ui.horizontal_wrapped(|ui|{
                                                     egui::ComboBox::from_id_salt("rotate")
+                                                        .width(70.).truncate()
                                                         .selected_text(format!("{}°",u32::from(photo.turns)*90))
                                                         .show_ui(ui,|ui|{
                                                             for turn in 0..4 {
@@ -648,6 +769,7 @@ impl SleufBaseApp {
                                                             }
                                                         });
                                                     egui::ComboBox::from_id_salt("area")
+                                                        .width(90.).truncate()
                                                         .selected_text(match photo.area{
                                                             sleufbase_rust::template_photo::Area::Tiff=>"Op TIFF",
                                                             sleufbase_rust::template_photo::Area::Map=>"Op kaart",
@@ -664,7 +786,8 @@ impl SleufBaseApp {
                                         if let Some(index)=remove {slot.photos.remove(index);}
                                     });
                                     ui.collapsing("Opmerkingen", |ui| {
-                                        ui.text_edit_multiline(&mut slot.comments);
+                                        ui.add(egui::TextEdit::multiline(&mut slot.comments)
+                                            .desired_width(ui.available_width()));
                                     });
                                     });
                                 });
@@ -672,6 +795,7 @@ impl SleufBaseApp {
                                     ui.scroll_to_rect(card.response.rect,Some(egui::Align::Min));
                                 }
                             });
+                            ui.add_space(4.);
                         }
                         });
                     }
@@ -682,25 +806,11 @@ impl SleufBaseApp {
                         }
                         if let Some((index,control,shift))=clicked_row.take() {
                             dialog.editor.select(&dialog.options.choices,index,control,shift);
+                            ui.ctx().request_repaint();
                         } else if sync_editor {
                             dialog.editor.sync(&dialog.options.choices);
                         }
-                    {
-                        let ui=&mut controls_ui;
-                        if let Some(direction)=crate::template_dialog::order_controls(ui,&dialog.editor.selected,body_height) {
-                                let swaps=dialog.editor.move_selected(&mut dialog.options.choices,direction);
-                                if !swaps.is_empty() {
-                                    dialog.sort_mode=None;
-                                    for(a,b)in swaps {dialog.automatic.swap(a,b);}
-                                    dialog.reveal_row=if direction<0 {
-                                        dialog.editor.selected.iter().position(|selected|*selected)
-                                    } else {
-                                        dialog.editor.selected.iter().rposition(|selected|*selected)
-                                    };
-                                ui.ctx().request_repaint();
-                            }
-                        }
-                    }
+                    project_order_panel(&mut controls_ui,dialog,rasters,&self.virtual_trenches,body_height);
                         ui.separator();
                         if !dialog.error.is_empty() {
                             ui.add(egui::Label::new(egui::RichText::new(format!("Laatste poging: {}",dialog.error)).color(DARK)).truncate()).on_hover_text(&dialog.error);

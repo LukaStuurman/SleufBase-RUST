@@ -64,7 +64,8 @@ impl SleufBaseApp {
                 painter.with_clip_rect(clip).add(shape);
             }
         }
-        // This is paint only: the background has no live buttons or map tools.
-        painter.rect_filled(screen, 0., Color32::from_white_alpha(115));
+        // Dim only the frozen background; the progress window above keeps its
+        // light surface. This painted view has no live buttons or map tools.
+        painter.rect_filled(screen, 0., Color32::from_black_alpha(120));
     }
 }

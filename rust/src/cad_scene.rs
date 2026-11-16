@@ -68,6 +68,7 @@ pub struct RenderFeature {
 pub struct Scene {
     pub features: Vec<RenderFeature>,
     instances: Vec<Instance>,
+    spatial: Option<crate::cad_spatial::Index>,
 }
 pub struct DrawRef<'a> {
     pub source: &'a DxfFeature,
@@ -504,6 +505,12 @@ impl DxfOverlay {
                 })?;
             }
         }
+        builder.scene.spatial = Some(crate::cad_spatial::Index::build(
+            self.features.len(),
+            self.features.iter().map(|feature| feature.points.as_slice())
+                .chain(builder.scene.features.iter().map(|feature| feature.points.as_slice())),
+            cancel,
+        )?);
         warnings.extend(builder.warnings);
         self.expanded = Arc::new(builder.scene);
         self.block_warnings = warnings.into_iter().collect();
@@ -574,6 +581,24 @@ impl DxfOverlay {
                 palette: self.root_palette(source),
             })
             .chain(self.expanded.features.iter().map(|f| self.drawn(f)))
+    }
+    /// Spatial candidates in the existing inspect_feature index space. Root
+    /// INSERT origins remain present for callers that inspect source records;
+    /// work-map painting/picking skips them in favor of expanded block leaves.
+    /// Visibility is resolved afterwards, so layer toggles need no index rebuild.
+    pub fn feature_indices_in(&self, bounds: crate::model::Bounds) -> Vec<usize> {
+        if let Some(index) = self.expanded.spatial.as_ref()
+            .filter(|index| index.source_count == self.features.len())
+        {
+            return index.query(bounds);
+        }
+        // Old/manual overlays can be inspected before their derived cache is
+        // prepared. Keep their contract without silently dropping geometry.
+        (0..self.features.len() + self.expanded.features.len()).filter(|&index| {
+            self.inspect_feature(index)
+                .and_then(|feature| crate::cad_spatial::bounds(feature.points))
+                .is_some_and(|feature| crate::cad_spatial::intersects(feature, bounds))
+        }).collect()
     }
     pub fn inspect_feature(&self, index: usize) -> Option<DrawRef<'_>> {
         if index < self.features.len() {

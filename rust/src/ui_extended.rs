@@ -725,6 +725,7 @@ impl SleufBaseApp {
                 self.handle_map_comments(&view);
             }
             self.update_view_selection(old_virtual, old_raster.as_deref());
+            self.paint_selected_cable(&view);
         }
         self.show_location_on_map(ui, canvas_rect);
         theme::finish_map_frame(ui, canvas_rect, 18., Color32::WHITE);

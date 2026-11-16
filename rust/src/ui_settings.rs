@@ -376,33 +376,14 @@ fn contact_fields(ui: &mut egui::Ui, contact: &mut sleufbase_rust::template_bran
     if ui.button("Standaard Techbase-gegevens herstellen").clicked() {
         *contact = Default::default();
     }
-    let width = ui.available_width();
-    let rows = [
+    super::theme::text_fields(ui, "settings-template-contact", [
         ("Adres", &mut contact.street),
         ("Postcode", &mut contact.postcode),
         ("Plaats", &mut contact.city),
         ("Telefoon", &mut contact.phone),
         ("E-mail", &mut contact.email),
         ("Website", &mut contact.website),
-    ];
-    if width >= 360. {
-        egui::Grid::new("settings-template-contact")
-            .num_columns(2)
-            .show(ui, |ui| {
-                for (label, value) in rows {
-                    ui.label(label);
-                    ui.add(egui::TextEdit::singleline(value)
-                        .id_salt(("template-contact", label)).desired_width((width - 110.).max(80.)));
-                    ui.end_row();
-                }
-            });
-    } else {
-        for (label, value) in rows {
-            ui.label(label);
-            ui.add(egui::TextEdit::singleline(value)
-                .id_salt(("template-contact", label)).desired_width(width));
-        }
-    }
+    ]);
     ui.small("Laat een veld leeg om die contactregel weg te laten. Klik op Opslaan om de wijzigingen toe te passen.");
 }
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {

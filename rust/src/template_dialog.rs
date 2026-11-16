@@ -189,54 +189,39 @@ pub(crate) fn title_fields(ui: &mut egui::Ui, fields: &mut sleufbase_rust::templ
         .default_open(true)
         .show(ui, |ui| {
             ui.small("Deze gegevens komen op ieder gebruikt blad.");
-            let width = ui.available_width();
-            let rows = [
+            crate::ui::theme::text_fields(ui, "template-title-fields-grid", [
                 ("Gezien", &mut fields.checked_by),
                 ("Status", &mut fields.status),
                 ("Versie", &mut fields.version),
                 ("Referentie Tekeningen", &mut fields.reference_drawings),
                 ("ProjectNr.BGM", &mut fields.project_number),
                 ("TEK.NR.", &mut fields.drawing_number),
-            ];
-            if width >= 360. {
-                let field_width = (width - 164. - ui.spacing().item_spacing.x).max(80.);
-                egui::Grid::new("template-title-fields-grid")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        for (label, value) in rows {
-                            ui.label(label);
-                            ui.add(egui::TextEdit::singleline(value)
-                                .id_salt(label).desired_width(field_width));
-                            ui.end_row();
-                        }
-                    });
-            } else {
-                for (label, value) in rows {
-                    ui.label(label);
-                    ui.add(egui::TextEdit::singleline(value)
-                        .id_salt(label).desired_width(width));
-                }
-            }
+            ]);
         })
         .header_response
         .on_hover_text("Vul gezien, status, versie, referentietekening, projectnummer en tekeningnummer in.");
 }
 /// Keep these controls beside the outer form scroll area, never inside it.
 pub(crate) fn order_columns(ui: &mut egui::Ui, height: f32) -> (egui::Ui, egui::Ui) {
-    let controls_width = if ui.available_width() < 480. { 88. } else { 116. };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let width = ui.available_width().max(1.);
+    let gap = 12_f32.min(width * 0.04);
+    let preferred = if width >= 760. { 260. } else if width >= 620. { 230. }
+        else if width >= 480. { 200. } else { width * 0.42 };
+    let controls_width = preferred.min((width - gap) * 0.48).max(1.);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let controls_rect = egui::Rect::from_min_max(
         egui::pos2(rect.right() - controls_width, rect.top()), rect.max);
     let body_rect = egui::Rect::from_min_max(rect.min,
-        egui::pos2(controls_rect.left() - 12., rect.bottom()));
+        egui::pos2(controls_rect.left() - gap, rect.bottom()));
     let mut make = |salt, rect: egui::Rect| {
         let mut child = ui.new_child(egui::UiBuilder::new().id_salt(salt).max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::LEFT)));
+        child.set_width(rect.width().max(1.));
         child.set_clip_rect(ui.clip_rect().intersect(rect));
         child
     };
-    // Explicit rectangles keep long fields from pushing the right column out
-    // of view; neither column participates in the other's scrolling or width.
+    // The right pane owns both fixed movement buttons and its own scrolling
+    // tools. Widths stay independent from the form and the length of a row.
     (make("export-order-body", body_rect), make("export-order-controls", controls_rect))
 }
 pub(crate) fn order_controls(ui: &mut egui::Ui, selection: &[bool], height: f32) -> Option<i32> {
@@ -255,11 +240,97 @@ pub(crate) fn order_controls(ui: &mut egui::Ui, selection: &[bool], height: f32)
             .clicked()
         { direction = Some(offset); }
     }
-    if height >= 210. {
-        ui.add_space(8.);
-        ui.small("Selecteer links een regel. Ctrl/Shift kiest meerdere regels.");
-    }
     direction
+}
+/// Bulk controls scroll independently beneath the fixed movement buttons.
+fn order_tools(ui: &mut egui::Ui, d: &mut Dialog) {
+    let button = |ui: &mut egui::Ui, label: &str, enabled: bool| {
+        let clicked = ui.add_enabled(enabled, egui::Button::new(label).wrap()
+            .min_size(egui::vec2(ui.available_width(), 28.))).clicked();
+        if clicked { ui.ctx().request_repaint(); }
+        clicked
+    };
+    ui.small("Selecteer links een regel. Ctrl/Shift kiest meerdere regels.");
+    ui.separator();
+    ui.strong("Sorteren");
+    let mut requested_sort = d.sort_mode;
+    egui::ComboBox::from_id_salt("raster-template-sort")
+        .width(ui.available_width())
+        .wrap()
+        .selected_text(requested_sort.map_or("Handmatig / opgeslagen", SortMode::label))
+        .show_ui(ui, |ui| {
+            for mode in SortMode::ALL {
+                ui.selectable_value(&mut requested_sort, Some(mode), mode.label());
+            }
+        });
+    let sort_again = button(ui, "Opnieuw sorteren", !d.state.rows.is_empty());
+    if sort_again || requested_sort != d.sort_mode {
+        ui.ctx().request_repaint();
+        let mode = requested_sort.unwrap_or(SortMode::NumberAsc);
+        let order = d.state.sort_rows(mode);
+        template_order::reorder(&mut d.selected, &order);
+        d.sort_mode = Some(mode);
+        d.anchor = d.selected.iter().position(|selected| *selected).unwrap_or(0);
+        d.reveal_row = d.selected.iter().position(|selected| *selected);
+        d.sync_controls();
+    }
+
+    ui.separator();
+    ui.strong("Selectie");
+    let selected_rows = d.selected.iter().filter(|selected| **selected).count();
+    for (text, included) in [("Selectie meenemen", true), ("Selectie uitsluiten", false)] {
+        if button(ui, text, selected_rows > 0) {
+            for (row, selected) in d.state.rows.iter_mut().zip(&d.selected) {
+                if *selected && row.raster.is_some() { row.included = included; }
+            }
+        }
+    }
+    ui.separator();
+    ui.strong("Nummering en schaal");
+    ui.label("PS-nummer");
+    ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
+        egui::TextEdit::singleline(&mut d.number));
+    ui.label("Variant");
+    ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
+        egui::TextEdit::singleline(&mut d.variant));
+    ui.small("Leeg, AUTO, B/C/…");
+    if button(ui, "Nummer/variant toepassen", selected_rows > 0) {
+        d.error = d.apply_label().err().unwrap_or_default();
+    }
+    ui.label("Profielschaal");
+    ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
+        egui::TextEdit::singleline(&mut d.scale));
+    if button(ui, "Schaal toepassen", selected_rows > 0) {
+        d.error = d.apply_scale().err().unwrap_or_default();
+    }
+
+    ui.separator();
+    ui.strong("Lege vakken");
+    if button(ui, "Leeg vak invoegen", d.state.rows.len() < 5000) {
+        let index = d.selected.iter().position(|selected| *selected)
+            .unwrap_or(d.state.rows.len());
+        d.state.rows.insert(index, Row::default());
+        d.selected = vec![false; d.state.rows.len()];
+        d.selected[index] = true;
+        d.anchor = index;
+        d.reveal_row = Some(index);
+        d.sort_mode = None;
+        d.sync_controls();
+    }
+    let empty_selected = d.state.rows.iter().zip(&d.selected)
+        .any(|(row, selected)| *selected && row.raster.is_none());
+    if button(ui, "Lege vakken verwijderen", empty_selected) {
+        let mut index = 0;
+        d.state.rows.retain(|row| {
+            let keep = row.raster.is_some() || !d.selected[index];
+            index += 1;
+            keep
+        });
+        d.selected = vec![false; d.state.rows.len()];
+        d.anchor = 0;
+        d.reveal_row = None;
+        d.sync_controls();
+    }
 }
 impl Dialog {
     pub fn new(mut state: State, rasters: &[GeoTiffInfo], generation: u64) -> Self {
@@ -464,35 +535,7 @@ pub(crate) fn show(
 
         ui.separator();
         ui.heading("2. Proefsleuven en volgorde");
-        ui.label("Standaard sorteert de export op PS-nummer (PS1, PS2, PS10). Ctrl/Shift selecteert meerdere regels; handmatig verplaatsen blijft mogelijk.");
-        let mut requested_sort=d.sort_mode;
-        ui.horizontal_wrapped(|ui|{
-            ui.label("Sorteren op");
-            egui::ComboBox::from_id_salt("raster-template-sort")
-                .selected_text(requested_sort.map_or("Handmatig / opgeslagen",SortMode::label))
-                .show_ui(ui,|ui|{
-                    for mode in SortMode::ALL {
-                        ui.selectable_value(&mut requested_sort,Some(mode),mode.label());
-                    }
-                });
-            if ui.small_button("Opnieuw sorteren").clicked(){
-                requested_sort=Some(requested_sort.unwrap_or(SortMode::NumberAsc));
-                // Force the same order again after manually changing PS numbers.
-                let order=d.state.sort_rows(requested_sort.unwrap());
-                template_order::reorder(&mut d.selected,&order);
-                d.anchor=d.selected.iter().position(|s|*s).unwrap_or(0);
-                d.sync_controls();
-            }
-        });
-        if requested_sort!=d.sort_mode {
-            d.sort_mode=requested_sort;
-            if let Some(mode)=requested_sort{
-                let order=d.state.sort_rows(mode);
-                template_order::reorder(&mut d.selected,&order);
-                d.anchor=d.selected.iter().position(|s|*s).unwrap_or(0);
-                d.sync_controls();
-            }
-        }
+        ui.label("Kies hier een proefsleuf. Rechts staan de opties voor volgorde, selectie, nummering en lege vakken.");
         let labels=Some(d.state.preview_labels().0);
 
         let row_height=26.;
@@ -547,65 +590,6 @@ pub(crate) fn show(
             // moved row; scrolling only one leaves it hidden in the other.
             ui.scroll_to_rect(list.inner_rect,Some(egui::Align::Min));
         }
-
-        ui.horizontal_wrapped(|ui| {
-            for (text, included) in [("Wel meenemen", true), ("Niet meenemen", false)] {
-                if ui.button(text).clicked() {
-                    for (r, s) in d.state.rows.iter_mut().zip(&d.selected) {
-                        if *s && r.raster.is_some() {
-                            r.included = included;
-                        }
-                    }
-                }
-            }
-
-            if ui
-                .add_enabled(
-                    d.state.rows.len() < 5000,
-                    egui::Button::new("Leeg vak invoegen"),
-                )
-                .clicked()
-            {
-                let index = d
-                    .selected
-                    .iter()
-                    .position(|s| *s)
-                    .unwrap_or(d.state.rows.len());
-                d.state.rows.insert(index, Row::default());
-                d.selected = vec![false; d.state.rows.len()];
-                d.selected[index] = true;
-                d.anchor = index;
-                d.sync_controls();
-            }
-
-            if ui.button("Lege vakken verwijderen").clicked() {
-                let mut index = 0;
-                d.state.rows.retain(|r| {
-                    let keep = r.raster.is_some() || !d.selected[index];
-                    index += 1;
-                    keep
-                });
-                d.selected = vec![false; d.state.rows.len()];
-                d.anchor = 0;
-                d.sync_controls();
-            }
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            ui.label("PS-nummer");
-            ui.add(egui::TextEdit::singleline(&mut d.number).desired_width(80.));
-            ui.label("Variant");
-            ui.add(egui::TextEdit::singleline(&mut d.variant).desired_width(90.));
-            ui.label("Leeg, AUTO, B/C/…");
-            if ui.button("Nummer/variant toepassen").clicked() {
-                d.error = d.apply_label().err().unwrap_or_default();
-            }
-            ui.label("Profielschaal");
-            ui.add(egui::TextEdit::singleline(&mut d.scale).desired_width(85.));
-            if ui.button("Schaal toepassen").clicked() {
-                d.error = d.apply_scale().err().unwrap_or_default();
-            }
-        });
 
         let selected = d
             .selected
@@ -672,10 +656,9 @@ pub(crate) fn show(
                     }
                 });
 
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Opmerkingen");
-                    ui.add(egui::TextEdit::singleline(&mut row.comments).desired_width(690.));
-                });
+                ui.label("Opmerkingen");
+                ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut row.comments));
             }
         }
 
@@ -736,6 +719,16 @@ pub(crate) fn show(
                     d.sync_controls();
                 ui.ctx().request_repaint();
             }
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt("raster-template-order-tools")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .max_height(ui.available_height().max(1.))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    order_tools(ui, d);
+                });
         }
         ui.separator();
         let included = d
@@ -782,11 +775,11 @@ pub(crate) fn show(
     let screen=ctx.screen_rect();
     let maximum=egui::vec2((screen.width()-64.).max(280.),(screen.height()-88.).max(200.));
     egui::Window::new("DXF-sjabloon exporteren")
-        .id(egui::Id::new("raster-template-compact-v2"))
+        .id(egui::Id::new("raster-template-compact-v3"))
         .open(&mut open)
         .anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO)
-        .default_size(egui::vec2(800.,510.).min(maximum))
-        .min_size(egui::vec2(360.,240.).min(maximum))
+        .default_size(egui::vec2(940.,560.).min(maximum))
+        .min_size(egui::vec2(680.,320.).min(maximum))
         .max_size(maximum)
         .constrain_to(screen.shrink(16.))
         .collapsible(false)

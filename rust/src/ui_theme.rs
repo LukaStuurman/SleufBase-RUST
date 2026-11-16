@@ -156,6 +156,62 @@ pub(super) fn finish_map_frame(ui: &egui::Ui, rect: egui::Rect, radius: f32, out
     painter.rect_stroke(rect, radius, Stroke::new(1_f32, BORDER), egui::StrokeKind::Inside);
 }
 
+/// Keep short form labels intact and align their inputs without allowing a
+/// TextEdit's desired inner width to determine the label column or form width.
+pub(crate) fn text_fields<const N: usize>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    rows: [(&str, &mut String); N],
+) {
+    let form_id = ui.make_persistent_id(id_salt);
+    let label_size = rows.iter().fold(egui::Vec2::ZERO, |size, (label, _)| {
+        let galley = egui::WidgetText::from(*label).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::FontSelection::Default,
+        );
+        size.max(galley.size())
+    });
+    let label_width = label_size.x.ceil() + 4.;
+    let row_height = ui.spacing().interact_size.y.max(label_size.y.ceil() + 6.);
+    let gap = ui.spacing().item_spacing.x.max(12.);
+    let width = ui.available_width().clamp(0., 640.);
+    let inline = width >= label_width + gap + 180_f32.max(label_width);
+    ui.scope(|ui| {
+        ui.set_width(width);
+        if inline {
+            let field_width = width - label_width - gap;
+            // Grid's default first column starts at interact_size.x, and labels
+            // inherit wrapping from the surrounding dialog. Reserve the measured
+            // column explicitly, then size the complete input including margins.
+            egui::Grid::new(form_id)
+                .num_columns(2)
+                .min_col_width(label_width)
+                .min_row_height(row_height)
+                .spacing(egui::vec2(gap, ui.spacing().item_spacing.y))
+                .show(ui, |ui| {
+                    for (label, value) in rows {
+                        let label_response = ui.add(egui::Label::new(label)
+                            .wrap_mode(egui::TextWrapMode::Extend));
+                        ui.add_sized([field_width, row_height], egui::TextEdit::singleline(value)
+                            .id(form_id.with(label)))
+                            .labelled_by(label_response.id);
+                        ui.end_row();
+                    }
+                });
+        } else {
+            for (label, value) in rows {
+                let label_response = ui.add(egui::Label::new(label)
+                    .wrap_mode(egui::TextWrapMode::Extend));
+                ui.add_sized([width, row_height], egui::TextEdit::singleline(value)
+                    .id(form_id.with(label)))
+                    .labelled_by(label_response.id);
+            }
+        }
+    });
+}
+
 pub(super) fn title(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .inner_margin(egui::Margin {
