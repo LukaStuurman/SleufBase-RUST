@@ -39,6 +39,9 @@ impl State {
         self.worker.as_ref().is_some_and(|w| w.busy())
     }
 }
+fn is_osm(source: Provider) -> bool {
+    matches!(source, Provider::Osm | Provider::OsmCadastral)
+}
 pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewport {
     let [left, top] = view.world(view.rect.left_top());
     let [right, bottom] = view.world(view.rect.right_bottom());
@@ -46,7 +49,7 @@ pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewpo
     let mut width = (view.rect.width() * ratio).ceil().max(1.) as u32;
     let mut height = (view.rect.height() * ratio).ceil().max(1.) as u32;
     // Keep full world coverage even on an unusually large/high-DPI display.
-    let (side, pixels) = if source == Provider::Osm {
+    let (side, pixels) = if is_osm(source) {
         (f64::from(sleufbase_rust::osm_tiles::VIEWPORT_MAX_SIDE),
             sleufbase_rust::osm_tiles::VIEWPORT_MAX_PIXELS as f64)
     } else { (10_000., 50_000_000.) };
@@ -83,8 +86,10 @@ impl SleufBaseApp {
         } else {
             match self.project_view.provider() {
                 B::PdokAerial => Some(Provider::Aerial),
+                B::PdokAerialCadastral => Some(Provider::AerialCadastral),
                 B::Cadastral => Some(Provider::Cadastral),
                 B::OpenStreetMap => Some(Provider::Osm),
+                B::OpenStreetMapCadastral => Some(Provider::OsmCadastral),
                 _ => None,
             }
         };
@@ -135,8 +140,8 @@ impl SleufBaseApp {
             }
             self.map_requests.worker.as_mut().unwrap().start(request);
         }
-        self.pdok_busy = self.map_requests.busy() && source != Some(Provider::Osm);
-        self.osm_busy = self.map_requests.busy() && source == Some(Provider::Osm);
+        self.pdok_busy = self.map_requests.busy() && !source.is_some_and(is_osm);
+        self.osm_busy = self.map_requests.busy() && source.is_some_and(is_osm);
         if let Some(deadline) = self.map_requests.scheduler.next_deadline() {
             view.painter
                 .ctx()
@@ -170,11 +175,19 @@ impl SleufBaseApp {
             // arrive; replacing it with a partial frame makes every pan flash.
             // OSM interim frames already retain/reproject the previous complete
             // background beneath new tiles, so they can safely refresh its edges.
-            if self.map_requests.complete_image && request.view.source != Provider::Osm { return; }
+            // Aerial+Cadastral also previews a complete base image, never an
+            // incomplete WMS mosaic, while the parcel overlay is still loading.
+            if self.map_requests.complete_image && !is_osm(request.view.source)
+                && request.view.source != Provider::AerialCadastral { return; }
             self.map_requests.scheduler.preview(request);
         }
         if let Some((completed, total)) = progress {
-            self.message = format!("Kaartachtergrond ophalen: {completed}/{total} tegels");
+            self.message = match request.view.source {
+                Provider::AerialCadastral => "Luchtfoto geladen; percelen ophalen…".into(),
+                Provider::OsmCadastral if total > 0 && completed == total =>
+                    "OpenStreetMap geladen; percelen ophalen…".into(),
+                _ => format!("Kaartachtergrond ophalen: {completed}/{total} tegels"),
+            };
         }
         match result {
             Ok(pixels) => {
@@ -182,7 +195,7 @@ impl SleufBaseApp {
                     [pixels.width as usize, pixels.height as usize],
                     &pixels.rgba,
                 );
-                if request.view.source == Provider::Osm {
+                if is_osm(request.view.source) {
                     if let Some(t) = &mut self.osm_texture {
                         t.set(image, egui::TextureOptions::LINEAR);
                     } else {
@@ -206,10 +219,10 @@ impl SleufBaseApp {
                     }
                     self.pdok_bounds = Some(pixels.bounds);
                     self.osm_visible = false;
-                    self.pdok_source = if request.view.source == Provider::Cadastral {
-                        pdok_wms::Source::Cadastral
-                    } else {
-                        pdok_wms::Source::Aerial
+                    self.pdok_source = match request.view.source {
+                        Provider::Cadastral => pdok_wms::Source::Cadastral,
+                        Provider::AerialCadastral => pdok_wms::Source::AerialCadastral,
+                        _ => pdok_wms::Source::Aerial,
                     };
                 }
                 if terminal {
@@ -229,8 +242,8 @@ impl SleufBaseApp {
                 self.message = format!("Kaartachtergrond ophalen mislukt: {error}");
             }
         }
-        self.pdok_busy = self.map_requests.busy() && request.view.source != Provider::Osm;
-        self.osm_busy = self.map_requests.busy() && request.view.source == Provider::Osm;
+        self.pdok_busy = self.map_requests.busy() && !is_osm(request.view.source);
+        self.osm_busy = self.map_requests.busy() && is_osm(request.view.source);
         ctx.request_repaint();
     }
 }

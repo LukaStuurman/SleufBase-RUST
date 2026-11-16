@@ -115,7 +115,9 @@ fn effective_map_label(options: &Options) -> &'static str {
         match options.background {
             BackgroundKind::Blank=>"Online · witte kaart",
             BackgroundKind::Pdok=>"Online · PDOK-luchtfoto",
+            BackgroundKind::PdokCadastral=>"Online · PDOK Luchtfoto + percelen",
             BackgroundKind::Osm=>"Online · OpenStreetMap",
+            BackgroundKind::OsmCadastral=>"Online · OpenStreetMap + percelen",
             BackgroundKind::Cadastral=>"Online · Kadaster",
         }
     }
@@ -315,7 +317,9 @@ fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Achtergrond");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Pdok,"Luchtfoto");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::PdokCadastral,"PDOK Luchtfoto + percelen");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Osm,"OpenStreetMap");
+                ui.radio_value(&mut dialog.options.background,BackgroundKind::OsmCadastral,"OpenStreetMap + percelen");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Cadastral,"Kadaster");
                 ui.radio_value(&mut dialog.options.background,BackgroundKind::Blank,"Wit");
             });

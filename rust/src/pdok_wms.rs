@@ -1,4 +1,4 @@
-//! Native PDOK aerial WMS integration (EPSG:28992).
+//! Native PDOK aerial and cadastral WMS integration (EPSG:28992).
 //! Uses the same default PDOK source and WMS 1.1.1 parameters as Python pdok.py.
 //! The source URL is fixed; this module never forwards arbitrary endpoints.
 
@@ -18,18 +18,23 @@ const CADASTRAL_WMS_URL: &str = "https://service.pdok.nl/kadaster/kadastralekaar
 pub enum Source {
     Aerial,
     Cadastral,
+    AerialCadastral,
+    CadastralOverlay,
 }
 impl Source {
     fn endpoint(self) -> &'static str {
         match self {
-            Self::Aerial => PDOK_WMS_URL,
-            Self::Cadastral => CADASTRAL_WMS_URL,
+            Self::Aerial | Self::AerialCadastral => PDOK_WMS_URL,
+            Self::Cadastral | Self::CadastralOverlay => CADASTRAL_WMS_URL,
         }
     }
     fn layer(self) -> &'static str {
         match self {
-            Self::Aerial => "Actueel_orthoHR",
+            Self::Aerial | Self::AerialCadastral => "Actueel_orthoHR",
             Self::Cadastral => "Kadastralekaart",
+            // Only transparent line/label layers: parcel/building fills would
+            // obscure the aerial or OpenStreetMap underneath.
+            Self::CadastralOverlay => "KadastraleGrens,Bijpijling,Label",
         }
     }
 }
@@ -74,6 +79,10 @@ pub fn build_wms_url_for(
     height: u32,
 ) -> Result<reqwest::Url, String> {
     validate(bounds, width, height)?;
+    if source == Source::AerialCadastral {
+        return Err("Luchtfoto met percelen wordt uit twee kaartlagen opgebouwd".into());
+    }
+    let transparent = source == Source::CadastralOverlay;
     let mut url = reqwest::Url::parse(source.endpoint()).map_err(|e| e.to_string())?;
     {
         let mut query = url.query_pairs_mut();
@@ -81,9 +90,9 @@ pub fn build_wms_url_for(
         query.append_pair("VERSION", "1.1.1");
         query.append_pair("REQUEST", "GetMap");
         query.append_pair("LAYERS", source.layer());
-        query.append_pair("STYLES", "");
+        query.append_pair("STYLES", if transparent { "standaard,standaard,standaard" } else { "" });
         query.append_pair("FORMAT", "image/png");
-        query.append_pair("TRANSPARENT", "FALSE");
+        query.append_pair("TRANSPARENT", if transparent { "TRUE" } else { "FALSE" });
         query.append_pair("SRS", "EPSG:28992");
         query.append_pair("WIDTH", &width.to_string());
         query.append_pair("HEIGHT", &height.to_string());
@@ -247,6 +256,25 @@ impl WmsClient {
         height: u32,
         cancel: &AtomicBool,
     ) -> Result<SharedRaster, String> {
+        if source == Source::AerialCadastral {
+            crate::input::check(cancel)?;
+            if let Some(raster) = self.lookup_shared(source, bounds, width, height)? {
+                crate::input::check(cancel)?;
+                return Ok(raster);
+            }
+            // Fetch both sources on exactly the same RD grid, sequentially in
+            // the calling tile worker, without a cache lock or nested tile pool.
+            let aerial = self.request_shared(Source::Aerial, bounds, width, height, cancel)?;
+            let overlay = self.request_shared(Source::CadastralOverlay, bounds, width, height, cancel)?;
+            let mut image = image::RgbaImage::from_raw(width, height, aerial.rgba.to_vec())
+                .ok_or("PDOK-cache bevat ongeldige pixels")?;
+            let overlay = image::RgbaImage::from_raw(width, height, overlay.rgba.to_vec())
+                .ok_or("PDOK-cache bevat ongeldige pixels")?;
+            composite_rgba(&mut image, &overlay, cancel)?;
+            let rgba: std::sync::Arc<[u8]> = image.into_raw().into();
+            self.remember(cache_key(source, bounds, width, height), rgba.clone())?;
+            return Ok(SharedRaster { bounds, width, height, rgba });
+        }
         let url = build_wms_url_for(source, bounds, width, height)?;
         self.request_url(source, bounds, width, height, url, cancel)
     }
@@ -292,7 +320,11 @@ impl WmsClient {
                     return Err("PDOK gaf geen kaartbeeld terug".into());
                 }
                 let bytes = read_response(response, &stop)?;
-                decode_response(&bytes, width, height, &stop)
+                if source == Source::CadastralOverlay {
+                    decode_response_with_transparency(&bytes, width, height, &stop, true)
+                } else {
+                    decode_response(&bytes, width, height, &stop)
+                }
             })
             .and_then(|r| r);
             crate::input::check(cancel)?;
@@ -357,6 +389,15 @@ fn decode_response(
     height: u32,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
+    decode_response_with_transparency(bytes, width, height, cancel, false)
+}
+fn decode_response_with_transparency(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    cancel: &AtomicBool,
+    require_alpha: bool,
+) -> Result<Vec<u8>, String> {
     crate::input::check(cancel)?;
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err("PDOK-antwoord is onverwacht groot".into());
@@ -366,6 +407,9 @@ fn decode_response(
     let format = image::guess_format(bytes).map_err(|_| "PDOK leverde geen geldige PNG/JPEG")?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
         return Err("PDOK leverde geen ondersteunde PNG/JPEG".into());
+    }
+    if require_alpha && format != image::ImageFormat::Png {
+        return Err("PDOK leverde geen transparante perceellaag".into());
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
@@ -378,6 +422,9 @@ fn decode_response(
         .map_err(|e| format!("PDOK afbeelding ongeldig: {e}"))?;
     if decoder.dimensions() != (width, height) {
         return Err("PDOK leverde onverwachte afbeeldingsafmetingen".into());
+    }
+    if require_alpha && !decoder.color_type().has_alpha() {
+        return Err("PDOK leverde geen transparante perceellaag".into());
     }
     let image = image::DynamicImage::from_decoder(decoder)
         .map_err(|e| format!("PDOK afbeelding ongeldig: {e}"))?;
@@ -404,6 +451,73 @@ pub fn request_tiled_for(
 ) -> Result<image::RgbaImage, String> {
     request_tiled_with_progress(source, bounds, width, height, cancel, None)
 }
+/// Add parcel boundaries, parcel numbers and leader lines to an existing RD
+/// image, without changing its extent, resolution, or base-map attribution.
+pub fn add_cadastral_overlay(
+    base: &mut image::RgbaImage,
+    bounds: Bounds,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let overlay = request_tiled_for(
+        Source::CadastralOverlay, bounds, base.width(), base.height(), cancel,
+    )?;
+    composite_rgba(base, &overlay, cancel)
+}
+/// Desktop overlays use the same bounded four-worker grid as their aerial
+/// base. No incomplete overlay is published over the complete base image.
+pub(crate) fn add_cadastral_overlay_for_view(
+    base: &mut image::RgbaImage,
+    bounds: Bounds,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut progress = |_: Progress<'_>| crate::input::check(cancel);
+    let overlay = request_tiled_with_progress(
+        Source::CadastralOverlay, bounds, base.width(), base.height(), cancel,
+        Some(&mut progress),
+    )?;
+    composite_rgba(base, &overlay, cancel)
+}
+/// Straight-alpha source-over composition. The output keeps the base grid;
+/// transparent overlay pixels leave every base channel unchanged.
+pub fn composite_rgba(
+    base: &mut image::RgbaImage,
+    overlay: &image::RgbaImage,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    crate::input::check(cancel)?;
+    if base.dimensions() != overlay.dimensions() {
+        return Err("Kaartbeeld en perceellaag hebben niet dezelfde afmetingen".into());
+    }
+    let row_bytes = base.width() as usize * 4;
+    if row_bytes == 0 {
+        return Ok(());
+    }
+    for (destination, source) in base.as_mut().chunks_exact_mut(row_bytes)
+        .zip(overlay.as_raw().chunks_exact(row_bytes))
+    {
+        crate::input::check(cancel)?;
+        for (dest, src) in destination.chunks_exact_mut(4).zip(source.chunks_exact(4)) {
+            let alpha = u32::from(src[3]);
+            if alpha == 0 {
+                continue;
+            }
+            if alpha == 255 {
+                dest.copy_from_slice(src);
+                continue;
+            }
+            let base_alpha = u32::from(dest[3]);
+            let combined = alpha * 255 + base_alpha * (255 - alpha);
+            for channel in 0..3 {
+                let numerator = u32::from(src[channel]) * alpha * 255
+                    + u32::from(dest[channel]) * base_alpha * (255 - alpha);
+                dest[channel] = ((numerator + combined / 2) / combined) as u8;
+            }
+            dest[3] = ((combined + 127) / 255) as u8;
+        }
+    }
+    crate::input::check(cancel)
+}
+
 /// A borrowed assembled image and exact completed-tile rectangle. The callback
 /// decides whether to upload/copy pixels; core never queues full-frame clones.
 pub struct Progress<'a> {
@@ -451,6 +565,7 @@ pub fn request_tiled_with_progress(
         width,
         height,
         cancel,
+        source == Source::CadastralOverlay,
         |b, w, h| request_map_for_with_cancel(source, b, w, h, cancel),
         progress,
     )?;
@@ -487,17 +602,30 @@ fn tiled(
 ) -> Result<image::RgbaImage, String> {
     tiled_progress(bounds, width, height, cancel, fetch, None)
 }
+#[cfg(test)]
 fn tiled_progress(
     bounds: Bounds,
     width: u32,
     height: u32,
     cancel: &AtomicBool,
+    fetch: impl FnMut(Bounds, u32, u32) -> Result<PdokRaster, String>,
+    progress: Option<&mut dyn FnMut(Progress<'_>) -> Result<(), String>>,
+) -> Result<image::RgbaImage, String> {
+    tiled_progress_with_alpha(bounds, width, height, cancel, false, fetch, progress)
+}
+fn tiled_progress_with_alpha(
+    bounds: Bounds,
+    width: u32,
+    height: u32,
+    cancel: &AtomicBool,
+    transparent: bool,
     mut fetch: impl FnMut(Bounds, u32, u32) -> Result<PdokRaster, String>,
     mut progress: Option<&mut dyn FnMut(Progress<'_>) -> Result<(), String>>,
 ) -> Result<image::RgbaImage, String> {
     crate::input::check(cancel)?;
     validate_frame(bounds, width, height)?;
-    let mut output = image::RgbaImage::from_pixel(width, height, image::Rgba([243, 243, 243, 255]));
+    let background = if transparent { [0, 0, 0, 0] } else { [243, 243, 243, 255] };
+    let mut output = image::RgbaImage::from_pixel(width, height, image::Rgba(background));
     let tile_size = if progress.is_some() { 512 } else { 2048 };
     if width <= tile_size && height <= tile_size {
         let tile = fetch(bounds, width, height)?;
@@ -547,6 +675,14 @@ fn tiled_progress(
                 crate::input::check(cancel)?;
                 let target = ((top + row) as usize * width as usize + left as usize) * 4;
                 let source = row as usize * w as usize * 4;
+                if transparent {
+                    // Tiles never overlap. Copying retains their original alpha;
+                    // blending onto a placeholder would turn empty parcels opaque.
+                    let row_bytes = w as usize * 4;
+                    output.as_mut()[target..target + row_bytes]
+                        .copy_from_slice(&tile.rgba[source..source + row_bytes]);
+                    continue;
+                }
                 for x in 0..w as usize {
                     let p = &tile.rgba[source + x * 4..source + x * 4 + 4];
                     let dest = &mut output.as_mut()[target + x * 4..target + x * 4 + 4];

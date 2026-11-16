@@ -1,27 +1,33 @@
-## SleufBase Rust 1.0.13 voor Windows
+## SleufBase Rust 1.0.14 voor Windows
 
-### Geen proefsleufnamen bij Weergave: Geen
+### Kandidatenlijst naast de kaart
 
-- **Weergave proefsleuf: Geen** onderdrukt de proefsleufnamen in het DXF-overzicht, ook wanneer **GeoTIFF-afbeeldingen meenemen in DXF-export** aan staat.
-- Oude proefsleufnamen uit een eigen sjabloon of voorbereide exportinvoer worden op de gereserveerde modelspace-laag leeggemaakt. Afbeeldingen, entiteitshandles en tekenvolgordeverwijzingen blijven behouden.
-- Voorbereide sjabloonexporten gebruiken de actuele overzichtsinstellingen. Ook een al geopend kadastraal exportvenster neemt gewijzigde algemene instellingen mee, met behoud van expliciete keuzes in dat venster.
-- Hartlijn en Vlak behouden hun proefsleufnamen. Vaste koppen bij detail- en profielvakken en andere kaartteksten blijven buiten deze overzichtsinstelling.
+- **Lijst (3)** naast **Kabelinformatie** toont het actuele aantal gevonden kabels bij de laatste kaartklik.
+- De knop opent een paneel rechts naast de kaart met alle kandidaten, hun laagnaam en beschikbare **XDATA InfraCAD**-informatie.
+- Klik op een regel om die kabel te selecteren. Het paneel blijft open om andere kandidaten te vergelijken; een nieuwe kaartklik werkt de lijst en de telling bij.
 
-### Kabels wisselen zonder scrollen
+### Eenduidig wisselen en selecteren
 
-Naast **Kabelinformatie** staan twee compacte knoppen:
+- De wisselknop kiest daadwerkelijk de volgende kabel uit dezelfde kandidatenlijst en gaat na de laatste terug naar de eerste.
+- De actieve lijstregel, **Kabelinformatie** en de gloed op de kaart volgen steeds hetzelfde geselecteerde object. De detailinformatie begint na een nieuwe keuze weer bovenaan.
+- De ingebouwde handleiding beschrijft de kandidatenlijst, de actuele telling en het wisselen tussen kabels.
 
-- De **wisselknop** kiest de volgende zichtbare kabel op dezelfde plek en gaat na de laatste weer naar de eerste.
-- **Lijst** opent een keuzelijst met laagnaam en XDATA InfraCAD-informatie, zodat je gericht een kabel kunt kiezen.
+### PS-naam naast de TIFF bij Weergave: Geen
 
-De knoppen blijven boven het informatievak bereikbaar. Bij een nieuwe keuze begint de detailinformatie weer bovenaan en volgt de kabelgloed de selectie. De oude keuzelijst onderaan het informatievak is verwijderd.
+- **Weergave proefsleuf: Geen** laat de hartlijn en het sleufvlak weg. Als **GeoTIFF-afbeeldingen meenemen in DXF-export** aan staat, blijven de TIFF én het PS-nummer of de proefsleufnaam naast het beeld zichtbaar.
+- De correctie geldt voor het kadastrale DXF-overzicht en het overzicht in de sjabloonexport. Bij **Geen** met GeoTIFF-afbeeldingen uit worden ook de TIFFs en hun proefsleufnamen weggelaten.
+- De toelichting in Instellingen en de ingebouwde handleiding beschrijft deze combinatie.
 
-### Lichtere KLIC-overzichten bij uitzoomen
+### Luchtfoto of OpenStreetMap met percelen
 
-- Drukke overzichten worden als een transparant, herbruikbaar kaartbeeld op schermresolutie bewaard. Hierdoor wordt een tekening die te groot is voor de vectorcache niet meer bij ieder schermframe volledig opnieuw opgebouwd.
-- Tijdens zoomen en verschuiven beweegt het bestaande overzicht direct mee. Kort na de beweging wordt het beeld voor de nieuwe uitsnede opnieuw opgebouwd; laagzichtbaarheid en kleuren worden meegenomen.
-- Lange paden krijgen een schaalafhankelijke vereenvoudiging. Details kleiner dan een beeldpunt worden compact weergegeven en onleesbaar kleine teksten komen terug bij inzoomen. De voorbereiding gebeurt tijdens het laden van de KLIC.
-- De volledige DXF-geometrie blijft beschikbaar voor kabelselectie, informatie en export. In een rustige of ingezoomde uitsnede blijven de gewone fijne vectorlijnen in gebruik.
+- **PDOK Luchtfoto + percelen** en **OpenStreetMap + percelen** zijn beschikbaar als achtergrond voor de werkkaart en kaartuitvoer.
+- Beide combineren de gekozen achtergrond met transparante perceelgrenzen, perceelnummers en bijpijlingen uit de kadastrale kaart van Kadaster/PDOK. De achtergrond blijft zichtbaar; de perceeldetails volgen het zoomniveau van de kaartdienst.
+- De keuze wordt bewaard in de instellingen en het Rust-project. Bestaande kaarttegels, cache en achtergrondtaken worden hergebruikt.
+
+### Consistente vormgeving
+
+- Alle scrollbalken gebruiken dezelfde duidelijk zichtbare stijl, breedte en kleuren, in **Proefsleuven**, **Overlays**, **Kabelinformatie**, de kandidatenlijst, instellingen, exportvensters, de handleiding en menu’s.
+- De overbodige tekst **GeoTIFF en KLIC** boven de kaart is verwijderd; de titel **Kaart** blijft staan.
 
 ### Build en release
 

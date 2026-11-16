@@ -126,9 +126,13 @@ impl SleufBaseApp {
             if self.osm_texture.is_some()
                 && ui.selectable_label(self.osm_visible, "OSM tonen").clicked()
             {
+                use sleufbase_rust::project_view::BackgroundProvider as B;
                 self.osm_visible = true;
                 self.project_view.use_background = true;
-                self.project_view.background_source = "OpenStreetMap".into();
+                let source = if self.project_view.provider() == B::OpenStreetMapCadastral {
+                    B::OpenStreetMapCadastral
+                } else { B::OpenStreetMap };
+                self.project_view.background_source = source.label().into();
                 self.dirty = true;
             }
             if self.pdok_texture.is_some()
@@ -138,13 +142,12 @@ impl SleufBaseApp {
             {
                 self.osm_visible = false;
                 self.project_view.use_background = true;
-                self.project_view.background_source =
-                    if self.pdok_source == pdok_wms::Source::Cadastral {
-                        "PDOK kadastrale kaart"
-                    } else {
-                        "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)"
-                    }
-                    .into();
+                use sleufbase_rust::project_view::BackgroundProvider as B;
+                self.project_view.background_source = match self.pdok_source {
+                    pdok_wms::Source::Cadastral => B::Cadastral,
+                    pdok_wms::Source::AerialCadastral => B::PdokAerialCadastral,
+                    _ => B::PdokAerial,
+                }.label().into();
                 self.dirty = true;
             }
             if ui
@@ -659,6 +662,17 @@ impl SleufBaseApp {
         self.navigation.show_background = Some(self.project_view.use_background);
         self.navigation.show_trench_labels = Some(self.migrated_settings.viewer.show_trench_labels);
         let canvas_rect = ui.available_rect_before_wrap();
+        // Credit only a hybrid background that this frame actually paints.
+        use sleufbase_rust::project_view::BackgroundProvider as B;
+        let hybrid_credit = if self.project_view.use_background {
+            match self.project_view.provider() {
+                B::PdokAerialCadastral if !self.osm_visible && self.pdok_texture.is_some()
+                    && self.pdok_bounds.is_some() => Some(false),
+                B::OpenStreetMapCadastral if self.osm_visible && self.osm_texture.is_some()
+                    && self.osm_bounds.is_some() => Some(true),
+                _ => None,
+            }
+        } else { None };
         let view = canvas(
             ui,
             &self.datasets,
@@ -726,6 +740,16 @@ impl SleufBaseApp {
             }
             self.update_view_selection(old_virtual, old_raster.as_deref());
             self.paint_selected_cable(&view);
+            if let Some(osm) = hybrid_credit {
+                let credit = view.painter.layout_no_wrap("Kadaster / PDOK".into(),
+                    egui::FontId::proportional(12.), INK);
+                // The OSM credit is already painted ten points above the bottom.
+                let bottom = if osm { 30. } else { 10. };
+                let position = view.rect.right_bottom() + egui::vec2(-10., -bottom) - credit.size();
+                let backing = egui::Rect::from_min_size(position, credit.size()).expand2(egui::vec2(4., 2.));
+                view.painter.rect_filled(backing, 3_u8, Color32::from_rgba_unmultiplied(255, 255, 255, 235));
+                view.painter.galley(position, credit, INK);
+            }
         }
         self.show_location_on_map(ui, canvas_rect);
         theme::finish_map_frame(ui, canvas_rect, 18., Color32::WHITE);

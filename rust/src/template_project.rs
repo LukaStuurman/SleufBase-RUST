@@ -48,7 +48,9 @@ pub struct Choice {
 pub enum BackgroundKind {
     Blank,
     Pdok,
+    PdokCadastral,
     Osm,
+    OsmCadastral,
     Cadastral,
 }
 impl BackgroundKind {
@@ -56,7 +58,9 @@ impl BackgroundKind {
         match value {
             "white" => Ok(Self::Blank),
             "pdok" => Ok(Self::Pdok),
+            "pdok_cadastral" => Ok(Self::PdokCadastral),
             "osm" => Ok(Self::Osm),
+            "osm_cadastral" => Ok(Self::OsmCadastral),
             "cadastral" => Ok(Self::Cadastral),
             _ => Err("Onbekende sjabloonkaartachtergrond".into()),
         }
@@ -65,7 +69,9 @@ impl BackgroundKind {
         match self {
             Self::Blank => Background::Solid { color: [250, 250, 250, 255] },
             Self::Pdok => Background::Pdok,
+            Self::PdokCadastral => Background::PdokCadastral,
             Self::Osm => Background::Osm,
+            Self::OsmCadastral => Background::OsmCadastral,
             Self::Cadastral => Background::Cadastral,
         }
     }

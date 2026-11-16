@@ -115,7 +115,7 @@ impl Default for ViewerPreferences {
 impl ViewerPreferences {
     pub fn validate(&self)->Result<(),String>{
         use crate::project_view::BackgroundProvider as B;
-        if matches!(B::from_label(&self.background_source),B::PdokAerial|B::Cadastral|B::OpenStreetMap){Ok(())}
+        if matches!(B::from_label(&self.background_source),B::PdokAerial|B::PdokAerialCadastral|B::Cadastral|B::OpenStreetMap|B::OpenStreetMapCadastral){Ok(())}
         else{Err("Kies een geldige achtergrond op het kaartscherm".into())}
     }
     pub fn project_view(&self)->crate::project_view::ProjectView{
@@ -252,7 +252,7 @@ pub fn from_legacy_json(content:&str)->Result<MigratedSettings,String> {
         export_preferences:ExportPreferences::from_legacy(&value),
         map_export:crate::map_batch::Settings{
             background:obj.get("map_export_background_source").and_then(Value::as_str)
-                .filter(|s|matches!(*s,"pdok"|"osm"|"cadastral"))
+                .filter(|s|matches!(*s,"pdok"|"pdok_cadastral"|"osm"|"osm_cadastral"|"cadastral"))
                 .unwrap_or("pdok").to_owned(),
             include_cad:boolean(obj.get("include_klic_in_map_exports"),false),
             ..Default::default()
@@ -287,7 +287,7 @@ pub fn with_project_overrides(base:&MigratedSettings,payload:&Value)->Result<Mig
     if let Some(value)=source.get("map_export_background_source"){
         let background=value.as_str().ok_or("Projectachtergrondbron is geen tekst")?;
         let background=if crate::project_view::BackgroundProvider::from_label(background)==crate::project_view::BackgroundProvider::Cyclomedia{"pdok"}else{background};
-        if !matches!(background,"pdok"|"osm"|"cadastral"){return Err(format!("Projectachtergrondbron {background} wordt nog niet ondersteund voor kaartuitvoer"));}
+        if !matches!(background,"pdok"|"pdok_cadastral"|"osm"|"osm_cadastral"|"cadastral"){return Err(format!("Projectachtergrondbron {background} wordt nog niet ondersteund voor kaartuitvoer"));}
         out.map_export.background=background.into();
     }
     if let Some(value)=source.get("kickthemap_object_layer_rules"){out.object_rules=crate::rule_settings::from_legacy(Some(value))?;}

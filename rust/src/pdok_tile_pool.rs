@@ -10,11 +10,12 @@ pub(super) fn parallel(
     width: u32,
     height: u32,
     cancel: &AtomicBool,
+    transparent: bool,
     fetch: impl Fn(Bounds, u32, u32) -> Result<PdokRaster, String> + Sync,
     progress: Option<&mut dyn FnMut(Progress<'_>) -> Result<(), String>>,
 ) -> Result<image::RgbaImage, String> {
     if progress.is_none() || (width <= 512 && height <= 512) {
-        return tiled_progress(bounds, width, height, cancel, fetch, progress);
+        return tiled_progress_with_alpha(bounds, width, height, cancel, transparent, fetch, progress);
     }
     crate::input::check(cancel)?;
     validate_frame(bounds, width, height)?;
@@ -69,11 +70,12 @@ pub(super) fn parallel(
         }
         let mut next = 0;
         let mut pending = std::collections::BTreeMap::new();
-        let result = tiled_progress(
+        let result = tiled_progress_with_alpha(
             bounds,
             width,
             height,
             cancel,
+            transparent,
             |_, _, _| {
                 // Replenish only when the caller requests another tile: cancellation
                 // in the progress callback cannot enqueue a new request.
@@ -123,6 +125,7 @@ mod tests {
             1024,
             1024,
             &cancel,
+            false,
             |b, w, h| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let mut arrived = gate.0.lock().unwrap();
@@ -168,6 +171,7 @@ mod tests {
             3072,
             512,
             &cancel,
+            false,
             |b, w, h| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(PdokRaster {

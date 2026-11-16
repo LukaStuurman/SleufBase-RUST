@@ -308,15 +308,13 @@ fn section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) 
 }
 fn viewer_fields(ui: &mut egui::Ui, viewer: &mut ViewerDraft) {
     use sleufbase_rust::project_view::BackgroundProvider as Background;
-    let display=|source:Background|match source {
-        Background::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",
-        Background::Cadastral=>"PDOK kadastrale kaart",Background::OpenStreetMap=>"OpenStreetMap",
-        _=>"Onbekende achtergrond",
-    };
+    let display=|source:Background|source.label();
     egui::ComboBox::from_id_salt("settings-viewer-background")
         .selected_text(display(Background::from_label(&viewer.background_source))).show_ui(ui,|ui| {
-            for source in [Background::PdokAerial,Background::Cadastral,Background::OpenStreetMap] {
-                ui.selectable_value(&mut viewer.background_source,source.label().into(),display(source));
+            for source in [Background::PdokAerial,Background::PdokAerialCadastral,Background::Cadastral,Background::OpenStreetMap,Background::OpenStreetMapCadastral] {
+                if ui.selectable_label(Background::from_label(&viewer.background_source)==source,display(source)).clicked(){
+                    viewer.background_source=source.label().into();
+                }
             }
         });
     checkbox(ui,&mut viewer.use_background,"Achtergrondkaart tonen op het kaartscherm");
@@ -348,11 +346,12 @@ fn export_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     let background = &mut state.draft.map_export.background;
     let label = |value: &str| match value {
         "pdok" => "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)", "osm" => "OpenStreetMap", "cadastral" => "PDOK kadastrale kaart",
+        "pdok_cadastral" => "PDOK Luchtfoto + percelen", "osm_cadastral" => "OpenStreetMap + percelen",
         "white" => "Wit (zonder internet)", _ => "Onbekende achtergrond",
     };
     egui::ComboBox::from_id_salt("settings-export-background").selected_text(label(background))
         .show_ui(ui, |ui| {
-            for value in ["pdok", "cadastral", "osm", "white"] {
+            for value in ["pdok", "pdok_cadastral", "cadastral", "osm", "osm_cadastral", "white"] {
                 ui.selectable_value(background, value.into(), label(value));
             }
         });
@@ -409,14 +408,14 @@ fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         &mut p.include_tiffs_in_dxf_export,
         "GeoTIFF-afbeeldingen meenemen in DXF-export",
     );
-    ui.small("Geen laat de proefsleufnamen, hartlijnen en vlakken weg. Het GeoTIFF-vinkje bepaalt apart of de afbeeldingen worden meegenomen, ook bij Geen.");
+    ui.small("Geen laat de hartlijnen en vlakken weg. Als je GeoTIFF-afbeeldingen meeneemt, blijft het PS-nummer of de proefsleufnaam naast iedere afbeelding staan.");
     ui.small("Geldt voor de kadastrale DXF-export en het overzicht in de sjabloonexport. De export zet gekoppelde TIFFs in een map naast het DXF-bestand. Detail- en profielvakken stel je apart in het exportvenster in.");
     });
     ui.add_space(12.);
     section(ui,"Labels en kleuren",|ui| {
     let p = &mut state.draft.export_preferences;
     ui.horizontal(|ui| {
-        ui.label("Afstand van proefsleufnaam tot hartlijn (meter)");
+        ui.label("Afstand van proefsleufnaam tot sleuf of TIFF (meter)");
         ui.add(egui::DragValue::new(&mut state.draft.dxf_label_gap).range(0.0..=100.).speed(0.1));
     });
     for (label, value) in [

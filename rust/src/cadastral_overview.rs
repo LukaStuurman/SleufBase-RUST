@@ -645,15 +645,18 @@ pub fn populate(
     control.check()?;
     checked_bounds(request, control.flag())?;
     let mut budget = assets::Budget::new();
+    let show_trench_labels = request.settings.trench_mode != TrenchMode::None
+        || request.settings.include_tiff_images;
     let mut shapes = Vec::new();
-    let mut bounds = Vec::new();
+    // Label placement follows every visible trench or TIFF, independently of
+    // whether a centreline/polygon is requested for the overview.
+    let mut label_bounds = Vec::new();
     let mut images = Vec::new();
     let mut image_paths = Vec::new();
     let mut copies = Vec::new();
     for (index, layer) in request.layers.iter().enumerate() {
         control.check()?;
-        if request.settings.trench_mode == TrenchMode::None && !request.settings.include_tiff_images
-        {
+        if !show_trench_labels {
             continue;
         }
         progress(&format!("Proefsleuf {} voorbereiden", index + 1));
@@ -683,8 +686,13 @@ pub fn populate(
                     mask::polygon(&p.image, p.tx, p.bounds, control.flag())?
                 }
             };
-            bounds.push(points_bounds(&shape)?);
+            label_bounds.push(points_bounds(&shape)?);
             shapes.push(shape);
+        } else {
+            // None+TIFF still gets a name outside the image's full affine
+            // footprint, including rotation and virtual-raster dimensions.
+            let p = prepared.as_ref().ok_or("Overzichtsraster ontbreekt")?;
+            label_bounds.push(p.tx.bounds(p.image.width(), p.image.height())?);
         }
         if request.settings.include_tiff_images {
             let p = prepared.as_ref().ok_or("Overzichtsraster ontbreekt")?;
@@ -803,12 +811,12 @@ pub fn populate(
         }
     }
     let mut placed = Vec::new();
-    for (i, layer) in request.layers.iter().enumerate().take(shapes.len()) {
+    for (i, layer) in request.layers.iter().enumerate().take(label_bounds.len()) {
         let value = label(layer, i + 1);
         let center = crate::object_layout::label_center(
             i,
             &value,
-            &bounds,
+            &label_bounds,
             &placed,
             request.settings.label_gap.max(0.),
         )?;
@@ -879,8 +887,8 @@ pub fn populate(
     Ok(Plan {
         images,
         first_handle,
-        // TIFF inclusion never enables proefsleuf names on its own.
-        trench_labels: request.settings.trench_mode != TrenchMode::None,
+        // A visible TIFF keeps its name even when trench geometry is disabled.
+        trench_labels: show_trench_labels,
         assignments: image_paths
             .into_iter()
             .zip(copies)

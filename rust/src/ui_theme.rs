@@ -79,6 +79,10 @@ pub(super) fn install(ctx: &egui::Context) {
     style.spacing.interact_size.y = 28.;
     style.spacing.scroll = egui::style::ScrollStyle::solid();
     style.spacing.scroll.bar_width = 12.;
+    style.spacing.scroll.handle_min_length = 28.;
+    // Scrollbars use foreground strokes, keeping their contrast independent of
+    // the light button and input backgrounds in every window and popup.
+    style.spacing.scroll.foreground_color = true;
     style.visuals.menu_corner_radius = 12.into();
     style.visuals = egui::Visuals::light();
     style.visuals.override_text_color = Some(INK);
@@ -103,6 +107,9 @@ pub(super) fn install(ctx: &egui::Context) {
         widgets.fg_stroke = Stroke::new(1_f32, INK);
         widgets.corner_radius = 13.into();
     }
+    // The same restrained palette also accents checkmarks and small icons;
+    // override_text_color above keeps all ordinary text consistently dark.
+    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1_f32, MUTED);
     style.visuals.widgets.inactive.bg_stroke=Stroke::new(1_f32,Color32::from_rgb(190,203,220));
     style.visuals.widgets.inactive.corner_radius=6.into();
     style.spacing.icon_width=18.;
@@ -110,11 +117,12 @@ pub(super) fn install(ctx: &egui::Context) {
     style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 224, 199);
     style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(255, 224, 199);
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1_f32, Color32::from_rgb(206, 100, 35));
-    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1_f32, INK);
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1_f32, ORANGE);
     style.visuals.widgets.hovered.corner_radius = 6.into();
     style.visuals.widgets.active = style.visuals.widgets.hovered;
     style.visuals.widgets.active.bg_fill = Color32::from_rgb(255, 203, 162);
     style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(255, 203, 162);
+    style.visuals.widgets.active.fg_stroke = Stroke::new(1_f32, DARK);
     style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     ctx.set_style(style);
 }

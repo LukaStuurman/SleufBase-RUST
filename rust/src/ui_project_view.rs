@@ -82,8 +82,9 @@ impl SleufBaseApp {
         }
         match self.project_view.provider(){
             B::PdokAerial=>self.pdok_source=pdok_wms::Source::Aerial,
+            B::PdokAerialCadastral=>self.pdok_source=pdok_wms::Source::AerialCadastral,
             B::Cadastral=>self.pdok_source=pdok_wms::Source::Cadastral,
-            B::OpenStreetMap=>self.osm_visible=true,
+            B::OpenStreetMap|B::OpenStreetMapCadastral=>self.osm_visible=true,
             B::Cyclomedia=>{self.project_view.normalize_removed_provider();self.request_selected_background();}
             B::Unknown=>self.message=format!("Achtergrondbron '{}' wordt niet ondersteund; de voorkeur blijft in het project bewaard",self.project_view.background_source),
         }
@@ -107,8 +108,12 @@ impl SleufBaseApp {
         let previous=self.project_view.clone();
         ui.horizontal_wrapped(|ui|{
             ui.checkbox(&mut self.project_view.use_background,"Achtergrond tonen");
-            egui::ComboBox::from_id_salt("project-background-source").selected_text(self.project_view.background_source.clone()).show_ui(ui,|ui|{
-                for source in [B::PdokAerial,B::OpenStreetMap,B::Cadastral]{ui.selectable_value(&mut self.project_view.background_source,source.label().into(),source.label());}
+            let provider=self.project_view.provider();
+            let selected=if provider==B::Unknown {self.project_view.background_source.as_str()} else {provider.label()};
+            egui::ComboBox::from_id_salt("project-background-source").selected_text(selected).show_ui(ui,|ui|{
+                for source in [B::PdokAerial,B::PdokAerialCadastral,B::OpenStreetMap,B::OpenStreetMapCadastral,B::Cadastral]{
+                    if ui.selectable_label(self.project_view.provider()==source,source.label()).clicked(){self.project_view.background_source=source.label().into();}
+                }
                 if self.project_view.provider()==B::Unknown{ui.label(format!("Niet ondersteund: {}",self.project_view.background_source));}
             });
             ui.add(egui::Slider::new(&mut self.project_view.opacity_percent,0. ..=100.).text("TIFF-dekking (%)"));

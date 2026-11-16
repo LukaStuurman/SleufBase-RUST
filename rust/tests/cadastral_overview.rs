@@ -49,7 +49,9 @@ fn eight_original_option_combinations_control_geometry_rasters_and_labels() {
             doc.records()
                 .filter(|r| r.kind() == "TEXT" && r.first(8) == Some("PROEFSLEUVEN_LABEL"))
                 .count(),
-            if request.settings.trench_mode == cadastral_overview::TrenchMode::None {
+            if request.settings.trench_mode == cadastral_overview::TrenchMode::None
+                && !request.settings.include_tiff_images
+            {
                 0
             } else {
                 request.layers.len()

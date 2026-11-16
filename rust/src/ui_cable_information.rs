@@ -4,6 +4,14 @@
 use super::*;
 use sleufbase_rust::cad_scene::DrawRef;
 
+/// Keep the button count, candidate list, switch action and map selection on
+/// the same set of currently selectable objects after layer visibility changes.
+pub(super) fn candidate_visible(overlays: &[DxfOverlay], overlay: usize, feature: usize) -> bool {
+    overlays.get(overlay).filter(|drawing| drawing.visible)
+        .and_then(|drawing| drawing.inspect_feature(feature))
+        .is_some_and(|feature| feature.visible)
+}
+
 fn tolerance_pixels(scale: f64) -> Option<f64> {
     if !scale.is_finite() || scale <= 0. {
         return None;
@@ -228,10 +236,7 @@ impl SleufBaseApp {
         // the selection then; ordinary visibility changes must clear stale info.
         if self.project_sources_owned() { return; }
         let overlays = &self.overlays;
-        let visible = |overlay: usize, feature: usize| overlays.get(overlay)
-            .filter(|layer| layer.visible)
-            .and_then(|layer| layer.inspect_feature(feature))
-            .is_some_and(|feature| feature.visible);
+        let visible = |overlay, feature| candidate_visible(overlays, overlay, feature);
         let before = self.found_layers.len();
         self.found_layers.retain(|&(overlay, feature)| visible(overlay, feature));
         let hidden_selection = self.dxf_selection.as_ref()
@@ -260,14 +265,6 @@ impl SleufBaseApp {
         view.painter.ctx().request_repaint();
         if let Some((overlay, feature)) = self.found_layers.first().copied() {
             self.select_dxf(overlay, feature);
-            if let Some(selection) = &self.dxf_selection {
-                let layer = selection
-                    .details
-                    .iter()
-                    .find(|(key, _)| key == "Laag")
-                    .map_or("", |(_, value)| value.as_str());
-                self.message = format!("Kabel/object geselecteerd: {layer}");
-            }
         } else {
             self.dxf_selection = None;
             self.message = "Geen kabel geselecteerd op deze locatie.".into();

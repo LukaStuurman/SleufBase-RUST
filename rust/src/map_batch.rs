@@ -57,7 +57,7 @@ impl Settings {
         )?;
         if !matches!(
             self.background.as_str(),
-            "pdok" | "osm" | "cadastral" | "white"
+            "pdok" | "pdok_cadastral" | "osm" | "osm_cadastral" | "cadastral" | "white"
         ) {
             return Err("Onbekende kaartachtergrond".into());
         }
@@ -324,6 +324,10 @@ pub fn export_with(
             Background::Solid { color: [255; 4] }
         } else if settings.background == "cadastral" {
             Background::Cadastral
+        } else if settings.background == "pdok_cadastral" {
+            Background::PdokCadastral
+        } else if settings.background == "osm_cadastral" {
+            Background::OsmCadastral
         } else if settings.background == "osm" {
             let map = crate::osm_tiles::request_export_map_with_cancel(
                 layout.bounds,
@@ -353,6 +357,10 @@ pub fn export_with(
                 "(c) OpenStreetMap contributors".into()
             } else if settings.background == "cadastral" {
                 "Kadastrale kaart: Kadaster / PDOK".into()
+            } else if settings.background == "pdok_cadastral" {
+                "Luchtfoto: PDOK · Percelen: Kadaster / PDOK".into()
+            } else if settings.background == "osm_cadastral" {
+                "(c) OpenStreetMap contributors · Percelen: Kadaster / PDOK".into()
             } else {
                 String::new()
             }),

@@ -410,6 +410,9 @@ impl SleufBaseApp {
         self.project_template_dialog=None;
         debug_assert!(self.template_job.is_none(), "active template exports must settle before switching projects");
         self.project_generation=self.project_generation.wrapping_add(1);
+        // Click candidates belong to the old drawing, even when a later import
+        // happens to reuse the same overlay and feature indices.
+        self.found_layers.clear();
         if self.live_download_rx.is_some(){self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);}
         self.map_requests.invalidate();
         self.pdok_busy=false;self.osm_busy=false;
@@ -578,13 +581,35 @@ impl SleufBaseApp {
     }
 
     fn select_dxf(&mut self,overlay:usize,feature:usize) {
-        if !self.found_layers.contains(&(overlay, feature)) { self.found_layers.clear(); }
-        if let Some(layer)=self.overlays.get(overlay){
-            if self.project_view.selected_dxf.as_ref()!=Some(&layer.path){self.project_view.selected_dxf=Some(layer.path.clone());self.dirty=true;}
+        // Resolve the object before changing any selection identity. The map,
+        // details and candidates panel all read this one DxfSelection.
+        let Some((path,details))=self.overlays.get(overlay).and_then(|drawing|
+            drawing.inspect_details(feature).map(|details|(drawing.path.clone(),details))
+        ) else {
+            self.dxf_selection=None;
+            self.found_layers.retain(|candidate|*candidate!=(overlay,feature));
+            self.message="Het gekozen kabelobject is niet meer beschikbaar.".into();
+            return;
+        };
+        if !self.found_layers.contains(&(overlay,feature)) { self.found_layers.clear(); }
+        if self.project_view.selected_dxf.as_ref()!=Some(&path) {
+            self.project_view.selected_dxf=Some(path);
+            self.dirty=true;
         }
-        self.dxf_selection=self.overlays.get(overlay).and_then(|o|o.inspect_details(feature).map(|details|
-            DxfSelection{overlay,feature,details:details.into_iter().collect()}
-        ));
+        let mut count=0usize;
+        let mut position=None;
+        for &(candidate_overlay,candidate_feature) in &self.found_layers {
+            if cable_information_ui::candidate_visible(&self.overlays,candidate_overlay,candidate_feature) {
+                count+=1;
+                if (candidate_overlay,candidate_feature)==(overlay,feature) { position=Some(count); }
+            }
+        }
+        let layer=details.get("Laag").map_or("",String::as_str);
+        self.message=match position {
+            Some(position)=>format!("Kabel/object geselecteerd: {layer} · {position} van {count}"),
+            None=>format!("Kabel/object geselecteerd: {layer}"),
+        };
+        self.dxf_selection=Some(DxfSelection{overlay,feature,details:details.into_iter().collect()});
     }
 
     fn poll_raster_previews(&mut self,ctx:&egui::Context) {

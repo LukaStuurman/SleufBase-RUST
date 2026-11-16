@@ -13,6 +13,8 @@ pub enum Provider {
     Aerial,
     Cadastral,
     Osm,
+    AerialCadastral,
+    OsmCadastral,
 }
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Viewport {
@@ -82,7 +84,7 @@ impl Viewport {
     pub fn buffered(self) -> Self {
         // OSM already caches reusable world tiles. A WMS overscan buffer both
         // fetches unseen tiles and forces a coarser level under its tile budget.
-        if self.source == Provider::Osm { return self; }
+        if matches!(self.source, Provider::Osm | Provider::OsmCadastral) { return self; }
         let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
             .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
         let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
@@ -267,7 +269,7 @@ impl Worker {
         Self::with_fetcher(move |request, cancel, preview| {
             let v = request.view;
             match v.source {
-                Provider::Osm => {
+                Provider::Osm | Provider::OsmCadastral => {
                     let mut update = |p: crate::osm_tiles::ViewportProgress<'_>| {
                         preview(Pixels {
                             bounds: p.bounds,
@@ -280,15 +282,68 @@ impl Worker {
                     let raster = osm.request(
                         v.bounds, v.size[0], v.size[1], &osm_cache, cancel, &mut update,
                     )?;
+                    if v.source == Provider::OsmCadastral {
+                        // Publish the complete base first. An empty, still-loading
+                        // parcel layer must never replace it with a grey image.
+                        preview(Pixels {
+                            bounds: raster.bounds,
+                            width: raster.width,
+                            height: raster.height,
+                            rgba: raster.rgba.clone(),
+                            stale_cache: raster.stale_cache,
+                        }, 1, 1)?;
+                        let mut image = image::RgbaImage::from_raw(
+                            raster.width, raster.height, raster.rgba,
+                        ).ok_or("OpenStreetMap gaf ongeldige pixels terug")?;
+                        crate::pdok_wms::add_cadastral_overlay_for_view(
+                            &mut image, raster.bounds, cancel,
+                        )?;
+                        Ok(Pixels {
+                            bounds: raster.bounds,
+                            width: image.width(),
+                            height: image.height(),
+                            rgba: image.into_raw(),
+                            stale_cache: raster.stale_cache,
+                        })
+                    } else {
+                        Ok(Pixels {
+                            bounds: raster.bounds,
+                            width: raster.width,
+                            height: raster.height,
+                            rgba: raster.rgba,
+                            stale_cache: raster.stale_cache,
+                        })
+                    }
+                }
+                Provider::AerialCadastral => {
+                    // Keep the aerial visible while fetching parcels. Use the
+                    // normal bounded worker grid without publishing empty tiles.
+                    let mut progress = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
+                    let mut image = crate::pdok_wms::request_tiled_with_progress(
+                        crate::pdok_wms::Source::Aerial,
+                        v.bounds,
+                        v.size[0],
+                        v.size[1],
+                        cancel,
+                        Some(&mut progress),
+                    )?;
+                    preview(Pixels {
+                        bounds: v.bounds,
+                        width: image.width(),
+                        height: image.height(),
+                        rgba: image.as_raw().clone(),
+                        stale_cache: false,
+                    }, 1, 2)?;
+                    crate::pdok_wms::add_cadastral_overlay_for_view(&mut image, v.bounds, cancel)?;
                     Ok(Pixels {
-                        bounds: raster.bounds,
-                        width: raster.width,
-                        height: raster.height,
-                        rgba: raster.rgba,
-                        stale_cache: raster.stale_cache,
+                        bounds: v.bounds,
+                        width: image.width(),
+                        height: image.height(),
+                        rgba: image.into_raw(),
+                        stale_cache: false,
                     })
                 }
-                _ => {
+                Provider::Aerial | Provider::Cadastral => {
                     let source = if v.source == Provider::Cadastral {
                         crate::pdok_wms::Source::Cadastral
                     } else {

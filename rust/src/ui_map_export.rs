@@ -58,11 +58,14 @@ impl SleufBaseApp {
             let settings=match &mut self.project_settings{Some(settings)=>&mut settings.map_export,None=>&mut self.migrated_settings.map_export};
             let previous=settings.clone();
             egui::ComboBox::from_label("Achtergrond").selected_text(match settings.background.as_str(){
-                "pdok"=>"PDOK luchtfoto","osm"=>"OpenStreetMap","white"=>"Wit (zonder internet)",
+                "pdok"=>"PDOK luchtfoto","pdok_cadastral"=>"PDOK Luchtfoto + percelen",
+                "osm"=>"OpenStreetMap","osm_cadastral"=>"OpenStreetMap + percelen","white"=>"Wit (zonder internet)",
                 "cadastral"=>"Kadaster",_=>"Onbekend"
             }).show_ui(ui,|ui|{
                 ui.selectable_value(&mut settings.background,"pdok".into(),"PDOK luchtfoto");
+                ui.selectable_value(&mut settings.background,"pdok_cadastral".into(),"PDOK Luchtfoto + percelen");
                 ui.selectable_value(&mut settings.background,"osm".into(),"OpenStreetMap");
+                ui.selectable_value(&mut settings.background,"osm_cadastral".into(),"OpenStreetMap + percelen");
                 ui.selectable_value(&mut settings.background,"cadastral".into(),"Kadaster");
                 ui.selectable_value(&mut settings.background,"white".into(),"Wit (zonder internet)");
             });

@@ -79,7 +79,7 @@ impl ExportDefaults {
         state.profiles = self.profiles;
         state.paired = self.paired;
         state.map_background = Some(self.background);
-        state.aerial = self.background == BackgroundKind::Pdok;
+        state.aerial = matches!(self.background, BackgroundKind::Pdok | BackgroundKind::PdokCadastral);
         state.include_cad = self.include_cad;
         state.marker_diameter = self.profile_style.marker_diameter;
         state.show_reference = self.profile_style.show_reference;
@@ -102,7 +102,7 @@ impl ExportDefaults {
         let mut background = state.effective_background();
         refresh_unchanged(&mut background, &opening.background, &self.background);
         state.map_background = Some(background);
-        state.aerial = background == BackgroundKind::Pdok;
+        state.aerial = matches!(background, BackgroundKind::Pdok | BackgroundKind::PdokCadastral);
         refresh_unchanged(&mut state.include_cad, &opening.include_cad, &self.include_cad);
         refresh_unchanged(&mut state.logos.techbase, &opening.logos.techbase, &self.logos.techbase);
         refresh_unchanged(&mut state.logos.client, &opening.logos.client, &self.logos.client);
@@ -679,12 +679,14 @@ pub(crate) fn show(
                 ui.label("Achtergrond");
                 let mut background=d.state.effective_background();
                 for (value,label) in [(BackgroundKind::Pdok,"Luchtfoto"),
-                    (BackgroundKind::Osm,"OpenStreetMap"),(BackgroundKind::Cadastral,"Kadaster"),
+                    (BackgroundKind::PdokCadastral,"PDOK Luchtfoto + percelen"),
+                    (BackgroundKind::Osm,"OpenStreetMap"),
+                    (BackgroundKind::OsmCadastral,"OpenStreetMap + percelen"),(BackgroundKind::Cadastral,"Kadaster"),
                     (BackgroundKind::Blank,"Wit")]
                 {
                     if ui.radio_value(&mut background,value,label).changed() {
                         d.state.map_background=Some(background);
-                        d.state.aerial=background==BackgroundKind::Pdok;
+                        d.state.aerial=matches!(background,BackgroundKind::Pdok|BackgroundKind::PdokCadastral);
                     }
                 }
             });

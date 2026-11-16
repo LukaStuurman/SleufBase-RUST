@@ -19,6 +19,8 @@ use std::{
 pub enum Background {
     Cadastral,
     Osm,
+    OsmCadastral,
+    PdokCadastral,
     Solid {
         color: [u8; 4],
     },
@@ -150,7 +152,7 @@ fn background(
     cadastral: &mut Option<crate::cadastral_tiles::Client>,
 ) -> Result<RgbaImage, String> {
     match source {
-        Background::Osm => {
+        Background::Osm | Background::OsmCadastral => {
             let map = crate::osm_tiles::request_export_map_with_cancel(
                 layout.bounds, layout.map_size[0], layout.map_size[1],
                 &crate::project::app_data_directory().join("osm-tiles"), cancel,
@@ -158,8 +160,12 @@ fn background(
             if map.stale_cache {
                 return Err("OSM-achtergrond gebruikt verlopen cache; probeer de export opnieuw met netwerk".into());
             }
-            RgbaImage::from_raw(map.width, map.height, map.rgba)
-                .ok_or_else(|| "Ongeldige OSM-pixels".into())
+            let mut image = RgbaImage::from_raw(map.width, map.height, map.rgba)
+                .ok_or_else(|| "Ongeldige OSM-pixels".to_owned())?;
+            if matches!(source, Background::OsmCadastral) {
+                crate::pdok_wms::add_cadastral_overlay(&mut image, layout.bounds, cancel)?;
+            }
+            Ok(image)
         }
         Background::Cadastral => {
             if cadastral.is_none() {
@@ -177,6 +183,13 @@ fn background(
             }
             Ok(image)
         }
+        Background::PdokCadastral => crate::pdok_wms::request_tiled_for(
+            crate::pdok_wms::Source::AerialCadastral,
+            layout.bounds,
+            layout.map_size[0],
+            layout.map_size[1],
+            cancel,
+        ),
         Background::Pdok => crate::pdok_wms::request_tiled(
             layout.bounds,
             layout.map_size[0],
@@ -409,6 +422,8 @@ impl Renderer {
             .or(match source.background {
                 Background::Pdok => Some("Luchtfoto: PDOK"),
                 Background::Osm => Some("(c) OpenStreetMap contributors"),
+                Background::PdokCadastral => Some("Luchtfoto: PDOK · Percelen: Kadaster / PDOK"),
+                Background::OsmCadastral => Some("(c) OpenStreetMap contributors · Percelen: Kadaster / PDOK"),
                 Background::Cadastral => Some("Kadastrale kaart: Kadaster / PDOK"),
                 _ => None,
             });
