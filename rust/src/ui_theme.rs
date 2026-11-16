@@ -9,7 +9,7 @@ pub(super) const MUTED: Color32 = Color32::from_rgb(102, 112, 133);
 pub(super) const FONT_SIZE: f32 = 40. / 3.;
 
 pub(super) fn viewport() -> egui::ViewportBuilder {
-    let bytes = include_bytes!("../../assets/sleufbase_icon.ico");
+    let bytes = include_bytes!("../../assets/techbase_icon.ico");
     let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
     let icon = (0..count).rev().find_map(|index| {
         let entry = bytes.get(6 + index * 16..6 + (index + 1) * 16)?;

@@ -145,6 +145,8 @@ pub fn markers_with_cancel(
     let mut output = Vec::new();
     for (index, object) in trench.objects.iter().enumerate() {
         crate::input::check(cancel)?;
+        // Endpoint helpers are geometry references, never transverse cables.
+        if matches!(object.role.to_lowercase().as_str(), "start" | "end") { continue; }
         let p = object.position;
         let (_, _, chainage, _) = trench.project(object_axis_position(trench,object));
         let Some((start, end)) = object_segment_on_boundary(trench,object,&polygon) else {
@@ -171,6 +173,23 @@ pub fn markers_with_cancel(
 #[cfg(test)]
 mod crossing_tests {
     use super::*;
+    #[test]
+    fn endpoints_do_not_create_transverse_cables_but_real_objects_remain() {
+        let mut trench=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();
+        assert!(markers(&trench).is_empty());
+        for (role,x) in [("start",0.),("END",10.),("leiding",5.)] {
+            trench.objects.push(crate::virtual_trench::TrenchPoint {
+                metadata:serde_json::Value::Null,role:role.into(),
+                object_name:role.into(),source_name:role.into(),
+                position:Vertex{x,y:0.,z:None},attributes:Default::default(),
+            });
+        }
+        let actual=markers(&trench);
+        assert_eq!(actual.len(),1);
+        assert_eq!(actual[0].object_index,2,"preserve the real cable/pipe object");
+        assert_eq!(actual[0].chainage,5.);
+        assert_eq!(trench.objects.len(),3,"references stay in project data");
+    }
     #[test]
     fn oblique_cables_cross_the_selected_point_and_stay_inside_the_boundary(){
         let mut t=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();

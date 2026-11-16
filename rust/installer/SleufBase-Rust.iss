@@ -1,5 +1,5 @@
 #define MyAppName "SleufBase Rust"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppExeName "sleufbase-rust.exe"
 
 [Setup]
@@ -15,7 +15,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist-installer
 OutputBaseFilename=SleufBase-Rust-preview-Setup
-SetupIconFile=..\..\assets\sleufbase_icon.ico
+SetupIconFile=..\..\assets\techbase_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
@@ -24,7 +24,7 @@ WizardResizable=no
 CloseApplications=yes
 RestartApplications=yes
 UsePreviousAppDir=yes
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.0.6.0
 VersionInfoDescription=SleufBase Rust installer
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}

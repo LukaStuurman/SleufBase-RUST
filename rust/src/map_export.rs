@@ -297,15 +297,16 @@ fn draw_virtual_emphasis(
     };
     let mut budget = 50_000_000u64;
     let factor = layout.page_size[0] as f64 / 1754.;
-    let line_width = (6. * factor).round().clamp(4., 16.) as u32;
+    // A fine black edge leaves room for utilities in narrow trenches. Scale
+    // only with output DPI; a blue/white emphasis halo obscures real detail.
+    let line_width = factor.round().clamp(1., 4.) as u32;
     let mut outline = trench.measured_boundary().into_iter()
         .map(|(x,y)| screen([x,y])).collect::<Vec<_>>();
     if outline.len() >= 2 {
         if outline.first() != outline.last() {
             outline.push(outline[0]);
         }
-        map_canvas::line(image, &outline, line_width + 4, [255,255,255,255], cancel, &mut budget)?;
-        map_canvas::line(image, &outline, line_width, [0,115,203,255], cancel, &mut budget)?;
+        map_canvas::line(image, &outline, line_width, [0,0,0,255], cancel, &mut budget)?;
     }
     let radius = (9. * factor).round().clamp(6., 24.);
     for (index, object) in trench.objects.iter().enumerate() {
@@ -458,6 +459,34 @@ mod virtual_map_visibility_tests {
     use super::*;
     use crate::model::Vertex;
     use crate::virtual_trench::{TrenchPoint, VirtualTrench};
+    #[test]
+    fn trench_outline_is_thin_black_without_a_halo_or_default_crossing() {
+        let trench = VirtualTrench::new(
+            "Empty trench".into(),
+            Vertex { x: 2., y: 0., z: None },
+            Vertex { x: 12., y: 0., z: None },
+            0.6,
+        ).unwrap();
+        let cancel = AtomicBool::new(false);
+        for factor in [1, 4] {
+            let layout = Layout {
+                page_size: [1754 * factor, 1240 * factor],
+                map_size: [300 * factor, 160 * factor], origin: [0.,0.],
+                bounds: Bounds {min_x:0.,min_y:-4.,max_x:15.,max_y:4.},
+                meters_per_pixel: 0.05 / f64::from(factor),
+            };
+            let background = Rgba([23,47,71,255]);
+            let mut image = RgbaImage::from_pixel(layout.map_size[0],layout.map_size[1],background);
+            emphasize_virtual_trench(&mut image,&layout,&trench,1.,&cancel).unwrap();
+            assert!(image.pixels().all(|p|*p==background||p.0==[0,0,0,255]),
+                "only the fine black edge may cover the background");
+            let x = 140 * factor;
+            let edge_pixels = (0..image.height()).filter(|&y|image.get_pixel(x,y).0==[0,0,0,255]).count();
+            assert_eq!(edge_pixels,2 * factor as usize,"two thin edges at each output DPI");
+            assert_eq!(*image.get_pixel(x,80 * factor),background,
+                "an empty trench must not gain an artificial transverse line");
+        }
+    }
     #[test]
     fn cable_marker_remains_visible_on_dark_aerial_map() {
         let mut trench = VirtualTrench::new(

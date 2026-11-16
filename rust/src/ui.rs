@@ -1427,19 +1427,22 @@ fn canvas(
             painter.line_segment([
                 project(pair[0].0,pair[0].1),
                 project(pair[1].0,pair[1].1)
-            ],Stroke::new(1.5_f32,ORANGE));
+            ],Stroke::new(1.0_f32,Color32::BLACK));
         }
         let start=project(trench.start.x,trench.start.y);
         let end=project(trench.end.x,trench.end.y);
-        painter.arrow(start,end-start,Stroke::new(2.0_f32,DARK));
+        // Endpoints indicate orientation without an extra line through cables.
         painter.circle_filled(start,3.5,DARK);
+        painter.circle_filled(end,3.5,DARK);
         painter.text(start+egui::vec2(5.0,-5.0),egui::Align2::LEFT_BOTTOM,
             &trench.label,egui::FontId::proportional(12.0),INK);
         if let Some(markers)=trench_markers.get(index) {
             for marker in markers {
                 let object=&trench.objects[marker.object_index];
-                let color=sleufbase_rust::matching_rule(&object.source_name,rules)
-                    .map_or(Color32::from_rgb(37,99,235),|r|aci_color(i32::from(r.color_aci)));
+                let color=sleufbase_rust::virtual_raster::display_rgb(&object.metadata)
+                    .map(|[r,g,b]|Color32::from_rgb(r,g,b))
+                    .unwrap_or_else(||sleufbase_rust::matching_rule(&object.source_name,rules)
+                        .map_or(Color32::from_rgb(37,99,235),|r|aci_color(i32::from(r.color_aci))));
                 painter.line_segment([project(marker.start.x,marker.start.y),project(marker.end.x,marker.end.y)],Stroke::new(2.5_f32,color));
             }
         }
@@ -1942,6 +1945,45 @@ mod project_lifecycle_tests {
         assert_eq!(serde_json::to_value(&app.overlays[0]).unwrap(),before);
         assert!(std::sync::Arc::ptr_eq(&cache,&app.overlays[0].expanded));assert!(!app.dirty);
         assert!(app.message.contains("huidige gegevens behouden"));
+    }
+
+    #[test]
+    fn empty_virtual_trench_paints_only_a_thin_black_boundary() {
+        let ctx=egui::Context::default();let mut zoom=1.;let mut pan=egui::Vec2::ZERO;
+        let trench=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();
+        let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(800.,600.))),..Default::default()},|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                canvas(ui,&[],&[],&[],&[],std::slice::from_ref(&trench),&[Vec::new()],&[],None,&[],None,None,false,&mut zoom,&mut pan,RULES,None);
+            });
+        });
+        let strokes=output.shapes.iter().filter_map(|s|match &s.shape {
+            egui::Shape::LineSegment{stroke,..}=>Some(stroke),_=>None,
+        }).collect::<Vec<_>>();
+        assert_eq!(strokes.len(),4,"no automatic axis or transverse line through an empty trench");
+        assert!(strokes.iter().all(|s|s.color==Color32::BLACK&&s.width==1.));
+    }
+
+    #[test]
+    fn virtual_cable_uses_its_chosen_color_on_the_map() {
+        let ctx=egui::Context::default();let mut zoom=1.;let mut pan=egui::Vec2::ZERO;
+        let mut trench=VirtualTrench::new("PS".into(),Vertex{x:0.,y:0.,z:None},Vertex{x:10.,y:0.,z:None},0.6).unwrap();
+        trench.objects.push(sleufbase_rust::virtual_trench::TrenchPoint {
+            role:"kabel".into(),object_name:"LS".into(),source_name:"LS".into(),
+            metadata:serde_json::json!({"display_rgb":[12,174,88]}),
+            position:Vertex{x:5.,y:0.,z:None},attributes:Default::default(),
+        });
+        let markers=sleufbase_rust::cross_section::markers(&trench);
+        let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(800.,600.))),..Default::default()},|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                canvas(ui,&[],&[],&[],&[],std::slice::from_ref(&trench),std::slice::from_ref(&markers),&[],None,&[],None,None,false,&mut zoom,&mut pan,RULES,None);
+            });
+        });
+        let strokes=output.shapes.iter().filter_map(|s|match &s.shape {
+            egui::Shape::LineSegment{stroke,..}=>Some(stroke),_=>None,
+        }).collect::<Vec<_>>();
+        assert_eq!(strokes.len(),5,"four boundary edges plus the real cable");
+        assert_eq!(strokes.iter().filter(|s|s.color==Color32::from_rgb(12,174,88)).count(),1,
+            "a chosen utility color takes precedence over the discipline or fallback blue");
     }
 
     #[test]

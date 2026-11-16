@@ -235,6 +235,15 @@ mod tests{
         assert!((l.bounds.min_y-462997.9).abs()<1e-9);
     }
     #[test]
+    fn empty_virtual_trenches_have_no_default_blue_crossing() {
+        let source=Source{trench:trench(),quality:1.,reverse:false};
+        let cancel=AtomicBool::new(false);
+        for image in [render(&source,&cancel).unwrap(),prepare_for_template(&source,&cancel).unwrap().image] {
+            assert!(image.pixels().all(|p|p[3]==0||p.0==[0,0,0,255]),
+                "only the black boundary is present until a utility is added");
+        }
+    }
+    #[test]
     fn render_preserves_transparency_and_marker_layers(){
         let mut t=trench();
         t.objects.push(TrenchPoint{metadata:serde_json::json!({"display_rgb":[39,123,229]}),role:"water".into(),object_name:"Water".into(),

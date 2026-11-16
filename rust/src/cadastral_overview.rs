@@ -380,7 +380,7 @@ fn overview_layers(settings: &Settings) -> Vec<geometry::Layer> {
         ("KAD_STRAATNAAM", 8, Some(rgb([115; 3])), None),
         ("KAD_HUISNUMMER", 8, Some(rgb([95; 3])), None),
         ("PROEFSLEUVEN_VLAK", 7, Some(0xffffff), None),
-        ("PROEFSLEUVEN_OMTREK", 8, Some(rgb([120; 3])), Some(25)),
+        ("PROEFSLEUVEN_OMTREK", 7, Some(rgb([0; 3])), Some(13)),
         (
             "PROEFSLEUVEN_HARTLIJN",
             7,
@@ -777,8 +777,8 @@ pub fn populate(
                 vertices,
                 Paint {
                     color: Some(7),
-                    true_color: Some(rgb([120; 3])),
-                    lineweight: Some(25),
+                    true_color: Some(rgb([0; 3])),
+                    lineweight: Some(13),
                 },
             ));
         }

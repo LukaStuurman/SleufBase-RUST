@@ -121,6 +121,8 @@ fn virtual_trench_keeps_measured_start_and_selected_source() {
     ]));
     let overlays=&slot.map_source.as_ref().unwrap().overlays;
     assert_eq!(overlays.len(),4, "four clipped trench outline edges");
+    assert!(overlays.iter().all(|stroke|stroke.color==[0,0,0] && !stroke.highlighted && !stroke.selected),
+        "virtual boundaries must not add a blue selection halo over cables");
     assert!(overlays.iter().all(|stroke|stroke.points.len()==2 &&
         stroke.points.iter().all(|p|p[0]>=tiff_bounds.min_x && p[0]<=tiff_bounds.max_x &&
             p[1]>=tiff_bounds.min_y && p[1]<=tiff_bounds.max_y)));
@@ -262,6 +264,8 @@ fn virtual_marxact_sheet_exports_with_builtin_template_and_no_external_geotiff()
     assert!(slot.tiff_png.as_os_str().is_empty());
     assert!(slot.tiff_source.is_none());
     assert!(slot.virtual_source.is_some());
+    assert!(slot.map_source.as_ref().unwrap().overlays.is_empty(),
+        "synthetic virtual rasters must not receive a second, highlighted boundary");
     assert_eq!(request.datasets[0].features.len(),3);
     let expected=slot.bounds;
     assert!(expected.min_x < trench.start.x);

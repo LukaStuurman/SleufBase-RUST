@@ -359,9 +359,11 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                     [249,115,22], true)?;
             }
         }
-        if !extra_polyline.is_empty() {
+        if !extra_polyline.is_empty() && virtual_source.is_none() {
+            // A synthetic raster already draws its own boundary. Only add the
+            // outline over an external TIFF, without a blue selection halo.
             append_stroke(&mut overlays, &mut points, bounds, extra_polyline,
-                [249,115,22], true)?;
+                [0,0,0], false)?;
         }
         if opts.server_mode==crate::template_server::Mode::Offline && opts.include_bgt {
             for path in &roads {

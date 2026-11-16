@@ -56,6 +56,10 @@ fn eight_original_option_combinations_control_geometry_rasters_and_labels() {
             }
         );
         assert_eq!(info.images, if index % 2 == 1 { 3 } else { 0 });
+        for edge in doc.records().filter(|r|r.kind()=="LWPOLYLINE"&&r.first(8)==Some("PROEFSLEUVEN_OMTREK")) {
+            assert_eq!(edge.first(420),Some("0"),"trench edges are black");
+            assert_eq!(edge.first(370),Some("13"),"trench edges use a fine 0.13 mm lineweight");
+        }
     }
 }
 #[test]
@@ -128,7 +132,10 @@ fn template_overview_stays_outside_paired_states_and_shares_atomic_rollback() {
     let original=Document::load(&root.join("centerline-tiffs.dxf"),&AtomicBool::new(false)).unwrap();
     for layer in original.records().filter(|r|r.kind()=="LAYER"&&r.first(2).is_some_and(|name|name.starts_with("KAD_")||name.starts_with("BGT_")||name.starts_with("PROEFSLEUVEN_"))){
         let actual=doc.records().find(|r|r.kind()=="LAYER"&&r.first(2)==layer.first(2)).unwrap();
-        for code in [62,370,420]{assert_eq!(actual.first(code),layer.first(code),"original layer {:?}, tag {code}",layer.first(2));}
+        for code in [62,370,420]{
+            let expected=if layer.first(2)==Some("PROEFSLEUVEN_OMTREK")&&code==420 {Some("0")}else{layer.first(code)};
+            assert_eq!(actual.first(code),expected,"overview layer {:?}, tag {code}",layer.first(2));
+        }
     }
     let source = template.overview.as_ref().unwrap().layers[0].path.clone();
     let bytes = std::fs::read(&source).unwrap();
