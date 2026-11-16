@@ -406,6 +406,8 @@ mod tests {
         let ctx = egui::Context::default();
         app.execute_project_action(ProjectAction::Open("slow.json".into()), &ctx);
         started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        // A new egui window first runs an invisible sizing pass.
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.show_file_loading(ctx));
         let output = ctx.run(egui::RawInput::default(), |ctx| app.show_file_loading(ctx));
         assert!(output.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.job.text.contains("Bestanden laden"))));
         assert!(app.file_intent.is_some());

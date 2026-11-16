@@ -109,6 +109,18 @@ fn job_matches_filters(job:&Job,filters:&[String;7])->bool{
             .to_lowercase().contains(&filter.trim().to_lowercase())
     })
 }
+struct OpeningJob {
+    events: Receiver<Result<(Browser, Result<String, String>), String>>,
+    job: Job,
+    owner: sleufbase_rust::jobs_cache::SnapshotOwner,
+    cancel: Arc<AtomicBool>,
+    preserve_editor: bool,
+    reused_browser: bool,
+}
+impl Drop for OpeningJob {
+    fn drop(&mut self) { self.cancel.store(true, Ordering::Release); }
+}
+
 enum RepairSource{File(PathBuf),Browser(sleufbase_rust::kickthemap_browser::BrowserChannel)}
 pub(super) struct BrowserUi {
     pub(super) open:bool,
@@ -136,7 +148,10 @@ pub(super) struct BrowserUi {
     map_texture:Option<(Bounds,egui::TextureHandle)>,
     map_loading:Option<Receiver<Result<OsmRaster,String>>>,
     map_status:String,
-    opening_job:Option<Receiver<(Browser,Result<(),String>)>>,
+    opening_job:Option<OpeningJob>,
+    editor_owner:Option<sleufbase_rust::jobs_cache::SnapshotOwner>,
+    pub(super) tools:kick_browser_tools::State,
+    pub(super) reloading:Option<kick_browser_reload_ui::JobReload>,
     open_target:Option<u64>,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
@@ -196,7 +211,8 @@ impl Default for BrowserUi {
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,
             map_open:false,map_bounds:None,map_texture:None,map_loading:None,
-            map_status:String::new(),opening_job:None,open_target:None,
+            map_status:String::new(),opening_job:None,editor_owner:None,
+            tools:Default::default(),reloading:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
@@ -320,6 +336,8 @@ impl SleufBaseApp {
         self.live_session=Some(login.session);
         self.live_jobs=login.jobs;
         if !self.project_sources_owned() && self.verify_kickthemap_raster_crs() { self.dirty = true; }
+        self.reset_kickthemap_editor();
+        self.browser_ui.editor_owner=self.live_jobs_owner.clone();
         self.browser_ui.browser=Some(login.browser);
         if !automatic { self.browser_ui.open=true; }
         self.browser_ui.web_visible=false;
@@ -384,8 +402,12 @@ impl SleufBaseApp {
     }
     pub(super) fn live_operation_busy(&self)->bool{
         self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.opening_job.is_some()
+            ||self.browser_ui.reloading.is_some()||self.browser_ui.tools.writing()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
+        if self.browser_ui.is_opening_job() { self.cancel_kickthemap_job_open(); }
+        else if self.browser_ui.capturing.is_some() { self.cancel_kickthemap_login(); }
+        else { self.hide_kickthemap_pane(); }
         self.browser_ui.open=true;
         if self.jobs_cache.is_none(){self.open_newest_jobs_cache();}
     }
@@ -443,6 +465,7 @@ impl SleufBaseApp {
                 return;
             }
         };
+        self.reset_kickthemap_editor();
         self.browser_ui.browser=None;
         let (tx,rx)=mpsc::channel();
         let (status_tx,status_rx)=mpsc::channel();
@@ -489,24 +512,50 @@ impl SleufBaseApp {
         self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
-        let opening=self.browser_ui.opening_job.as_ref().map(|rx|rx.try_recv());
-        match opening {
-            Some(Ok((browser,result)))=>{
-                self.browser_ui.browser=Some(browser);
-                self.browser_ui.opening_job=None;
-                if result.is_err(){self.hide_kickthemap_pane();}
-                self.browser_ui.status=match result {
-                    Ok(())=>"Job geopend in het ingebouwde KickTheMap-venster".into(),
-                    Err(e)=>format!("Job openen mislukt: {e}"),
-                };
+        let opening=self.browser_ui.opening_job.as_ref().map(|task|task.events.try_recv());
+        let result=match opening {
+            Some(Ok(result))=>Some(result),
+            Some(Err(TryRecvError::Disconnected))=>Some(Err("Jobvenster openen onderbroken".into())),
+            Some(Err(TryRecvError::Empty))=>{ctx.request_repaint_after(Duration::from_millis(100));None},
+            None=>None,
+        };
+        if let Some(result)=result {
+            if let Some(task)=self.browser_ui.opening_job.take() {
+                let same_owner=self.live_jobs_owner.as_ref()==Some(&task.owner)
+                    && self.live_session.as_ref().is_some_and(|session|session.snapshot_owner()==&task.owner);
+                let cancelled=task.cancel.load(Ordering::Acquire);
+                if same_owner {
+                    match result {
+                        Ok((browser,Ok(url))) if !cancelled=>{
+                            let same_editor=task.preserve_editor && self.browser_ui.editor_owner.as_ref()==Some(&task.owner)
+                                && self.browser_ui.tools.job.as_ref().is_some_and(|job|job.job_id==task.job.job_id)
+                                && self.browser_ui.tools.expected_url==url;
+                            if !same_editor {self.browser_ui.tools.set_job(task.job.clone(),url);}
+                            self.browser_ui.editor_owner=Some(task.owner.clone());
+                            self.browser_ui.browser=Some(browser);
+                            self.browser_ui.status=format!("{} geopend in de KickTheMap-browser",task.job.title);
+                        }
+                        result=>{
+                            let error=match result {
+                                Ok((browser,result))=>{
+                                    // A failed live verification must not destroy a
+                                    // previously open drawing with unsaved geometry.
+                                    if task.reused_browser {self.browser_ui.browser=Some(browser);}
+                                    result.err().unwrap_or_else(||"Openen geannuleerd".into())
+                                }
+                                Err(error)=>error,
+                            };
+                            self.hide_kickthemap_pane();
+                            self.browser_ui.status=if cancelled {"Jobvenster openen geannuleerd.".into()}
+                                else {format!("Job openen mislukt: {error}")};
+                        }
+                    }
+                }else{
+                    self.hide_kickthemap_pane();
+                    self.browser_ui.status="Jobvenster niet overgenomen: de aanmelding is gewijzigd.".into();
+                }
                 self.message=self.browser_ui.status.clone();
             }
-            Some(Err(TryRecvError::Disconnected))=>{
-                self.browser_ui.opening_job=None;
-                self.hide_kickthemap_pane();
-                self.browser_ui.status="Jobvenster openen onderbroken".into();
-            }
-            _=>{}
         }
         match self.browser_ui.map_loading.as_ref().map(|rx|rx.try_recv()) {
             Some(Ok(Ok(raster)))=>{
@@ -642,21 +691,87 @@ impl SleufBaseApp {
             self.browser_ui.queue.len()
         );
     }
+    pub(super) fn reset_kickthemap_editor(&mut self) {
+        self.browser_ui.opening_job=None; // Drop cancels the worker and rejects late results.
+        self.browser_ui.tools.cancel();
+        self.browser_ui.tools=Default::default();
+        self.browser_ui.editor_owner=None;
+    }
+
+    pub(super) fn cancel_kickthemap_job_open(&mut self) {
+        if let Some(task)=&self.browser_ui.opening_job {
+            // Keep the receiver until the worker returns an existing browser;
+            // cancellation must not close an unsaved provider drawing.
+            task.cancel.store(true,Ordering::Release);
+            self.browser_ui.status="Jobvenster openen annuleren…".into();
+            self.message=self.browser_ui.status.clone();
+        }
+        self.hide_kickthemap_pane();
+    }
+
     fn open_selected_kickthemap_job(&mut self,id:u64){
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
-        let Some(browser)=self.browser_ui.browser.take() else {
-            self.browser_ui.status="Open eerst het ingebouwde KickTheMap-venster en neem de sessie over.".into();
-            return;
+        let Some(session)=self.live_session.as_ref() else {
+            self.browser_ui.status="Meld je eerst aan bij KickTheMap.".into();return;
         };
-        if self.browser_ui.opening_job.is_some(){self.browser_ui.browser=Some(browser);return;}
+        let owner=session.snapshot_owner().clone();
+        if self.live_jobs_owner.as_ref()!=Some(&owner) {
+            self.browser_ui.status="Vernieuw eerst de jobs van de huidige aanmelding.".into();return;
+        }
+        let Some(job)=self.live_jobs.iter().find(|job|job.job_id==id).cloned() else {
+            self.browser_ui.status="Deze job staat niet in de huidige live joblijst.".into();return;
+        };
+        let same_owner=self.browser_ui.editor_owner.as_ref()==Some(&owner);
+        let reuse_browser=self.browser_ui.browser.is_some() && same_owner;
+        let cookies=if !reuse_browser {
+            match session.embedded_session_cookies() {
+                Ok(cookies)=>Some(cookies),
+                Err(error)=>{self.browser_ui.status=error;return;}
+            }
+        }else{None};
+        #[cfg(not(test))]
+        let dock=match if reuse_browser {self.browser_ui.dock.clone().map(Ok).unwrap_or_else(BrowserDock::new)}
+            else {BrowserDock::new()} {
+            Ok(dock)=>dock,
+            Err(error)=>{self.browser_ui.status=error.to_string();return;}
+        };
+        self.browser_ui.tools.cancel();
+        let preserve_editor=reuse_browser && self.browser_ui.tools.job.as_ref().is_some_and(|job|job.job_id==id);
+        if !preserve_editor {
+            self.browser_ui.tools=Default::default();
+        }
+        let browser=self.browser_ui.browser.take().filter(|_|same_owner);
         let (tx,rx)=mpsc::channel();
-        self.browser_ui.opening_job=Some(rx);
+        let cancel=Arc::new(AtomicBool::new(false));
+        self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser});
         self.browser_ui.web_visible=true;
-        self.browser_ui.status=format!("Job {id} openen in het ingebouwde venster…");
-        std::thread::spawn(move||{
-            let result=browser.open_job(id);
-            let _=tx.send((browser,result));
-        });
+        self.shell.login_open=false;
+        self.browser_ui.status=format!("Job {id} openen in de KickTheMap-browser…");
+        #[cfg(not(test))]
+        {
+            let host=self.browser_ui.host;
+            self.browser_ui.dock=Some(dock.clone());
+            let _=std::thread::Builder::new().name("kickthemap-open-job".into()).spawn(move||{
+                let result=(||{
+                    let browser=match browser {
+                        Some(browser)=>browser,
+                        None=>Browser::launch_embedded_with_cancel(dock,host,false,&cancel)?,
+                    };
+                    let result=match cookies {
+                        Some(cookies)=>browser.prepare_authenticated_job(&cookies,id,&cancel),
+                        None=>browser.open_job_with_cancel(id,&cancel),
+                    };
+                    Ok((browser,result))
+                })();
+                let _=tx.send(result);
+            });
+        }
+        #[cfg(test)]
+        {
+            let _=(browser,cookies,cancel);
+            self.browser_ui.launch_requests+=1;
+            let _=tx.send(Err("Test: jobbrowser niet gestart".into()));
+        }
     }
     pub(super) fn show_kickthemap_workspace(&mut self,ctx:&egui::Context) {
         if !self.browser_ui.open {return;}
@@ -665,7 +780,11 @@ impl SleufBaseApp {
         let loaded=self.active_job_ids();
         let jobs=&self.live_jobs;
         let cache=self.jobs_cache.as_ref().map(|c|c.jobs.as_slice()).unwrap_or(&[]);
-        let live=self.live_session.is_some()||(self.live_busy&&self.live_jobs_owner.is_some());
+        // Keep the current list visible while its client is borrowed by a
+        // worker (including replacement login); busy actions remain disabled.
+        let live=self.live_session.is_some()||(self.live_busy&&self.live_jobs_owner.is_some())
+            ||self.browser_ui.reloading.as_ref().is_some_and(|reload|
+                self.live_jobs_owner.as_ref()==Some(reload.owner()));
         let busy=self.live_operation_busy();
         let refreshing=self.live_refresh.is_some();
         let downloading=self.live_download_rx.is_some()||self.browser_ui.batch_mode;
@@ -727,9 +846,12 @@ impl SleufBaseApp {
                             action=Some("tiffs");
                         }
                     });
+                    ui.horizontal_wrapped(|ui|{
+                        if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
+                            egui::Button::new("Open in KickTheMap-browser").corner_radius(9))
+                            .on_hover_text("Open één geselecteerde job om kabels en leidingen te tekenen en hun gegevens in te vullen.").clicked(){action=Some("open-job");}
+                    });
                     ui.menu_button("Meer opties en probleemoplossing",|ui|{
-                        if ui.add_enabled(live&&!busy&&browser.browser.is_some()&&browser.opening_job.is_none()&&browser.selected.len()==1,
-                            egui::Button::new("Jobdetails op website")).clicked(){action=Some("open-job");}
                     if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
                         egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
                     if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1&&browser.browser.is_some(),
@@ -1032,6 +1154,79 @@ fn read_download_capture(path:&std::path::Path)->Result<String,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn native_editor_fixture()->SleufBaseApp {
+        let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie {
+            name:"fixture".into(),value:"local-only".into(),domain:"my.kickthemap.com".into(),
+            path:"/".into(),secure:true,
+        };
+        let session=KickTheMapLiveClient::from_authenticated_browser(&[cookie],"fixture-csrf").unwrap();
+        let mut app=SleufBaseApp::default();
+        app.live_jobs_owner=Some(session.snapshot_owner().clone());
+        app.live_session=Some(session);
+        app.live_jobs=vec![Job {job_id:42,title:"Kabeljob".into(),address:String::new(),
+            municipality:String::new(),coordinates:String::new(),client_date:String::new(),
+            status:9,downloadable:true,prefix:String::new()}];
+        app.browser_ui.open=true;
+        app.browser_ui.selected.insert(42);
+        app
+    }
+
+    #[test]
+    fn jobs_button_opens_editor_after_native_login_without_a_previous_browser() {
+        let mut app=native_editor_fixture();
+        let owner=app.live_jobs_owner.clone();
+        let ctx=egui::Context::default();theme::install(&ctx);
+        let render=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1450.,1000.))),
+            events,..Default::default()
+        },|ctx|app.show_kickthemap_workspace(ctx));
+        let mut output=render(&mut app,vec![]);
+        for _ in 0..4 {output=render(&mut app,vec![]);}
+        let position=output.shapes.iter().find_map(|shape|match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text()=="Open in KickTheMap-browser"=>{
+                let point=text.pos+text.galley.rect.center().to_vec2();
+                shape.clip_rect.contains(point).then_some(point)
+            },_=>None,
+        }).expect("the browser entry must be visible in the normal jobs actions");
+        render(&mut app,vec![egui::Event::PointerMoved(position)]);
+        for pressed in [true,false] {
+            render(&mut app,vec![egui::Event::PointerButton {pos:position,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);
+        }
+        assert_eq!(app.browser_ui.launch_requests,1);
+        assert!(app.browser_ui.is_opening_job() && app.browser_ui.web_visible);
+        app.poll_kickthemap_browser(&ctx); // deterministic test worker failure
+        assert!(!app.browser_ui.is_opening_job() && !app.browser_ui.web_visible);
+        assert_eq!(app.live_jobs_owner,owner);
+        assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
+        assert!(app.browser_ui.status.contains("Job openen mislukt"));
+    }
+
+    #[test]
+    fn cancelling_open_rejects_queued_result_without_losing_the_native_account() {
+        let mut app=native_editor_fixture();
+        app.open_selected_kickthemap_job(42);
+        let cancel=app.browser_ui.opening_job.as_ref().unwrap().cancel.clone();
+        app.cancel_kickthemap_job_open();
+        assert!(cancel.load(Ordering::Acquire));
+        assert!(!app.browser_ui.web_visible);
+        assert!(app.browser_ui.is_opening_job(),"keep receiver until an existing browser can be returned");
+        app.poll_kickthemap_browser(&egui::Context::default());
+        assert!(!app.browser_ui.is_opening_job());
+        assert!(app.live_session.is_some() && app.live_jobs_owner.is_some());
+        assert_eq!(app.browser_ui.status,"Jobvenster openen geannuleerd.");
+    }
+
+    #[test]
+    fn cached_or_unowned_job_cannot_start_an_editor() {
+        let mut app=native_editor_fixture();
+        app.open_selected_kickthemap_job(99);
+        assert_eq!(app.browser_ui.launch_requests,0);
+        app.live_jobs_owner=None;
+        app.open_selected_kickthemap_job(42);
+        assert_eq!(app.browser_ui.launch_requests,0);
+        assert!(!app.browser_ui.web_visible);
+    }
     #[test]
     fn dragging_jobs_window_taller_reveals_more_rows(){
         let cookie=sleufbase_rust::kickthemap_browser::BrowserCookie{

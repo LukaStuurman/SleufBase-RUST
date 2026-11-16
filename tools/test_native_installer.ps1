@@ -15,8 +15,10 @@ for ($iteration = 1; $iteration -le 2; $iteration++) {
         if (-not (Test-Path -LiteralPath $installedPath)) { throw "Installed payload missing: $($record.path)" }
         if ((Get-FileHash -LiteralPath $installedPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.sha256) { throw "Installed payload differs: $($record.path)" }
     }
-    & (Join-Path $installDirectory 'sleufbase-rust.exe') --help
-    if ($LASTEXITCODE -ne 0) { throw 'Installed app could not start' }
+    # The desktop executable uses the Windows GUI subsystem. Wait for its CLI
+    # process explicitly and inspect that process, not the shell's LASTEXITCODE.
+    $appProcess = Start-Process -FilePath (Join-Path $installDirectory 'sleufbase-rust.exe') -ArgumentList '--help' -NoNewWindow -Wait -PassThru
+    if ($appProcess.ExitCode -ne 0) { throw "Installed app could not start (exit $($appProcess.ExitCode))" }
 }
 $uninstaller = Join-Path $installDirectory 'unins000.exe'
 $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru -WindowStyle Hidden

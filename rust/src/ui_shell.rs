@@ -494,38 +494,6 @@ impl SleufBaseApp {
         egui::SidePanel::left("original-sidebar").default_width(width).min_width(340.)
             .frame(egui::Frame::new().fill(APP_BG).inner_margin(egui::Margin { left: 18, right: 14, top: 18, bottom: 18 }))
             .show(ctx, |ui| {
-                theme::title(ui, "Weergave");
-                theme::card(18, 12, 8).show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.set_min_height(74.);
-                    let field_width=(ui.available_width()-44.).max(120.);
-                    ui.spacing_mut().slider_width=field_width;
-                    let previous = self.project_view.clone();
-                    ui.spacing_mut().item_spacing.x=12.;
-                    ui.horizontal(|ui| {
-                        ui.add_sized([32.,28.],egui::Label::new("Kaart").halign(egui::Align::Min));
-                        ui.allocate_ui_with_layout(egui::vec2(field_width,28.),egui::Layout::left_to_right(egui::Align::Center),|ui|{
-                            ui.set_max_width(field_width);
-                            let display = |source:Background| source.label();
-                            egui::ComboBox::from_id_salt("original-background").width(field_width).truncate().selected_text(display(self.project_view.provider())).show_ui(ui,|ui|{
-                                for source in [Background::PdokAerial,Background::PdokAerialCadastral,Background::Cadastral,Background::OpenStreetMap,Background::OpenStreetMapCadastral] {
-                                    if ui.selectable_label(self.project_view.use_background&&self.project_view.provider()==source,display(source)).clicked(){
-                                        self.project_view.use_background=true;self.project_view.background_source=source.label().into();
-                                    }
-                                }
-                            });
-                        });
-                    });
-                    ui.horizontal(|ui|{
-                        ui.add_sized([32.,28.],egui::Label::new("TIFF").halign(egui::Align::Min));
-                        ui.add(egui::Slider::new(&mut self.project_view.opacity_percent,0. ..=100.).show_value(false));
-                    });
-                    if previous != self.project_view {
-                        self.dirty = true;
-                        if previous.use_background != self.project_view.use_background || previous.background_source != self.project_view.background_source { self.request_selected_background(); }
-                    }
-                });
-                ui.add_space(6.);
                 let available = ui.available_height();
                 let mut tiff = self.shell.tiff_height.unwrap_or((available.max(620.) * 0.30).clamp(220., 280.));
                 let mut klic = self.shell.klic_height.unwrap_or((available.max(620.) * 0.30).clamp(190., 225.));
@@ -553,13 +521,15 @@ impl SleufBaseApp {
                 let list_width = list_width.ceil().max(70.);
                 let controls_width = 30. + 6. + list_width + 6. + 30.;
                 let available_width = ui.available_width();
-                let title_width = (available_width - controls_width - 8.).max(0.);
                 let named = egui::FontFamily::Name("SleufBase title".into());
                 let family = if ui.fonts(|fonts| fonts.families().contains(&named)) {
                     named
                 } else { egui::FontFamily::Proportional };
                 let title = egui::RichText::new("Kabelinformatie")
                     .font(egui::FontId::new(theme::FONT_SIZE, family));
+                let title_width = egui::WidgetText::from(title).into_galley(ui,
+                    Some(egui::TextWrapMode::Extend), f32::INFINITY,
+                    egui::FontSelection::Style(egui::TextStyle::Button)).size().x + 4.;
                 let line_active = self.cable_line.active();
                 let line_busy = self.cable_line.busy();
                 let line_enabled = line_active || line_busy || (!self.browser_ui.web_visible
@@ -576,21 +546,19 @@ impl SleufBaseApp {
                         .on_disabled_hover_text("Ga terug naar de kaart om de objectlijst te openen.").clicked();
                     toggle_line = cable_line_button(ui, line_enabled, line_active, line_busy).clicked();
                 };
-                if title_width < 64. {
-                    // On a very narrow panel keep the full controls together;
-                    // the title gets its own line rather than breaking words.
-                    ui.add_sized([available_width, 22.], egui::Label::new(title)
-                        .truncate().halign(egui::Align::Min)).on_hover_text("Kabelinformatie");
+                if available_width < title_width + controls_width + 8. {
+                    // Keep both rows left-aligned when the complete header does not fit.
+                    theme::title(ui, "Kabelinformatie");
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.;
-                        ui.add_space((available_width - controls_width).max(0.));
+                        ui.add_space(4.);
                         controls(ui);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.;
-                        ui.add_sized([title_width, 28.], egui::Label::new(title)
-                            .truncate().halign(egui::Align::Min)).on_hover_text("Kabelinformatie");
+                        // Use the same natural-width title as the other panes. A
+                        // stretched add_sized label centers its widget in the spare space.
+                        theme::title(ui, "Kabelinformatie");
                         controls(ui);
                     });
                 }
@@ -1092,6 +1060,43 @@ impl SleufBaseApp {
             else { format!("{} proefsleuven uit het project verwijderd.", selected.len()) };
     }
 
+    fn show_shell_map_display_controls(&mut self, ui: &mut egui::Ui) {
+        let previous = self.project_view.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.;
+            let field_width = (ui.available_width() - 40.).clamp(100., 220.);
+            ui.horizontal(|ui| {
+                ui.add_sized([32., 28.], egui::Label::new("Kaart").halign(egui::Align::Min));
+                egui::ComboBox::from_id_salt("original-background").width(field_width).truncate()
+                    .selected_text(self.project_view.provider().label()).show_ui(ui, |ui| {
+                        for source in [Background::PdokAerial, Background::PdokAerialCadastral,
+                            Background::Cadastral, Background::OpenStreetMap, Background::OpenStreetMapCadastral]
+                        {
+                            if ui.selectable_label(self.project_view.use_background
+                                && self.project_view.provider() == source, source.label()).clicked()
+                            {
+                                self.project_view.use_background = true;
+                                self.project_view.background_source = source.label().into();
+                            }
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.add_sized([32., 28.], egui::Label::new("TIFF").halign(egui::Align::Min));
+                ui.spacing_mut().slider_width = 130.;
+                ui.add(egui::Slider::new(&mut self.project_view.opacity_percent, 0. ..=100.).show_value(false));
+            });
+        });
+        if previous != self.project_view {
+            self.dirty = true;
+            if previous.use_background != self.project_view.use_background
+                || previous.background_source != self.project_view.background_source
+            {
+                self.request_selected_background();
+            }
+        }
+    }
+
     pub(super) fn show_original_map(&mut self, ctx: &egui::Context) {
         if self.shell.cable_list.open && !self.browser_ui.web_visible {
             let candidates = cable_list::visible_matches(&self.overlays, &self.found_layers);
@@ -1115,7 +1120,17 @@ impl SleufBaseApp {
                 theme::title(ui, "Kaart");
                 theme::card(22, 12, 12).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
+                    let controls_inline = ui.available_width() >= 940.;
+                    if !controls_inline {
+                        self.show_shell_map_display_controls(ui);
+                        ui.add_space(2.);
+                    }
                     ui.horizontal(|ui| {
+                        if controls_inline {
+                            ui.allocate_ui_with_layout(egui::vec2(440., 28.),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| self.show_shell_map_display_controls(ui));
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
                             let profile_enabled = self
                                 .project_settings

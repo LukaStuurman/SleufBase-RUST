@@ -80,6 +80,8 @@ fn verify(overlay: &DxfOverlay) {
     assert_eq!(expected.len(), 774);
     assert_eq!(r["grid_corrections"].as_array().unwrap().len(), 240);
     let mut attrs = 0;
+    let mut culled_attrs = 0;
+    let mut retained_hidden_attrs = 0;
     for i in overlay.features.len()..overlay.features.len() + overlay.expanded.features.len() {
         let draw = overlay.inspect_feature(i).unwrap();
         let details = overlay.inspect_details(i).unwrap();
@@ -104,7 +106,8 @@ fn verify(overlay: &DxfOverlay) {
             continue;
         }
         attrs += 1;
-        let text = draw.source.cad.as_deref().unwrap().text.as_deref().unwrap();
+        let cad = draw.source.cad.as_deref().unwrap();
+        let text = cad.text.as_deref().unwrap();
         let a = text.attribute.as_deref().unwrap();
         assert_eq!(a.tag, want["tag"]);
         assert_eq!(a.flags as u64, want["flags"].as_u64().unwrap());
@@ -117,6 +120,29 @@ fn verify(overlay: &DxfOverlay) {
         assert_eq!(details["Attribuutnaam"], a.tag);
         let paths: Vec<_> = draw.paths().filter(|p| !p.is_empty()).collect();
         let ink = want["paths"].as_array().unwrap();
+        // HIDDEN_ENTITY is the corpus's group-60 case; bit 1 independently
+        // marks HIDDEN_FLAG. Do not infer this from parent/layer visibility.
+        let source_hidden = want["tag"] == "HIDDEN_ENTITY"
+            || want["flags"].as_u64().unwrap() & 1 != 0;
+        assert_eq!(cad.invisible, source_hidden, "{key:?}");
+        assert_eq!(cad.is_hidden(), source_hidden, "{key:?}");
+        if source_hidden {
+            // Import retains these values and source records without spending
+            // the shared glyph budget on text that cannot be drawn.
+            assert!(!ink.is_empty() && !a.multiline());
+            assert!(!draw.visible);
+            assert!(paths.is_empty() && draw.points.is_empty() && draw.path_breaks.is_empty());
+            assert!(draw.source.points.is_empty() && cad.path_breaks.is_empty());
+            assert!(text.contours.points.is_empty() && text.contours.kinds.is_empty());
+            culled_attrs += 1;
+            continue;
+        }
+        if !draw.visible {
+            // Hidden parent INSERTs and layers may be enabled later. Their
+            // source ink must still pass the full original WCS comparisons.
+            assert!(!paths.is_empty() && !text.contours.points.is_empty());
+            retained_hidden_attrs += 1;
+        }
         assert_eq!(paths.len(), ink.len(), "{key:?}");
         if a.multiline() {
             assert!(draw.points.is_empty());
@@ -151,6 +177,8 @@ fn verify(overlay: &DxfOverlay) {
         }
     }
     assert_eq!(attrs, 471);
+    assert_eq!(culled_attrs, 64);
+    assert_eq!(retained_hidden_attrs, 84);
     assert!(expected.is_empty());
     let mut parents: BTreeMap<_, _> = overlay
         .features

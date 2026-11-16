@@ -41,7 +41,7 @@ jobs:
           workspaces: rust
       - name: Test all native targets
         if: env.SKIP_RELEASE_TESTS != 'true'
-        run: cargo test --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
+        run: cargo test --locked --manifest-path rust/Cargo.toml --all-targets --no-fail-fast --jobs 2
       - name: Review with Clippy
         if: env.SKIP_RELEASE_TESTS != 'true'
         run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
@@ -54,6 +54,16 @@ jobs:
       - name: Browser capture contracts
         if: env.SKIP_RELEASE_TESTS != 'true'
         run: node tools/test_kickthemap_capture.mjs
+      - name: Cable and pipe form contracts
+        if: env.SKIP_RELEASE_TESTS != 'true'
+        shell: pwsh
+        run: |
+          $formTestRoot = Join-Path $env:RUNNER_TEMP 'kickthemap-form-tests'
+          npm install --prefix "$formTestRoot" --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SLEUFBASE_FORM_TEST_NODE_MODULES = Join-Path $formTestRoot 'node_modules'
+          node --test tools/test_kickthemap_form.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

@@ -531,6 +531,7 @@ mod tests {
     #[test]
     fn native_template_window_worker_snapshot_and_project_switch_keep_complete_sources() {
         let mut app = template_app();
+        app.migrated_settings.export_preferences.template_generate_reverse_cross_section_sheet = true;
         let ctx = egui::Context::default();
         app.open_legacy_template_export();
         let mut state = app.template_order_dialog.as_ref().unwrap().state.clone();
@@ -623,6 +624,8 @@ mod tests {
         app.request_project_action(ProjectAction::Close, &ctx);
         assert!(app.pending_project_action.is_none());
         assert!(!app.close_confirmed);
+        // A new egui window first runs an invisible sizing pass.
+        let _ = ctx.run(Default::default(), |ctx| app.render(ctx));
         let frame = ctx.run(Default::default(), |ctx| app.render(ctx));
         assert!(frame.shapes.iter().any(
             |s| matches!(&s.shape,egui::Shape::Text(t) if t.galley.job.text.contains("Exporteren"))
@@ -714,6 +717,8 @@ mod tests {
             assert!(app.datasets.is_empty());
             assert!(app.virtual_trenches.is_empty());
             let ctx = egui::Context::default();
+            // Finish the window's sizing pass before checking its visible Escape frame.
+            let _ = ctx.run(Default::default(), |ctx| app.render(ctx));
             let frame = ctx.run(
                 egui::RawInput {
                     events: vec![egui::Event::Key {

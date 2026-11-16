@@ -11,6 +11,8 @@ use serde_json::Value;
 use std::collections::{HashMap,HashSet};
 use std::io::Read;
 use std::thread;
+use std::sync::Arc;
+use reqwest::cookie::{CookieStore, Jar};
 use std::time::Duration;
 
 #[path="kickthemap_strategy.rs"]
@@ -213,10 +215,12 @@ fn inline_payload(html:&str)->Result<Value,String>{
     Err("KickTheMap-pagina bevat geen geldige ingebedde projectlijst".into())
 }
 
-/// Session cookies are private to this in-memory reqwest client and never
-/// written to disk or exported. The caller should drop it on logout.
+/// Session cookies stay in memory. An explicit browser action can transfer a
+/// narrowed session to this process's own WebView2; never to project/cache files.
+/// The caller should drop the client and its browser on logout.
 pub struct KickTheMapLiveClient {
     client: Client,
+    cookie_jar: Arc<Jar>,
     csrf: String,
     api_origin:String,
     account_email:String,
@@ -229,6 +233,37 @@ pub struct KickTheMapLiveClient {
 }
 
 impl KickTheMapLiveClient {
+    /// Copy only cookies that would be sent to the canonical account home.
+    /// The browser receives host-only, Secure, HttpOnly session cookies: no
+    /// persistent expiry, foreign domain/path, credentials or cached identity.
+    pub fn embedded_session_cookies(&self) -> Result<Value, String> {
+        if self.api_origin != ORIGIN {
+            return Err("Deze sessie kan niet aan het ingebouwde venster worden gekoppeld".into());
+        }
+        let origin = reqwest::Url::parse(&format!("{ORIGIN}/"))
+            .map_err(|_| "Ongeldige KickTheMap-accountlocatie")?;
+        let header = self.cookie_jar.cookies(&origin)
+            .ok_or("De KickTheMap-sessie bevat geen aanmeldcookies. Meld je opnieuw aan.")?;
+        let header = header.to_str()
+            .map_err(|_| "De KickTheMap-sessie bevat ongeldige aanmeldcookies")?;
+        if header.len() > 512 * 1024 {
+            return Err("De KickTheMap-sessie bevat te veel aanmeldgegevens".into());
+        }
+        let mut cookies = Vec::new();
+        for item in header.split(';') {
+            let (name, value) = item.trim().split_once('=')
+                .ok_or("De KickTheMap-sessie bevat ongeldige aanmeldcookies")?;
+            // Leave readable CSRF cookies to the canonical account home
+            // response instead of importing them as HttpOnly auth cookies.
+            if value.is_empty() || name.eq_ignore_ascii_case("XSRF-TOKEN") { continue; }
+            cookies.push(serde_json::json!({
+                "name":name, "value":value, "domain":"www.my.kickthemap.com",
+                "path":"/", "secure":true, "httpOnly":true, "sameSite":"Lax",
+            }));
+        }
+        crate::kickthemap_browser::native_session_cookie_params(&Value::Array(cookies))
+            .map(Value::Array)
+    }
     /// Prime the empty-response guard from an existing list belonging to this
     /// authenticated account. This adopts no cookies, credentials or file keys.
     /// The UI must check account identity before supplying cached jobs.
@@ -385,8 +420,9 @@ impl KickTheMapLiveClient {
         if email.trim().is_empty() || password.is_empty() {
             return Err("E-mailadres en wachtwoord zijn verplicht".into());
         }
+        let cookie_jar = Arc::new(Jar::default());
         let client = Client::builder()
-            .cookie_store(true)
+            .cookie_provider(Arc::clone(&cookie_jar))
             .redirect(redirect::Policy::none())
             .timeout(Duration::from_secs(30))
             .user_agent("SleufBase-Rust/0.1")
@@ -419,7 +455,7 @@ impl KickTheMapLiveClient {
         }
         let csrf = html_token(&homepage,"meta","csrf-token")
             .ok_or("KickTheMap sessie bevat geen CSRF-token")?;
-        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
 
     /// Adopt cookies only from the Edge profile launched by this Rust process.
@@ -439,10 +475,8 @@ impl KickTheMapLiveClient {
         Self::browser_session(cookies,Some(csrf))
     }
     fn browser_session(cookies:&[crate::kickthemap_browser::BrowserCookie],browser_csrf:Option<&str>)->Result<Self,String>{
-        use reqwest::cookie::Jar;
-        use std::sync::Arc;
         let base=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
-        let jar=Arc::new(Jar::default());
+        let cookie_jar=Arc::new(Jar::default());
         let mut accepted=0usize;
         for cookie in cookies {
             let domain=cookie.domain.trim_start_matches('.').to_ascii_lowercase();
@@ -452,13 +486,13 @@ impl KickTheMapLiveClient {
                 || !cookie.path.starts_with('/')
                 || cookie.value.chars().any(|c|matches!(c,'\r'|'\n'|';'))
             {continue;}
-            jar.add_cookie_str(&format!("{}={}; Domain={}; Path={}; Secure",
+            cookie_jar.add_cookie_str(&format!("{}={}; Domain={}; Path={}; Secure",
                 cookie.name,cookie.value,domain,cookie.path),&base);
             accepted+=1;
         }
         if accepted==0{return Err("Het ingebouwde venster bevat nog geen geldige KickTheMap-sessiecookies".into());}
         let client=Client::builder()
-            .cookie_provider(jar)
+            .cookie_provider(Arc::clone(&cookie_jar))
             .redirect(redirect::Policy::none())
             .timeout(Duration::from_secs(25))
             .user_agent("SleufBase-Rust/0.1 (interactive WebView2 session)")
@@ -474,7 +508,7 @@ impl KickTheMapLiveClient {
         html_token(&page,"meta","csrf-token")
             .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?
         };
-        Ok(Self{client,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
     /// Compatibility entry point: the editable account hint is not identity proof.
     /// Browser sessions always receive an independent snapshot owner.
@@ -621,8 +655,49 @@ mod tests {
             let _=tx.send(String::from_utf8(request).unwrap());
             write!(socket,"HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
         });
-        let client=Client::builder().redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
-        (KickTheMapLiveClient{client,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+        let cookie_jar=Arc::new(Jar::default());
+        let client=Client::builder().cookie_provider(Arc::clone(&cookie_jar)).redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
+        (KickTheMapLiveClient{client,cookie_jar,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+    }
+    #[test]
+    fn embedded_handoff_only_copies_root_account_cookies_without_persistent_expiry() {
+        let fixture = crate::kickthemap_browser::BrowserCookie { name:"laravel_session".into(),
+            value:"fixture-native".into(),domain:"www.my.kickthemap.com".into(),path:"/".into(),secure:true };
+        let session = KickTheMapLiveClient::from_authenticated_browser(&[fixture], "fixture-csrf").unwrap();
+        let owner = session.snapshot_owner().clone();
+        let root = reqwest::Url::parse(&format!("{ORIGIN}/")).unwrap();
+        session.cookie_jar.add_cookie_str("remember_me=fixture-remember; Path=/; Secure; Max-Age=3600", &root);
+        session.cookie_jar.add_cookie_str("nested=fixture-private; Path=/private; Secure", &root);
+        session.cookie_jar.add_cookie_str("XSRF-TOKEN=fixture-csrf-cookie; Path=/; Secure", &root);
+        session.cookie_jar.add_cookie_str("foreign=fixture-other; Path=/; Secure", &reqwest::Url::parse("https://other.example/").unwrap());
+        session.cookie_jar.add_cookie_str("sibling=fixture-sibling; Path=/; Secure", &reqwest::Url::parse("https://other.my.kickthemap.com/").unwrap());
+        let cookies = session.embedded_session_cookies().unwrap();
+        let names = cookies.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect::<HashSet<_>>();
+        assert_eq!(names, HashSet::from(["laravel_session", "remember_me"]));
+        for cookie in cookies.as_array().unwrap() {
+            assert_eq!(cookie["domain"], "www.my.kickthemap.com");
+            assert_eq!(cookie["path"], "/");
+            assert_eq!(cookie["secure"], true);
+            assert_eq!(cookie["httpOnly"], true);
+            assert!(cookie.get("expires").is_none());
+        }
+        assert_eq!(session.snapshot_owner(), &owner, "browser launch must not adopt another identity");
+    }
+    #[test]
+    fn embedded_handoff_refuses_expired_sessions_and_noncanonical_api_origins() {
+        let fixture = crate::kickthemap_browser::BrowserCookie { name:"laravel_session".into(),
+            value:"fixture-native".into(),domain:"www.my.kickthemap.com".into(),path:"/".into(),secure:true };
+        let mut session = KickTheMapLiveClient::from_authenticated_browser(&[fixture], "fixture-csrf").unwrap();
+        for origin in ["http://www.my.kickthemap.com", "https://my.kickthemap.com", "http://127.0.0.1:1234", "https://other.example"] {
+            session.api_origin = origin.into();
+            assert!(session.embedded_session_cookies().is_err());
+        }
+        session.api_origin = ORIGIN.into();
+        session.cookie_jar = Arc::new(Jar::default());
+        assert!(session.embedded_session_cookies().is_err());
+        let root = reqwest::Url::parse(&format!("{ORIGIN}/")).unwrap();
+        session.cookie_jar.add_cookie_str("expired=fixture; Path=/; Secure; Max-Age=0", &root);
+        assert!(session.embedded_session_cookies().is_err());
     }
     #[test]
     fn owned_browser_bootstrap_uses_browser_csrf_and_verified_jobs_without_http(){
