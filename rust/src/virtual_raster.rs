@@ -165,7 +165,7 @@ fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_b
     for (i,object) in objects.into_iter().enumerate() {
         if i%256==0 {input::check(cancel)?;}
         let (cx,cy,_,_) = t.project(object.position);
-        if matches!(object.role.to_lowercase().as_str(),"start"|"end"){continue;}
+        if object.is_measurement_helper(){continue;}
         let (vx,vy)=crate::cross_section::crossing_direction((nx,ny),&object.metadata);
         let ((ax,ay),(bx,by))=crate::cross_section::object_segment_on_boundary(t,object,&border)
             .unwrap_or(((cx+vx*point_width,cy+vy*point_width),(cx-vx*point_width,cy-vy*point_width)));

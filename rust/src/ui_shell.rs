@@ -559,19 +559,7 @@ impl SleufBaseApp {
                     if old_virtual.is_some()||old_raster.as_ref()!=Some(&path){
                         self.update_view_selection(old_virtual,old_raster.as_deref());
                     }
-                    if ui.button("Maak virtuele kopie...").clicked(){
-                        self.make_virtual_from_raster(index);
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    self.show_physical_rotation_menu(ui);
-                    ui.separator();
-                    if ui.button("Opmerking bewerken...").clicked(){
-                        self.open_tiff_comment(&path);ui.close_menu();
-                    }
-                    if ui.button("Opmerking wissen").clicked(){
-                        self.clear_tiff_comment(&path);ui.close_menu();
-                    }
+                    self.show_raster_trench_context(ui,index);
                 }
             });
         }

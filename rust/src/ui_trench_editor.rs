@@ -371,7 +371,7 @@ impl Editor {
         painter.circle_filled(point(start.x,start.y),4.,Color32::GREEN);
         painter.circle_filled(point(end.x,end.y),4.,Color32::RED);
         for obj in sampled {
-            if matches!(obj.role.to_lowercase().as_str(),"start"|"end"){continue;}
+            if obj.is_measurement_helper(){continue;}
             if let Some((a,b))=sleufbase_rust::cross_section::object_segment_on_boundary(t,obj,&outline){
                 let rgb=sleufbase_rust::virtual_raster::display_rgb(&obj.metadata).unwrap_or([37,99,235]);
                 painter.line_segment([point(a.0,a.1),point(b.0,b.1)],Stroke::new(2_f32,Color32::from_rgb(rgb[0],rgb[1],rgb[2])));

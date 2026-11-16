@@ -354,9 +354,19 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         let mut points = 0usize;
         for feature in &dataset.features {
             if let Geometry::Polyline(vertices) = &feature.geometry {
+                let rule=crate::matching_rule(&feature.source_name,rules)
+                    .filter(|rule|rule.target_layer!="0");
+                // Generic survey paths are measurements, not map decoration.
+                // Their names override incidental rules like maaiveld -> "ld";
+                // short paths otherwise become an orange dot with a cyan halo.
+                if crate::virtual_trench::measurement_helper_name(&feature.source_name)
+                    &&crate::virtual_trench::measurement_helper_name(&feature.object_name) {
+                    continue;
+                }
+                let color=rule.map_or([249,115,22],|rule|
+                    crate::cad::aci_rgb(i32::from(rule.color_aci)));
                 append_stroke(&mut overlays, &mut points, bounds,
-                    vertices.iter().map(|p| [p.x,p.y]).collect(),
-                    [249,115,22], true)?;
+                    vertices.iter().map(|p| [p.x,p.y]).collect(), color, false)?;
             }
         }
         if !extra_polyline.is_empty() && virtual_source.is_none() {

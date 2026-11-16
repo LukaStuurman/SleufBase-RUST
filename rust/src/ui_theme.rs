@@ -124,6 +124,35 @@ pub(super) fn card(radius: u8, x: i8, y: i8) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(x, y))
 }
 
+/// Egui clips painters to rectangles. Cover the four corner cutouts after
+/// raster imagery and editing overlays, then restore the rounded frame edge.
+pub(super) fn finish_map_frame(ui: &egui::Ui, rect: egui::Rect, radius: f32, outside: Color32) {
+    let radius = radius.min(rect.width() * 0.5).min(rect.height() * 0.5).max(0.);
+    if radius == 0. { return; }
+    let painter = ui.painter_at(rect);
+    let mut mask = egui::Mesh::default();
+    let corners = [
+        (rect.left_top(), egui::vec2(radius, radius), std::f32::consts::PI),
+        (rect.right_top(), egui::vec2(-radius, radius), std::f32::consts::PI * 1.5),
+        (rect.right_bottom(), egui::vec2(-radius, -radius), 0.),
+        (rect.left_bottom(), egui::vec2(radius, -radius), std::f32::consts::FRAC_PI_2),
+    ];
+    for (corner, offset, start) in corners {
+        let center = corner + offset;
+        let base = mask.vertices.len() as u32;
+        mask.colored_vertex(corner, outside);
+        for step in 0..=24 {
+            let angle = start + std::f32::consts::FRAC_PI_2 * step as f32 / 24.;
+            mask.colored_vertex(center + egui::vec2(angle.cos(), angle.sin()) * radius, outside);
+        }
+        for step in 0..24 {
+            mask.add_triangle(base, base + step + 1, base + step + 2);
+        }
+    }
+    painter.add(egui::Shape::mesh(mask));
+    painter.rect_stroke(rect, radius, Stroke::new(1_f32, BORDER), egui::StrokeKind::Inside);
+}
+
 pub(super) fn title(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .inner_margin(egui::Margin {

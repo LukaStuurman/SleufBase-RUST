@@ -13,13 +13,21 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      # Only an explicitly marked main push skips tests; PRs and normal
+      # pushes retain every test step. Building and package integrity always run.
+      SKIP_RELEASE_TESTS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[skip full tests]') }}
     steps:
       - uses: actions/checkout@v4
-      - name: Test WebView2 prerequisite contracts
+      - name: Install installer compiler
         shell: pwsh
         run: |
           choco install innosetup --version=6.7.1 -y --no-progress --allow-downgrade
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test WebView2 prerequisite contracts
+        if: env.SKIP_RELEASE_TESTS != 'true'
+        shell: pwsh
+        run: |
           & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" tools/test_webview2_prerequisite.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $fixture = (Resolve-Path rust/dist-installer/prerequisite-contract.exe).Path
@@ -31,34 +39,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      # Explicit release opt-out applies only to a marked main push; PRs and
-      # normal pushes keep the full suite and Clippy checks.
       - name: Test all native targets
-        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[skip full tests]')) }}
+        if: env.SKIP_RELEASE_TESTS != 'true'
         run: cargo test --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
       - name: Review with Clippy
-        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[skip full tests]')) }}
+        if: env.SKIP_RELEASE_TESTS != 'true'
         run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
       - name: Build optimized desktop app
         run: cargo build --locked --release --manifest-path rust/Cargo.toml --bin sleufbase-rust --jobs 2
       - uses: actions/setup-node@v4
+        if: env.SKIP_RELEASE_TESTS != 'true'
         with:
           node-version: '22'
       - name: Browser capture contracts
+        if: env.SKIP_RELEASE_TESTS != 'true'
         run: node tools/test_kickthemap_capture.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Package and verify portable app
+      - name: Test packaging contracts
+        if: env.SKIP_RELEASE_TESTS != 'true'
         shell: pwsh
         run: |
           python tools/test_windows_icon.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/verify_windows_icon.py rust/target/release/sleufbase-rust.exe assets/techbase_icon.ico
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_autocad_template.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_native_preview_package.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and verify portable app
+        shell: pwsh
+        run: |
+          python tools/verify_windows_icon.py rust/target/release/sleufbase-rust.exe assets/techbase_icon.ico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/package_native_preview.py --binary rust/target/release/sleufbase-rust.exe --output rust/dist/portable-build --revision "$env:GITHUB_SHA"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -77,11 +89,14 @@ jobs:
           & ./tools/prepare_webview2.ps1
           & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" rust/installer/SleufBase-Rust.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./tools/test_native_installer.ps1
           $installer = 'rust/dist-installer/SleufBase-Rust-preview-Setup.exe'
           if ((Get-Item -LiteralPath $installer).Length -lt 500000) { throw 'Installer is onvolledig' }
           $checksum = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath 'rust/dist-installer/SleufBase-Rust-preview-Setup.sha256' -Encoding ascii -Value "$checksum  SleufBase-Rust-preview-Setup.exe"
+      - name: Test installer lifecycle
+        if: env.SKIP_RELEASE_TESTS != 'true'
+        shell: pwsh
+        run: ./tools/test_native_installer.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: SleufBase-Rust-Windows-installer-preview

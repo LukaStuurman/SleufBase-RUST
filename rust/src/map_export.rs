@@ -196,6 +196,7 @@ fn overlays(
     image: &mut RgbaImage,
     source: &Source,
     layout: &Layout,
+    editing_decorations: bool,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     let width = if layout.meters_per_pixel < 0.05 {
@@ -216,15 +217,20 @@ fn overlays(
             .iter()
             .map(|p| layout.screen(*p))
             .collect::<Vec<_>>();
+        // Point-only overlays are editing aids, not template map linework.
+        // Skip before line() too: a zero-length line still paints a thick dot.
+        if !editing_decorations && points.iter().all(|point|*point==points[0]) {
+            continue;
+        }
         let color = [stroke.color[0], stroke.color[1], stroke.color[2], 230];
-        if stroke.highlighted {
+        if editing_decorations && stroke.highlighted {
             map_canvas::line(image, &points, 10, [0, 160, 255, 105], cancel, &mut budget)?;
         }
-        if stroke.selected {
+        if editing_decorations && stroke.selected {
             map_canvas::line(image, &points, 7, [255, 215, 0, 215], cancel, &mut budget)?;
         }
         map_canvas::line(image, &points, width, color, cancel, &mut budget)?;
-        if points.len() == 2 && points[0] == points[1] {
+        if editing_decorations && points.len() == 2 && points[0] == points[1] {
             let [x, y] = points[0];
             let radius = (width + 2).max(4) as f64;
             let mut circle =
@@ -429,7 +435,7 @@ impl Renderer {
             };
             map_raster::paint_with_opacity(&mut map, image, transform, &layout, source.tiff_opacity, cancel)?;
         }
-        overlays(&mut map, source, &layout, cancel)?;
+        overlays(&mut map, source, &layout, !template_detail, cancel)?;
         if template_detail {
             if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
                 paint_virtual_outline(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;

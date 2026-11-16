@@ -169,10 +169,13 @@ impl SleufBaseApp {
     pub(super) fn update_view_selection(&mut self,old_virtual:Option<usize>,old_raster:Option<&std::path::Path>){
         use sleufbase_rust::project_view::TiffSelection;
         let previous=self.project_view.selected_tiff.clone();
-        if self.virtual_map.selected!=old_virtual {
-            self.project_view.selected_tiff=self.virtual_map.selected.and_then(|i|self.virtual_trenches.get(i)).map(|t|TiffSelection::Virtual{job_id:t.job_id,label:t.label.clone()});
-        }else if self.raster_points.selected.as_deref()!=old_raster {
-            self.project_view.selected_tiff=self.raster_points.selected.as_ref().map(|path|TiffSelection::Raster{path:path.clone()});
+        if self.virtual_map.selected!=old_virtual||self.raster_points.selected.as_deref()!=old_raster {
+            // Switching from a virtual trench to a TIFF changes both selections.
+            // Resolve the current target instead of persisting the cleared one.
+            self.project_view.selected_tiff=self.virtual_map.selected
+                .and_then(|i|self.virtual_trenches.get(i))
+                .map(|t|TiffSelection::Virtual{job_id:t.job_id,label:t.label.clone()})
+                .or_else(||self.raster_points.selected.as_ref().map(|path|TiffSelection::Raster{path:path.clone()}));
         }
         self.dirty|=previous!=self.project_view.selected_tiff;
     }

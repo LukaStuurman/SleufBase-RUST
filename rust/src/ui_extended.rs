@@ -726,5 +726,6 @@ impl SleufBaseApp {
             self.update_view_selection(old_virtual, old_raster.as_deref());
         }
         self.show_location_on_map(ui, canvas_rect);
+        theme::finish_map_frame(ui, canvas_rect, 18., Color32::WHITE);
     }
 }

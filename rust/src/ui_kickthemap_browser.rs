@@ -32,6 +32,69 @@ fn job_status_text(status:i32)->&'static str{
         _=>"Onbekend",
     }
 }
+fn job_badge(ui:&mut egui::Ui,text:&str,background:Color32,foreground:Color32) {
+    egui::Frame::new().fill(background).corner_radius(7)
+        .inner_margin(egui::Margin::symmetric(8,3)).show(ui,|ui|{
+            ui.add(egui::Label::new(egui::RichText::new(text).size(12.).color(foreground)).selectable(false));
+        });
+}
+fn job_status_colors(status:i32)->(Color32,Color32) {
+    match status {
+        9|10=>(Color32::from_rgb(232,246,238),Color32::from_rgb(35,114,74)),
+        8=>(Color32::from_rgb(252,236,236),Color32::from_rgb(166,52,52)),
+        2..=7|11=>(Color32::from_rgb(255,245,225),Color32::from_rgb(149,94,24)),
+        _=>(Color32::from_rgb(238,242,247),theme::MUTED),
+    }
+}
+fn show_job_card(ui:&mut egui::Ui,job:&Job,selected:bool,loaded:bool,
+    striped:bool,width:f32)->(egui::Response,Option<bool>)
+{
+    let (rect,response)=ui.allocate_exact_size(egui::vec2(width,48.),egui::Sense::click());
+    let fill=if selected{Color32::from_rgb(255,239,226)}
+        else if response.hovered(){Color32::from_rgb(242,245,250)}
+        else if striped{theme::SURFACE_ALT}else{Color32::WHITE};
+    let border=if selected{Color32::from_rgb(245,178,125)}else{theme::BORDER};
+    let painter=ui.painter_at(rect);
+    painter.rect_filled(rect,10.,fill);
+    painter.rect_stroke(rect,10.,Stroke::new(1_f32,border),egui::StrokeKind::Inside);
+    if selected {
+        painter.rect_filled(egui::Rect::from_min_size(rect.min+egui::vec2(3.,10.),egui::vec2(3.,28.)),2.,ORANGE);
+    }
+    // Only the outer allocation advances the virtualized list. Absolute
+    // cell placement stays inside this row and keeps IDs stable while scrolling.
+    let mut row_ui=ui.new_child(egui::UiBuilder::new().max_rect(rect)
+        .id_salt(("job-card",job.job_id)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let ui=&mut row_ui;
+    let mut checked=selected;
+    let check=ui.put(egui::Rect::from_min_size(rect.min+egui::vec2(8.,12.),egui::vec2(26.,24.)),
+        egui::Checkbox::without_text(&mut checked));
+    let gap=ui.spacing().item_spacing.x;
+    let mut x=rect.left()+8.+26.+gap;
+    for (column,(_,column_width)) in JOB_COLUMNS.iter().enumerate() {
+        let cell=egui::Rect::from_min_size(egui::pos2(x,rect.top()+4.),egui::vec2(*column_width,40.));
+        let value=job_column_value(job,column);
+        if column==0 {
+            ui.put(egui::Rect::from_min_size(cell.min,egui::vec2(cell.width(),22.)),
+                egui::Label::new(egui::RichText::new(&value).strong().size(14.)).truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
+            let (label,color)=if loaded{("Geladen in project",Color32::from_rgb(35,114,74))}
+                else{("Nog niet geladen",theme::MUTED)};
+            ui.put(egui::Rect::from_min_size(cell.min+egui::vec2(0.,22.),egui::vec2(cell.width(),16.)),
+                egui::Label::new(egui::RichText::new(label).size(11.).color(color)).truncate().halign(egui::Align::Min).selectable(false));
+        } else if column==4 {
+            let (background,foreground)=job_status_colors(job.status);
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(cell).layout(egui::Layout::left_to_right(egui::Align::Center)),|ui|{
+                job_badge(ui,&value,background,foreground);
+            });
+        } else {
+            let text=egui::RichText::new(if value.is_empty(){"—"}else{&value})
+                .color(if column==1{INK}else{theme::MUTED});
+            ui.put(cell,egui::Label::new(text).truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
+        }
+        x+=column_width+gap;
+    }
+    (response,check.changed().then_some(checked))
+}
+
 fn job_column_value(job:&Job,column:usize)->String{
     match column{
         0=>job.title.clone(),1=>job.address.clone(),
@@ -634,18 +697,30 @@ impl SleufBaseApp {
             .open(&mut open).default_width(1180.).default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
             .constrain_to(ctx.screen_rect().shrink(12.))
             .min_width(340.).min_height(240.)
+            .frame(theme::card(20,14,12).fill(theme::APP_BG))
             .resizable(true).show(ctx,|ui|{
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                egui::TopBottomPanel::bottom("kickthemap-download-actions").frame(egui::Frame::NONE).show_inside(ui,|ui|{
-                    ui.small(format!("{} van {} jobs zichtbaar; {} geselecteerd{}",
-                        indices.len(),source.len(),browser.selected.len(),
-                        if live{""}else{" (offline cache)"}));
-                    ui.separator();
+                ui.horizontal_wrapped(|ui|{
+                    ui.label(egui::RichText::new("KickTheMap jobs").strong().size(23.));
+                    if live {
+                        job_badge(ui,"Verbonden",Color32::from_rgb(232,246,238),Color32::from_rgb(35,114,74));
+                    } else {
+                        job_badge(ui,"Offline cache",Color32::from_rgb(255,245,225),Color32::from_rgb(149,94,24));
+                    }
+                });
+                ui.colored_label(theme::MUTED,"Selecteer jobs om objectpunten en GeoTIFF-beelden in je project te laden.");
+                ui.add_space(8.);
+                egui::TopBottomPanel::bottom("kickthemap-download-actions").frame(theme::card(14,12,10)).show_inside(ui,|ui|{
+                    ui.horizontal_wrapped(|ui|{
+                        ui.strong(format!("{} geselecteerd",browser.selected.len()));
+                        ui.colored_label(theme::MUTED,format!("{} van {} jobs zichtbaar",indices.len(),source.len()));
+                    });
+                    ui.add_space(4.);
                     ui.horizontal_wrapped(|ui|{
                         let can=live&&!busy&&!browser.batch_mode&&
                             !browser.selected.is_empty()&&browser.capturing.is_none();
-                        if ui.add_enabled(can,egui::Button::new(egui::RichText::new("Laad geselecteerde jobs").color(Color32::WHITE)).fill(ORANGE)).clicked(){action=Some("both");}
+                        if ui.add_enabled(can,egui::Button::new(egui::RichText::new("Laad geselecteerde jobs").strong().color(Color32::WHITE)).fill(ORANGE).corner_radius(9).min_size(egui::vec2(200.,34.))).clicked(){action=Some("both");}
                         if ui.add_enabled(can,egui::Button::new("Objectpunten downloaden + laden")).clicked(){
                             action=Some("objects");
                         }
@@ -684,14 +759,17 @@ impl SleufBaseApp {
                 ui.scope(|ui|{
                     let compact=ctx.screen_rect().height()<550.;
                     ui.horizontal_wrapped(|ui|{
-                        ui.strong(format!("Jobs: {} / {} {}",indices.len(),source.len(),if live{"live"}else{"offline"}));
+                        if ui.selectable_label(!browser.map_open,"Lijst").clicked(){browser.map_open=false;}
+                        if ui.selectable_label(browser.map_open,"Kaart").clicked(){
+                            if !browser.map_open{browser.map_bounds=None;}browser.map_open=true;
+                        }
+                        ui.separator();
                         if ui.add_enabled(!busy,egui::Button::new(if live{"Account"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
                         if browser.capturing.is_some()&&ui.small_button("Aanmelden annuleren").clicked(){action=Some("cancel-login");}
                         if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
                         ui.menu_button("Filter / selectie",|ui|{
                             ui.set_max_width((ctx.screen_rect().width()-50.).min(320.));
                             egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-100.).max(100.)).show(ui,|ui|{
-                            if ui.button(if browser.map_open{"Jobs als lijst"}else{"Jobs op kaart"}).clicked(){browser.map_open=!browser.map_open;if browser.map_open{browser.map_bounds=None;}ui.close_menu();}
                             ui.checkbox(&mut browser.only_loaded,"Geladen jobs");ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("Selecteer zichtbare").clicked(){browser.selected.extend(filtered_ids.iter().copied());}
@@ -706,40 +784,64 @@ impl SleufBaseApp {
                     if browser.map_open {
                         show_jobs_map(ui,source,&indices,browser,&mut action);
                     } else {
-                    // The header, seven independent filters and data share one horizontal scroll offset.
+                    // Keep column headings, filters and cards on one shared horizontal offset.
+                    ui.add_space(6.);
                     egui::ScrollArea::horizontal().id_salt("jobs-horizontal").show(ui,|ui|{
-                        ui.horizontal(|ui|{
-                            ui.add_sized([26.,25.],egui::Label::new(""));
-                            for (column,(name,width)) in JOB_COLUMNS.iter().enumerate(){
-                                let arrow=if browser.sort_column==column{
-                                    if browser.sort_descending{" ▼"}else{" ▲"}
-                                }else{""};
-                                if ui.add_sized([*width,27.],egui::Button::new(format!("{name}{arrow}"))).clicked(){
-                                    if browser.sort_column==column {
-                                        browser.sort_descending=!browser.sort_descending;
-                                    }else{
-                                        browser.sort_column=column;
-                                        browser.sort_descending=column==3;
+                        let content_width=26.+JOB_COLUMNS.iter().map(|(_,width)|width).sum::<f32>()
+                            +ui.spacing().item_spacing.x*JOB_COLUMNS.len() as f32;
+                        let card_width=content_width+16.;
+                        egui::Frame::new().fill(Color32::WHITE).corner_radius(10)
+                            .inner_margin(egui::Margin::symmetric(8,6)).show(ui,|ui|{
+                            ui.set_min_width(content_width);
+                            ui.horizontal(|ui|{
+                                ui.add_sized([26.,27.],egui::Label::new(""));
+                                for (column,(name,width)) in JOB_COLUMNS.iter().enumerate(){
+                                    let arrow=if browser.sort_column==column{
+                                        if browser.sort_descending{" ▼"}else{" ▲"}
+                                    }else{""};
+                                    let text=egui::RichText::new(format!("{name}{arrow}")).strong()
+                                        .color(if browser.sort_column==column{ORANGE}else{INK});
+                                    if ui.add_sized([*width,27.],egui::Button::new(text).frame(false)).clicked(){
+                                        if browser.sort_column==column {
+                                            browser.sort_descending=!browser.sort_descending;
+                                        }else{
+                                            browser.sort_column=column;
+                                            browser.sort_descending=column==3;
+                                        }
                                     }
                                 }
+                            });
+                            if !compact{
+                                ui.horizontal(|ui|{
+                                    ui.add_sized([26.,27.],egui::Label::new(""));
+                                    for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
+                                        ui.add_sized([*width,27.],egui::TextEdit::singleline(&mut browser.filters[column])
+                                            .hint_text("Filter...").margin(egui::vec2(8.,5.)));
+                                    }
+                                });
                             }
                         });
-                        if !compact{
-                        ui.horizontal(|ui|{
-                            ui.add_sized([26.,25.],egui::Label::new(""));
-                            for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
-                                ui.add_sized([*width,25.],egui::TextEdit::singleline(&mut browser.filters[column]).hint_text("Filter..."));
-                            }
-                        });                        }
-
-                        egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(ui.available_height().max(24.)).auto_shrink([false,false])
-                            .show_rows(ui,28.,indices.len(),|ui,rows|{
-                                for position in rows{
-                                    let job=&source[indices[position]];
-                                    ui.horizontal(|ui|{
+                        if indices.is_empty() {
+                            ui.allocate_ui_with_layout(egui::vec2(card_width,150.),egui::Layout::top_down(egui::Align::Center),|ui|{
+                                ui.add_space(22.);
+                                ui.label(egui::RichText::new("Geen jobs gevonden").strong().size(17.));
+                                ui.colored_label(theme::MUTED,if source.is_empty(){
+                                    "Meld je aan of vernieuw de joblijst om jobs op te halen."
+                                }else{"Pas de filters aan om meer jobs te tonen."});
+                                if !source.is_empty()&&ui.button("Filters wissen").clicked(){
+                                    browser.filters=Default::default();
+                                    browser.only_loaded=false;browser.only_selected=false;browser.only_downloadable=false;
+                                }
+                            });
+                        } else {
+                            egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(ui.available_height().max(48.)).auto_shrink([false,false])
+                                .show_rows(ui,48.,indices.len(),|ui,rows|{
+                                    for position in rows{
+                                        let job=&source[indices[position]];
                                         let extend=ui.input(|i|i.modifiers.ctrl||i.modifiers.command||i.modifiers.shift);
-                                        let mut selected=browser.selected.contains(&job.job_id);
-                                        if ui.add_sized([26.,24.],egui::Checkbox::without_text(&mut selected)).changed(){
+                                        let (response,checked)=show_job_card(ui,job,browser.selected.contains(&job.job_id),
+                                            loaded.contains(&job.job_id),position%2!=0,card_width);
+                                        if let Some(selected)=checked {
                                             if extend {
                                                 browser.select_row(&filtered_ids,position,true);
                                             }else if selected{
@@ -748,23 +850,16 @@ impl SleufBaseApp {
                                             }else{
                                                 browser.selected.remove(&job.job_id);
                                             }
-                                        }
-                                        for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
-                                            let value=job_column_value(job,column);
-                                            let response=if column==0{
-                                                ui.add_sized([*width,24.],egui::Button::new(&value).selected(browser.selected.contains(&job.job_id)).truncate())
-                                            }else{
-                                                ui.add_sized([*width,24.],egui::Label::new(&value).truncate().sense(egui::Sense::click()))
-                                            }.on_hover_text(&value);
+                                        } else {
                                             if response.clicked(){browser.select_row(&filtered_ids,position,extend);}
                                             if response.double_clicked()&&!extend&&live&&!busy&&!browser.batch_mode{
                                                 browser.select_row(&filtered_ids,position,false);
                                                 action=Some("both");
                                             }
                                         }
-                                    });
-                                }
-                            });
+                                    }
+                                });
+                        }
                     });
                     }
                 });
@@ -921,6 +1016,7 @@ fn show_jobs_map(ui:&mut egui::Ui,source:&[Job],indices:&[usize],
         browser.selected.insert(id);
         if response.double_clicked(){browser.open_target=Some(id);*action=Some("open-job");}
     }
+    theme::finish_map_frame(ui,rect,14.,theme::APP_BG);
     ui.small(&browser.map_status);
     ui.small("Klik op een marker om te selecteren; Ctrl voor meervoudige selectie. Dubbelklik opent een job. Muiswiel zoomt en de middelste muisknop verplaatst de kaart.");
 }
@@ -966,7 +1062,9 @@ mod tests {
         let before=visible(&output);
         let rect=ctx.memory(|memory|memory.area_rect(egui::Id::new("SleufBase Jobs"))).unwrap();
         let start=rect.center_bottom();
-        let end=start+egui::vec2(0.,145.);
+        // Three card rows plus spacing fit in this resize, including the
+        // two-line job title and its project-loaded state.
+        let end=start+egui::vec2(0.,180.);
         let button=|pos,pressed|egui::Event::PointerButton{
             pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
         };

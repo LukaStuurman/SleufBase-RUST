@@ -145,8 +145,8 @@ pub fn markers_with_cancel(
     let mut output = Vec::new();
     for (index, object) in trench.objects.iter().enumerate() {
         crate::input::check(cancel)?;
-        // Endpoint helpers are geometry references, never transverse cables.
-        if matches!(object.role.to_lowercase().as_str(), "start" | "end") { continue; }
+        // Survey points and measurement axes are references, not utilities.
+        if object.is_measurement_helper() { continue; }
         let p = object.position;
         let (_, _, chainage, _) = trench.project(object_axis_position(trench,object));
         let Some((start, end)) = object_segment_on_boundary(trench,object,&polygon) else {

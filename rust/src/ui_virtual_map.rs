@@ -997,6 +997,7 @@ impl SleufBaseApp {
     pub(super) fn show_virtual_tiff_context(&mut self,ui:&mut egui::Ui,index:usize){
         let Some(trench)=self.virtual_trenches.get(index) else{return};
         let current=(trench.end.y-trench.start.y).atan2(trench.end.x-trench.start.x).to_degrees();
+        let center=map::center(trench);
         if self.virtual_map.menu_target!=Some(index){
             self.virtual_map.menu_target=Some(index);
             self.virtual_map.menu_name=trench.label.clone();
@@ -1005,6 +1006,8 @@ impl SleufBaseApp {
             self.virtual_map.menu_note=sleufbase_rust::map_comments::text(&trench.metadata)
                 .unwrap_or_default();
         }
+        self.show_copy_trench_center(ui,center);
+        ui.separator();
         if ui.button("Virtuele proefsleuf bewerken...").clicked(){
             self.open_virtual_editor(index);ui.close_menu();
         }
@@ -1346,6 +1349,9 @@ impl SleufBaseApp {
                         1. / view.scale,
                         (6. / view.scale).clamp(0.001, 3.),
                     );
+                    self.raster_points.selected = if self.virtual_map.selected.is_none() {
+                        self.raster_at_map_point(view.world(p)).map(|index|self.geotiffs[index].path.clone())
+                    } else { None };
                 }
             }
             if let Some(i) = self
@@ -1354,6 +1360,9 @@ impl SleufBaseApp {
                 .filter(|&i| i < self.virtual_trenches.len())
             {
                 view.response.context_menu(|ui| {
+                    let center=map::center(&self.virtual_trenches[i]);
+                    self.show_copy_trench_center(ui,center);
+                    ui.separator();
                     if ui.button("Proefsleuf bewerken").clicked() {
                         self.open_virtual_editor(i);
                         ui.close_menu();
@@ -1371,6 +1380,11 @@ impl SleufBaseApp {
                         ui.close_menu();
                     }
                 });
+            } else if let Some(index)=self.virtual_map.context_anchor
+                .and_then(|point|self.raster_at_map_point(point))
+                .filter(|&index|self.raster_points.selected.as_ref()==Some(&self.geotiffs[index].path))
+            {
+                view.response.context_menu(|ui|self.show_raster_trench_context(ui,index));
             }
         }
         let painter = &view.painter;

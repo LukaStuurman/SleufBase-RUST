@@ -54,6 +54,46 @@ impl View {
     }
 }
 impl SleufBaseApp {
+    pub(super) fn show_copy_trench_center(&mut self, ui: &mut egui::Ui, center: [f64; 2]) {
+        if ui.add_enabled(center.iter().all(|value| value.is_finite()),
+            egui::Button::new("Coördinaten midden kopiëren")).clicked()
+        {
+            let text = format!("{:.3}, {:.3}", center[0], center[1]);
+            ui.ctx().copy_text(text.clone());
+            self.message = format!("Midden van de proefsleuf gekopieerd: {text}");
+            ui.close_menu();
+        }
+    }
+    pub(super) fn raster_at_map_point(&self, world: [f64; 2]) -> Option<usize> {
+        // The last raster is painted on top. Use its actual affine footprint,
+        // including rotation, rather than an enlarged axis-aligned bounding box.
+        self.geotiffs.iter().enumerate().rev().find_map(|(index, raster)| {
+            let (column, row) = raster.transform.world_to_pixel(world[0], world[1]).ok()?;
+            (column >= 0. && row >= 0.
+                && column <= f64::from(raster.width) && row <= f64::from(raster.height))
+                .then_some(index)
+        })
+    }
+    pub(super) fn show_raster_trench_context(&mut self, ui: &mut egui::Ui, index: usize) {
+        let Some(raster) = self.geotiffs.get(index) else { return; };
+        let path = raster.path.clone();
+        let center = points::center(raster);
+        self.show_copy_trench_center(ui, center);
+        ui.separator();
+        if ui.button("Maak virtuele kopie...").clicked() {
+            self.make_virtual_from_raster(index);
+            ui.close_menu();
+        }
+        ui.separator();
+        self.show_physical_rotation_menu(ui);
+        ui.separator();
+        if ui.button("Opmerking bewerken...").clicked() {
+            self.open_tiff_comment(&path); ui.close_menu();
+        }
+        if ui.button("Opmerking wissen").clicked() {
+            self.clear_tiff_comment(&path); ui.close_menu();
+        }
+    }
     pub(super) fn show_point_controls(&mut self, ui: &mut egui::Ui) {
         if self
             .raster_points

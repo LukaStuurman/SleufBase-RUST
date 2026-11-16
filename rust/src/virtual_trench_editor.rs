@@ -283,11 +283,19 @@ pub fn copy_kickthemap_objects(
         };
         let mut metadata=serde_json::json!({});
         if let Some(angle)=angle{metadata["crossing_angle_degrees"]=serde_json::json!(angle);}
-        if let Some(rule)=crate::matching_rule(&feature.source_name,rules){
+        let rule=crate::matching_rule(&feature.source_name,rules);
+        let utility=rule.is_some_and(|rule|rule.target_layer!="0");
+        // Known survey names take priority over incidental substring rules
+        // such as maaiveld matching the gas keyword "ld".
+        let helper=crate::virtual_trench::measurement_helper_name(&feature.source_name)
+            &&crate::virtual_trench::measurement_helper_name(&feature.object_name);
+        if let Some(rule)=rule{
             metadata["display_rgb"]=serde_json::json!(crate::cad::aci_rgb(i32::from(rule.color_aci)));
         }
+        // Preserve survey heights and source records, but do not convert a
+        // centreline or intermediate ground point into a default-blue cable.
         trench.objects.push(TrenchPoint{
-            metadata,role:"object".into(),object_name:feature.object_name.clone(),
+            metadata,role:if helper{"measurement"}else if utility{"utility"}else{"object"}.into(),object_name:feature.object_name.clone(),
             source_name:feature.source_name.clone(),position,attributes:feature.attributes.clone(),
         });
     }

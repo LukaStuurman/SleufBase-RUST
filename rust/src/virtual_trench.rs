@@ -20,6 +20,41 @@ pub struct TrenchPoint {
     pub attributes:[String;3],
 }
 
+/// Names used for survey references and trench geometry, including legacy
+/// numbered points. A specific utility name must never be inferred from color.
+pub(crate) fn measurement_helper_name(value:&str)->bool {
+    let value=crate::python_values::trim(value).to_lowercase();
+    if value.is_empty()||crate::profile::numeric(&value){return true;}
+    let compact=value.chars().filter(|c|!c.is_whitespace()&&!matches!(*c,'_'|'-')).collect::<String>();
+    ["start","end","beginpunt","eindpunt","startpoint","endpoint",
+        "referentiepunt","referencepoint","referentie","reference",
+        "maaiveld","surfacepoint","groundpoint","meetpunt","hulppunt",
+        "middenpunt","point","punt","object","meetas","meetlijn","hartlijn",
+        "middenlijn","centerline","centreline","measurementaxis","axis",
+        "proefsleuf","trench"].iter().any(|name|{
+            compact==*name||compact.strip_prefix(*name).is_some_and(crate::profile::numeric)
+        })
+}
+impl TrenchPoint {
+    /// Geometry/height helpers stay stored, but never become cable crossings.
+    /// Older copies used role=object for every measurement. Only unstyled,
+    /// generically named records use that fallback; explicit utility roles or
+    /// a specific source/name continue to render, including real blue cables.
+    pub fn is_measurement_helper(&self)->bool {
+        let role=crate::python_values::trim(&self.role).to_lowercase();
+        if matches!(role.as_str(),"start"|"end"|"beginpunt"|"eindpunt"|
+            "reference"|"reference_point"|"referentie"|"referentiepunt"|
+            "measurement"|"meetpunt"|"hulppunt"|"maaiveld"|"surface"|
+            "axis"|"meetas"|"meetlijn"|"hartlijn"|"middenlijn"|"centerline"|"centreline") {
+            return true;
+        }
+        matches!(role.as_str(),""|"object"|"point"|"punt")
+            &&crate::virtual_raster::display_rgb(&self.metadata).is_none()
+            &&measurement_helper_name(&self.source_name)
+            &&measurement_helper_name(&self.object_name)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dekband {
