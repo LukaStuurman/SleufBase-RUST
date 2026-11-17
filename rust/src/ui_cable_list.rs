@@ -170,7 +170,7 @@ fn group_label(overlays: &[DxfOverlay], members: &[Candidate]) -> String {
     layers.sort_by_key(|(_, (order, _))| *order);
     layers.into_iter().map(|(layer, (_, count))| format!("{count}× {}",
         shortened(if layer.is_empty() { "(geen laagnaam)" } else { layer }, 160)))
-        .collect::<Vec<_>>().join(" & ")
+        .collect::<Vec<_>>().join("\n")
 }
 
 fn shortened(value: &str, characters: usize) -> String {
@@ -247,9 +247,8 @@ fn row_layout(ui: &egui::Ui, row: &Row, width: f32) -> RowLayout {
 }
 fn group_layout(ui: &egui::Ui, label: &str, width: f32) -> RowLayout {
     let color = ui.visuals().text_color();
-    let mut job = egui::text::LayoutJob::simple(label.to_owned(), row_fonts(ui).0,
+    let job = egui::text::LayoutJob::simple(label.to_owned(), row_fonts(ui).0,
         color, (width - 38.).max(1.));
-    job.wrap.max_rows = 4;
     let galley = ui.fonts(|fonts| fonts.layout_job(job));
     RowLayout { height: (galley.size().y + 14.).ceil().max(30.), blocks: vec![(galley, color)] }
 }

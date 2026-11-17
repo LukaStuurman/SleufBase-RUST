@@ -125,7 +125,14 @@ Tijdens het tekenen zie je een voorbeeldlijn. Escape, rechtsklikken of opnieuw o
 
 ### Groepen in Kabelobjecten
 
-Na een lijnselectie staan kabels die de selectielijn op vrijwel dezelfde plek raken of kruisen samen in een groep. Daarbij kunnen kabels van verschillende lagen in dezelfde groep staan. Elke groep begint ingeklapt; de groepskop toont per laagnaam hoeveel objecten erbij horen. Staat er maar één object op die plek, dan blijft het een losse regel.
+Na een lijnselectie staan kabels die de selectielijn op vrijwel dezelfde plek raken of kruisen samen in een groep. Daarbij kunnen kabels van verschillende lagen in dezelfde groep staan. Elke groep begint ingeklapt. In de groepskop krijgt elke laag een eigen regel, met eerst het aantal objecten en daarna de laagnaam, bijvoorbeeld:
+
+```text
+5× B-WE-KL-DATA_DUCT-G
+1× B-WE-KL-DATA-G
+```
+
+Alle lagen blijven zichtbaar; de groepskop groeit mee met het aantal regels. Staat er maar één object op die plek, dan blijft het een losse regel.
 
 Klik op de groepskop om de losse kabelobjecten te tonen. Klik vervolgens op de gewenste kabelregel om die kabel op de kaart en onder **Kabelinformatie** te bekijken. De groepskop wordt oranje als de geselecteerde kabel in die groep zit, ook wanneer de groep is ingeklapt. Klik opnieuw op de kop om de losse regels weer te verbergen. De wisselknop blijft tussen de afzonderlijke gevonden kabels wisselen.
 
