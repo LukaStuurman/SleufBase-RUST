@@ -89,12 +89,28 @@ fn topic_list(ui: &mut egui::Ui, matches: &[usize], selected: &mut usize, height
                         let active = *selected == index;
                         let text = egui::RichText::new(TOPICS[index].title)
                             .color(if active { Color32::WHITE } else { INK });
-                        let button = egui::Button::new(text)
-                            .selected(active)
-                            .fill(if active { ORANGE } else { Color32::WHITE })
-                            .corner_radius(6)
-                            .wrap();
-                        if ui.add_sized([ui.available_width(), 34.], button)
+                        let width = ui.available_width();
+                        let padding = ui.spacing().button_padding;
+                        let galley = egui::WidgetText::from(text).into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Wrap),
+                            (width - 2. * padding.x).max(1.),
+                            egui::TextStyle::Button,
+                        );
+                        let height = (galley.size().y + 2. * padding.y)
+                            .max(ui.spacing().interact_size.y).max(34.).ceil();
+                        // add_sized centers the whole text block. A left-to-right
+                        // row keeps every wrapped title at the same left inset.
+                        let response = ui.allocate_ui_with_layout(
+                            egui::vec2(width, height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| ui.add(egui::Button::new(galley)
+                                .selected(active)
+                                .fill(if active { ORANGE } else { Color32::WHITE })
+                                .corner_radius(6)
+                                .min_size(egui::vec2(width, height))),
+                        ).inner;
+                        if response
                             .on_hover_text(TOPICS[index].summary).clicked()
                         {
                             changed = *selected != index;
@@ -233,6 +249,117 @@ fn help_contents(ui: &mut egui::Ui, state: &mut State) {
     }
 }
 
+fn help_body(ui: &mut egui::Ui, state: &mut State) -> bool {
+    let rect = ui.available_rect_before_wrap();
+    let spacing = ui.spacing().item_spacing;
+    let padding = ui.spacing().button_padding;
+    let [close_text, copy_text, copied_text] = [
+        "Sluiten", "Uitleg kopiëren", "Uitleg gekopieerd",
+    ].map(|text| egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        (rect.width() - 2. * padding.x).max(1.),
+        egui::TextStyle::Button,
+    ));
+    // Use the same font as theme::strong when measuring the author credit.
+    let named = egui::FontFamily::Name("SleufBase title".into());
+    let family = if ui.fonts(|fonts| fonts.families().contains(&named)) {
+        named
+    } else {
+        egui::FontFamily::Proportional
+    };
+    let author_text = egui::WidgetText::from(egui::RichText::new("Gemaakt door Luka Stuurman")
+        .font(egui::FontId::new(theme::FONT_SIZE, family)))
+        .into_galley(ui, Some(egui::TextWrapMode::Wrap), rect.width(), egui::TextStyle::Body);
+    let version_text = egui::WidgetText::from(egui::RichText::new(
+        format!("SleufBase Rust {}", env!("CARGO_PKG_VERSION"))).color(theme::MUTED))
+        .into_galley(ui, Some(egui::TextWrapMode::Wrap), rect.width(), egui::TextStyle::Body);
+    let button_size = |text_size: egui::Vec2| {
+        let size = text_size + 2. * padding;
+        egui::vec2(size.x.ceil(), size.y.max(ui.spacing().interact_size.y).ceil())
+    };
+    let sizes = [
+        button_size(close_text.size()),
+        button_size(copy_text.size().max(copied_text.size())),
+        author_text.size().ceil(),
+        version_text.size().ceil(),
+    ];
+    let single_row = sizes.iter().map(|size| size.x).sum::<f32>() + 3. * spacing.x <= rect.width();
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut width = 0.;
+    let mut height: f32 = 0.;
+    for (index, size) in sizes.iter().enumerate() {
+        let next_width = width + if index == start { 0. } else { spacing.x } + size.x;
+        // Keep the credits together below the buttons when the complete row
+        // does not fit; wrap either group further if the viewport is very narrow.
+        if index > start && ((index == 2 && !single_row) || next_width > rect.width()) {
+            rows.push((start..index, height));
+            start = index;
+            width = size.x;
+            height = size.y;
+        } else {
+            width = next_width;
+            height = height.max(size.y);
+        }
+    }
+    rows.push((start..sizes.len(), height));
+    let top_padding = spacing.y + 1.;
+    let bottom_padding = 8.;
+    let footer_height = rows.iter().map(|(_, height)| height).sum::<f32>()
+        + spacing.y * (rows.len() - 1) as f32 + top_padding + bottom_padding;
+    let footer_top = (rect.bottom() - footer_height).max(rect.top());
+    let content_rect = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.right(), (footer_top - spacing.y).max(rect.top())),
+    );
+    // Reserve the measured footer before either scroll area is laid out. The
+    // bounded parent still owns the exact window size, so content cannot grow it.
+    let mut content = ui.new_child(egui::UiBuilder::new()
+        .id_salt("sleufbase-help-content")
+        .max_rect(content_rect)
+        .layout(egui::Layout::top_down(egui::Align::LEFT)));
+    content.set_clip_rect(ui.clip_rect().intersect(content_rect));
+    help_contents(&mut content, state);
+
+    ui.painter().hline(rect.x_range(), footer_top + 0.5,
+        ui.visuals().widgets.noninteractive.bg_stroke);
+    let mut top = footer_top + top_padding;
+    let mut close = false;
+    for (row_index, (items, height)) in rows.into_iter().enumerate() {
+        let row_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), top), egui::vec2(rect.width(), height),
+        );
+        let mut row = ui.new_child(egui::UiBuilder::new()
+            .id_salt(("sleufbase-help-footer", row_index))
+            .max_rect(row_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)));
+        row.set_clip_rect(ui.clip_rect().intersect(rect));
+        for index in items {
+            match index {
+                0 => close = row.add(egui::Button::new(close_text.clone()).min_size(sizes[0])).clicked(),
+                1 => {
+                    let copied = state.copied_topic == Some(state.selected);
+                    let text = if copied { copied_text.clone() } else { copy_text.clone() };
+                    let can_copy = matching_topics(&state.query).contains(&state.selected);
+                    if row.add_enabled(can_copy, egui::Button::new(text).min_size(sizes[1]))
+                        .on_hover_text("Kopieer het gekozen onderwerp om de uitleg te bewaren of te delen.")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(topic_text(state.selected));
+                        state.copied_topic = Some(state.selected);
+                    }
+                }
+                2 => { row.label(author_text.clone()); }
+                3 => { row.label(version_text.clone()); }
+                _ => unreachable!(),
+            }
+        }
+        top += height + spacing.y;
+    }
+    close
+}
+
 pub(super) fn show(ctx: &egui::Context, state: &mut State) {
     if !state.open {
         return;
@@ -256,29 +383,7 @@ pub(super) fn show(ctx: &egui::Context, state: &mut State) {
         .show(ctx, |ui| theme::bounded_window_body(ui, |ui| {
             super::settings_ui::control_style(ui);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            // Match the settings footer: it remains outside both scroll areas.
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    close = ui.button("Sluiten").clicked();
-                    let copied = state.copied_topic == Some(state.selected);
-                    let can_copy = matching_topics(&state.query).contains(&state.selected);
-                    if ui.add_enabled(can_copy, egui::Button::new(
-                        if copied { "Uitleg gekopieerd" } else { "Uitleg kopiëren" }))
-                        .on_hover_text("Kopieer het gekozen onderwerp om de uitleg te bewaren of te delen.")
-                        .clicked()
-                    {
-                        ctx.copy_text(topic_text(state.selected));
-                        state.copied_topic = Some(state.selected);
-                    }
-                    theme::strong(ui, "Gemaakt door Luka Stuurman");
-                    ui.colored_label(theme::MUTED,
-                        format!("SleufBase Rust {}", env!("CARGO_PKG_VERSION")));
-                });
-                ui.separator();
-                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    help_contents(ui, state);
-                });
-            });
+            close = help_body(ui, state);
         }));
     state.open = open && !close;
 }
