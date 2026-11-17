@@ -465,4 +465,95 @@ mod tests {
         app.map_requests.invalidate();
     }
 
+    #[test]
+    fn held_primary_pan_starts_and_displays_background_before_release() {
+        for (source, label) in [
+            (Provider::Aerial, "PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)"),
+            (Provider::Osm, "OpenStreetMap"),
+        ] {
+            let (started, requests) = mpsc::sync_channel(1);
+            let worker = map_request::Worker::with_fetcher(move |request, _, _| {
+                started.send(request).unwrap();
+                Ok(map_request::Pixels {
+                    bounds: request.view.bounds, width: 1, height: 1,
+                    rgba: vec![12, 34, 56, 255], stale_cache: false,
+                })
+            }).unwrap();
+            let mut app = SleufBaseApp {
+                map_requests: State::with_worker(worker), ..Default::default()
+            };
+            app.project_view.use_background = true;
+            app.project_view.background_source = label.into();
+            let ctx = egui::Context::default();
+            let mut pan_frame = |origin_x: f64, events: Vec<egui::Event>| {
+                let mut dragging = false;
+                let _ = ctx.run(egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(260., 200.))),
+                    events, ..Default::default()
+                }, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let (response, painter) = ui.allocate_painter(
+                            egui::vec2(240., 180.), egui::Sense::click_and_drag()
+                        );
+                        dragging = response.dragged_by(egui::PointerButton::Primary);
+                        let rect = response.rect;
+                        app.map_requests.clock = std::time::Instant::now();
+                        app.update_map_background(&raster_point_ui::View {
+                            response, painter, rect, center: rect.center(),
+                            origin: [origin_x, 463000.], scale: 1., clicked: None,
+                        });
+                    });
+                });
+                dragging
+            };
+            pan_frame(155000., Vec::new());
+            let down = egui::pos2(50., 50.);
+            pan_frame(155000., vec![
+                egui::Event::PointerMoved(down),
+                egui::Event::PointerButton {
+                    pos: down, button: egui::PointerButton::Primary,
+                    pressed: true, modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            // Keep the pointer pressed beyond the scheduler's initial delay.
+            // The clock is controlled so this test needs no wall-clock debounce.
+            let mut dragging = false;
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(260., 200.))),
+                events: vec![egui::Event::PointerMoved(egui::pos2(90., 50.))],
+                ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (response, painter) = ui.allocate_painter(
+                        egui::vec2(240., 180.), egui::Sense::click_and_drag()
+                    );
+                    dragging = response.dragged_by(egui::PointerButton::Primary);
+                    let rect = response.rect;
+                    app.map_requests.clock = std::time::Instant::now() - Duration::from_millis(100);
+                    app.update_map_background(&raster_point_ui::View {
+                        response, painter, rect, center: rect.center(),
+                        origin: [155120., 463000.], scale: 1., clicked: None,
+                    });
+                });
+            });
+            assert!(dragging && ctx.input(|i| i.pointer.primary_down()));
+            let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.view.source, source);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !app.map_requests.complete_image {
+                app.poll_map_background(&ctx);
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(ctx.input(|i| i.pointer.primary_down()), "tiles arrived while still dragging");
+            if is_osm(source) {
+                assert_eq!(app.osm_bounds, Some(request.view.bounds));
+                assert!(app.osm_texture.is_some());
+            } else {
+                assert_eq!(app.pdok_bounds, Some(request.view.bounds));
+                assert!(app.pdok_texture.is_some());
+            }
+        }
+    }
+
 }

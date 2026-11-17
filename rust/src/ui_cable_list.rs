@@ -1,5 +1,5 @@
 //! Persistent work-map candidate panel; selection remains owned by the app.
-use super::{theme, DxfOverlay, APP_BG, MUTED, ORANGE};
+use super::{theme, DxfOverlay, APP_BG, ORANGE};
 use super::super::cable_information_ui;
 use eframe::egui::{self, Color32};
 use sleufbase_rust::{cad::Tag, cad_scene::Scene};
@@ -16,7 +16,7 @@ pub(super) struct State {
     sources: Vec<(usize, SourceStamp)>,
     rows: HashMap<Candidate, Row>,
     row_heights: Vec<Option<f32>>,
-    row_layout: Option<[f32; 5]>,
+    row_layout: Option<[f32; 4]>,
     // Scroll history only: the active row always comes from dxf_selection.
     last_scroll_target: Option<Candidate>,
     reveal_selection: bool,
@@ -40,7 +40,7 @@ impl SourceStamp {
     }
 }
 
-struct Row { layer: String, context: String, infracad: Option<String> }
+struct Row { layer: String, infracad: Option<String> }
 
 pub(super) fn visible_matches(overlays: &[DxfOverlay], candidates: &[Candidate]) -> Vec<Candidate> {
     candidates.iter().copied().filter(|&(overlay, feature)|
@@ -103,41 +103,36 @@ fn preview(tags: &[Tag]) -> String {
 impl Row {
     fn build(overlay: &DxfOverlay, index: usize) -> Option<Self> {
         let feature = overlay.inspect_feature(index)?;
-        let filename = overlay.path.file_name().unwrap_or_default().to_string_lossy();
         Some(Self {
             layer: shortened(if feature.layer.is_empty() { "(geen laagnaam)" } else { feature.layer }, 160),
-            context: format!("{} · {}", shortened(&filename, 160), shortened(&feature.source.entity_type, 32)),
             infracad: infracad(overlay, index).map(preview),
         })
     }
 }
 
-fn row_fonts(ui: &egui::Ui) -> (egui::FontId, egui::FontId, egui::FontId) {
+fn row_fonts(ui: &egui::Ui) -> (egui::FontId, egui::FontId) {
     let body = egui::TextStyle::Body.resolve(ui.style());
-    let small = egui::TextStyle::Small.resolve(ui.style());
     let named = egui::FontFamily::Name("SleufBase title".into());
     let bold = egui::FontId::new(body.size, if ui.fonts(|f| f.families().contains(&named)) {
         named
     } else { body.family.clone() });
-    (bold, small, body)
+    (bold, body)
 }
 fn estimated_row_height(ui: &egui::Ui) -> f32 {
-    let (bold, small, body) = row_fonts(ui);
+    let (bold, body) = row_fonts(ui);
     ui.fonts(|fonts| fonts.row_height(&bold).ceil()
-        + fonts.row_height(&small).ceil() * 2. + fonts.row_height(&body).ceil()) + 20.
+        + fonts.row_height(&body).ceil()) + 16.
 }
 struct RowLayout {
     blocks: Vec<(Arc<egui::Galley>, Color32)>,
     height: f32,
 }
-fn row_layout(ui: &egui::Ui, row: &Row, active: bool, width: f32) -> RowLayout {
-    let (bold, small, body) = row_fonts(ui);
-    let mut blocks = Vec::with_capacity(4);
+fn row_layout(ui: &egui::Ui, row: &Row, width: f32) -> RowLayout {
+    let (bold, body) = row_fonts(ui);
+    let mut blocks = Vec::with_capacity(2);
     let mut height = 14.;
     for (text, font, lines, color) in [
         (row.layer.as_str(), bold, 2, ui.visuals().text_color()),
-        (row.context.as_str(), small.clone(), 1, MUTED),
-        (if active { "Actief · XDATA InfraCAD" } else { "XDATA InfraCAD" }, small, 1, MUTED),
         (row.infracad.as_deref().unwrap_or("Geen InfraCAD-informatie"), body, 2, ui.visuals().text_color()),
     ] {
         let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, (width - 20.).max(1.));
@@ -213,8 +208,8 @@ pub(super) fn show(
             }
             scroll.show_viewport(ui, |ui, viewport| {
                 let width = ui.available_width();
-                let (bold, small, body) = row_fonts(ui);
-                let stamp = [width, ui.ctx().pixels_per_point(), bold.size, small.size, body.size];
+                let (bold, body) = row_fonts(ui);
+                let stamp = [width, ui.ctx().pixels_per_point(), bold.size, body.size];
                 if state.row_layout != Some(stamp) {
                     state.row_layout = Some(stamp);
                     state.row_heights.fill(None);
@@ -249,7 +244,7 @@ pub(super) fn show(
                     }
                     let row = &state.rows[&candidate];
                     let active = selected == Some(candidate);
-                    let layout = row_layout(ui, row, active, width);
+                    let layout = row_layout(ui, row, width);
                     height = layout.height;
                     state.row_heights[row_index] = Some(height);
                     let rect = egui::Rect::from_min_size(origin + egui::vec2(0., top), egui::vec2(width, height));

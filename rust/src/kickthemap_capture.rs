@@ -52,17 +52,57 @@ impl BrowserChannel {
                 })
             })
             .ok_or("Open KickTheMap in het eigen Browser-venster")?;
-        let id = info["targetId"]
-            .as_str()
-            .filter(|id| {
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
-            })
+        self.arm_capture_target(job_id, self.capture_target(info)?, None, cancel)
+    }
+    /// Arms the exact verified job after its open operation has completed.
+    /// This never navigates: changing documents after arming would lose the hooks.
+    pub fn arm_job_download_capture(
+        &self,
+        job_id: u64,
+        expected_url: &str,
+        cancel: &AtomicBool,
+    ) -> Result<CaptureHandle, String> {
+        crate::input::check(cancel)?;
+        if job_id == 0 {
+            return Err("Kies een geldige KickTheMap-job".into());
+        }
+        let expected = reqwest::Url::parse(expected_url).ok().filter(is_job_url)
+            .ok_or("Ongeldige geselecteerde KickTheMap-joblocatie")?;
+        let targets = self.capture_command("Target.getTargets", json!({}), &self.websocket, cancel)?;
+        let info = targets["targetInfos"].as_array()
+            .and_then(|pages| pages.iter().find(|page| page["type"] == "page"
+                && page["url"].as_str() == Some(expected.as_str())))
+            .ok_or("De browser toont niet meer de geselecteerde job. Open de job opnieuw via Jobs.")?;
+        let target = self.capture_target(info)?;
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let tree = self.command_until("Page.getFrameTree", json!({}), Some(&target), cancel,
+            deadline, 512 * 1024)?;
+        let frame = &tree["frameTree"]["frame"];
+        if frame["url"].as_str() != Some(expected.as_str()) {
+            return Err("De geselecteerde jobpagina is gewijzigd. Open de job opnieuw via Jobs.".into());
+        }
+        let load = PageLoad {
+            url: expected.clone(),
+            frame_id: frame["id"].as_str().filter(|id| !id.is_empty())
+                .ok_or("Het KickTheMap-browserframe ontbreekt")?.to_owned(),
+            loader_id: frame["loaderId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned),
+            require_csrf: false,
+        };
+        self.wait_page(&target, &load, cancel, deadline)?;
+        // Recheck inside the same evaluation that installs the hooks: navigation
+        // can begin between the ready response and this command.
+        self.arm_capture_target(job_id, target, Some(expected.as_str()), cancel)
+    }
+    fn capture_target(&self, info: &Value) -> Result<String, String> {
+        let id = info["targetId"].as_str().filter(|id| !id.is_empty() && id.len() <= 128
+            && id.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c)))
             .ok_or("Ongeldige Browser-tabidentiteit")?;
-        let target = format!("ws://127.0.0.1:{}/devtools/page/{id}", self.port);
+        validated_ws_url(&format!("ws://127.0.0.1:{}/devtools/page/{id}", self.port), self.port)
+    }
+    fn arm_capture_target(
+        &self, job_id: u64, target: String, expected_url: Option<&str>, cancel: &AtomicBool,
+    ) -> Result<CaptureHandle, String> {
+        crate::input::check(cancel)?;
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
         let nonce = nonce.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -71,6 +111,10 @@ impl BrowserChannel {
             include_str!("kickthemap_capture.js"),
             json!({"nonce":nonce,"jobId":job_id.to_string()})
         );
+        let expression = if let Some(url) = expected_url {
+            format!("(()=>{{if(location.href!=={}||document.readyState==='loading')return false;return {};}})()",
+                json!(url), expression)
+        } else { expression };
         let handle = CaptureHandle {
             channel: self.clone(),
             target,

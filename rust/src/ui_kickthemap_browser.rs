@@ -7,7 +7,10 @@ use sleufbase_rust::{
     jobs_cache::Job,
 };
 use std::{collections::{BTreeSet,VecDeque},sync::{Arc,atomic::{AtomicBool,Ordering}}};
-use sleufbase_rust::osm_tiles::{self,OsmRaster};
+use sleufbase_rust::osm_tiles::OsmRaster;
+
+#[path="ui_kickthemap_jobs_map.rs"]
+mod jobs_map;
 
 fn workspace_cache_directory()->PathBuf {
     #[cfg(not(test))]
@@ -116,12 +119,16 @@ struct OpeningJob {
     cancel: Arc<AtomicBool>,
     preserve_editor: bool,
     reused_browser: bool,
+    capture_generation: Option<u64>,
 }
 impl Drop for OpeningJob {
     fn drop(&mut self) { self.cancel.store(true, Ordering::Release); }
 }
 
-enum RepairSource{File(PathBuf),Browser(sleufbase_rust::kickthemap_browser::BrowserChannel)}
+enum RepairSource{
+    File(PathBuf),
+    Browser{channel:sleufbase_rust::kickthemap_browser::BrowserChannel,expected_url:String},
+}
 pub(super) struct BrowserUi {
     pub(super) open:bool,
     pub(super) browser:Option<Browser>,
@@ -145,6 +152,7 @@ pub(super) struct BrowserUi {
     sort_descending:bool,
     map_open:bool,
     map_bounds:Option<Bounds>,
+    map_interaction:jobs_map::Interaction,
     map_texture:Option<(Bounds,egui::TextureHandle)>,
     map_loading:Option<Receiver<Result<OsmRaster,String>>>,
     map_status:String,
@@ -163,6 +171,7 @@ pub(super) struct BrowserUi {
     pub(super) cancel:Arc<AtomicBool>,
     pub(super) download_notice:Option<Receiver<String>>,
     capture_status:Option<Receiver<String>>,
+    manual_capture_job:Option<u64>,
     pub(super) status:String,
 }
 impl BrowserUi {
@@ -210,14 +219,14 @@ impl Default for BrowserUi {
             selected:BTreeSet::new(),selection_anchor:None,filters:Default::default(),
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,
-            map_open:false,map_bounds:None,map_texture:None,map_loading:None,
+            map_open:false,map_bounds:None,map_interaction:Default::default(),map_texture:None,map_loading:None,
             map_status:String::new(),opening_job:None,editor_owner:None,
             tools:Default::default(),reloading:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
             downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
             completed:0,failures:Vec::new(),cancel:Arc::new(AtomicBool::new(false)),
-            download_notice:None,capture_status:None,status:String::new()}
+            download_notice:None,capture_status:None,manual_capture_job:None,status:String::new()}
     }
 }
 pub(super) struct BrowserLogin {
@@ -356,11 +365,31 @@ impl SleufBaseApp {
         self.start_kickthemap_repair(id,RepairSource::File(path));
     }
     fn capture_kickthemap_download(&mut self,id:u64){
+        // A native login may not have a browser yet. Resolve and open this
+        // live job first: capture hooks cannot survive a later navigation.
+        self.open_kickthemap_job(id,Some(self.project_generation));
+    }
+    fn begin_kickthemap_download_capture(&mut self,id:u64){
+        if !self.browser_ui.web_visible||self.live_operation_busy()||self.browser_ui.batch_mode{return;}
+        if self.browser_ui.tools.job.as_ref().is_none_or(|job|job.job_id!=id)
+            ||self.browser_ui.tools.expected_url.is_empty(){return;}
         let Some(browser)=self.browser_ui.browser.as_ref() else{return;};
         let channel=browser.channel();
-        if let Err(error)=browser.set_visible(true){self.browser_ui.status=error;return;}
-        self.browser_ui.web_visible=true;
-        self.start_kickthemap_repair(id,RepairSource::Browser(channel));
+        let expected_url=self.browser_ui.tools.expected_url.clone();
+        self.start_kickthemap_repair(id,RepairSource::Browser{channel,expected_url});
+    }
+    pub(super) fn manual_kickthemap_capture_active(&self)->bool{
+        self.browser_ui.manual_capture_job.is_some()&&self.live_download_rx.is_some()
+    }
+    pub(super) fn cancel_kickthemap_download_capture(&mut self){
+        let pending=self.browser_ui.opening_job.as_ref()
+            .filter(|task|task.capture_generation.is_some());
+        if let Some(task)=pending {task.cancel.store(true,Ordering::Release);}
+        let active=self.manual_kickthemap_capture_active();
+        if pending.is_none()&&!active{return;}
+        if active{self.browser_ui.cancel.store(true,Ordering::Release);}
+        self.browser_ui.status="Handmatige GeoTIFF-vastlegging annuleren…".into();
+        self.message=self.browser_ui.status.clone();
     }
     fn start_kickthemap_repair(&mut self,id:u64,source:RepairSource) {
         if self.live_operation_busy() || self.browser_ui.batch_mode { return; }
@@ -369,22 +398,26 @@ impl SleufBaseApp {
             self.message="Vernieuw eerst de jobs van de huidige sessie".into();return;
         }
         let Some(job)=self.live_jobs.iter().find(|j|j.job_id==id).cloned() else {return;};
+        let manual_capture=matches!(&source,RepairSource::Browser{..});
         let mut session=self.live_session.take().unwrap();
         let (tx,rx)=mpsc::channel();
         let (notice_tx,notice_rx)=mpsc::sync_channel(1);
         let (status_tx,status_rx)=mpsc::sync_channel(1);
         self.browser_ui.capture_status=Some(status_rx);
+        self.browser_ui.manual_capture_job=manual_capture.then_some(id);
         self.browser_ui.download_notice=Some(notice_rx);
         self.live_download_generation=self.project_generation;
         self.live_download_rx=Some(rx);
         self.live_busy=true;
         self.browser_ui.cancel.store(false,Ordering::SeqCst);
         let cancel=Arc::clone(&self.browser_ui.cancel);
-        self.message=format!("Downloadwijze controleren met job {id}…");
+        self.message=if manual_capture{format!("GeoTIFF-vastlegging voorbereiden voor job {id}…")}
+            else{format!("Downloadwijze controleren met job {id}…")};
+        self.browser_ui.status=self.message.clone();
         std::thread::spawn(move || {
             let capture=match source{
                 RepairSource::File(path)=>read_download_capture(&path),
-                RepairSource::Browser(browser)=>browser.arm_download_capture(id,&cancel).and_then(|handle|{
+                RepairSource::Browser{channel,expected_url}=>channel.arm_job_download_capture(id,&expected_url,&cancel).and_then(|handle|{
                     let _=status_tx.send(format!("Klaar voor job {id}: download nu de GeoTIFF in het ingebouwde venster. De vastlegging stopt na twee minuten."));
                     handle.wait(&cancel)
                 }),
@@ -512,6 +545,17 @@ impl SleufBaseApp {
         self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
+        if self.browser_ui.manual_capture_job.is_some()&&self.live_download_rx.is_none(){
+            self.browser_ui.manual_capture_job=None;
+            self.browser_ui.capture_status=None;
+            self.browser_ui.status=self.message.clone();
+        }
+        let changed_project=self.browser_ui.opening_job.as_ref().is_some_and(|task|
+            task.capture_generation.is_some_and(|generation|generation!=self.project_generation));
+        if changed_project {
+            if let Some(task)=&self.browser_ui.opening_job {task.cancel.store(true,Ordering::Release);}
+            self.hide_kickthemap_pane();
+        }
         let opening=self.browser_ui.opening_job.as_ref().map(|task|task.events.try_recv());
         let result=match opening {
             Some(Ok(result))=>Some(result),
@@ -519,6 +563,7 @@ impl SleufBaseApp {
             Some(Err(TryRecvError::Empty))=>{ctx.request_repaint_after(Duration::from_millis(100));None},
             None=>None,
         };
+        let mut capture_after_open=None;
         if let Some(result)=result {
             if let Some(task)=self.browser_ui.opening_job.take() {
                 let same_owner=self.live_jobs_owner.as_ref()==Some(&task.owner)
@@ -534,6 +579,9 @@ impl SleufBaseApp {
                             self.browser_ui.editor_owner=Some(task.owner.clone());
                             self.browser_ui.browser=Some(browser);
                             self.browser_ui.status=format!("{} geopend in de KickTheMap-browser",task.job.title);
+                            if task.capture_generation==Some(self.project_generation){
+                                capture_after_open=Some(task.job.job_id);
+                            }
                         }
                         result=>{
                             let error=match result {
@@ -546,7 +594,8 @@ impl SleufBaseApp {
                                 Err(error)=>error,
                             };
                             self.hide_kickthemap_pane();
-                            self.browser_ui.status=if cancelled {"Jobvenster openen geannuleerd.".into()}
+                            self.browser_ui.status=if changed_project {"Project gewijzigd; handmatige GeoTIFF-vastlegging niet gestart.".into()}
+                                else if cancelled {"Jobvenster openen geannuleerd.".into()}
                                 else {format!("Job openen mislukt: {error}")};
                         }
                     }
@@ -557,6 +606,9 @@ impl SleufBaseApp {
                 self.message=self.browser_ui.status.clone();
             }
         }
+        // OpeningJob owns a different cancellation flag; dropping it must not
+        // cancel the capture that starts after the browser is back in the UI.
+        if let Some(id)=capture_after_open{self.begin_kickthemap_download_capture(id);}
         match self.browser_ui.map_loading.as_ref().map(|rx|rx.try_recv()) {
             Some(Ok(Ok(raster)))=>{
                 let bytes=raster.rgba;
@@ -581,7 +633,8 @@ impl SleufBaseApp {
         }
         match self.browser_ui.capture_status.as_ref().map(|rx|rx.try_recv()){
             Some(Ok(status))=>{
-                if self.live_download_rx.is_some()&&self.live_busy&&self.live_download_generation==self.project_generation{self.browser_ui.status=status.clone();self.message=status;}
+                if self.live_download_rx.is_some()&&self.live_busy&&self.live_download_generation==self.project_generation
+                    &&!self.browser_ui.cancel.load(Ordering::Acquire){self.browser_ui.status=status.clone();self.message=status;}
                 self.browser_ui.capture_status=None;
             }
             Some(Err(TryRecvError::Disconnected))=>self.browser_ui.capture_status=None,
@@ -710,6 +763,9 @@ impl SleufBaseApp {
     }
 
     fn open_selected_kickthemap_job(&mut self,id:u64){
+        self.open_kickthemap_job(id,None);
+    }
+    fn open_kickthemap_job(&mut self,id:u64,capture_generation:Option<u64>){
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let Some(session)=self.live_session.as_ref() else {
             self.browser_ui.status="Meld je eerst aan bij KickTheMap.".into();return;
@@ -743,10 +799,11 @@ impl SleufBaseApp {
         let browser=self.browser_ui.browser.take().filter(|_|same_owner);
         let (tx,rx)=mpsc::channel();
         let cancel=Arc::new(AtomicBool::new(false));
-        self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser});
+        self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser,capture_generation});
         self.browser_ui.web_visible=true;
         self.shell.login_open=false;
-        self.browser_ui.status=format!("Job {id} openen in de KickTheMap-browser…");
+        self.browser_ui.status=if capture_generation.is_some(){format!("Job {id} openen voor handmatige GeoTIFF-vastlegging…")}
+            else{format!("Job {id} openen in de KickTheMap-browser…")};
         #[cfg(not(test))]
         {
             let host=self.browser_ui.host;
@@ -854,8 +911,10 @@ impl SleufBaseApp {
                     ui.menu_button("Meer opties en probleemoplossing",|ui|{
                     if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
                         egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
-                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1&&browser.browser.is_some(),
-                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){action=Some("repair-browser");}
+                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
+                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){
+                            action=Some("repair-browser");ui.close_menu();
+                        }
                     ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
                     });
                     if busy||browser.batch_mode{ui.horizontal_wrapped(|ui|{
@@ -880,7 +939,7 @@ impl SleufBaseApp {
                 ui.scope(|ui|{
                     let compact=ctx.screen_rect().height()<550.;
                     ui.horizontal_wrapped(|ui|{
-                        if ui.selectable_label(!browser.map_open,"Lijst").clicked(){browser.map_open=false;}
+                        if ui.selectable_label(!browser.map_open,"Lijst").clicked(){browser.map_open=false;browser.map_interaction=Default::default();}
                         if ui.selectable_label(browser.map_open,"Kaart").clicked(){
                             if !browser.map_open{browser.map_bounds=None;}browser.map_open=true;
                         }
@@ -1041,105 +1100,9 @@ pub(super) fn job_rd_coordinates(text:&str)->Option<[f64;2]>{
         Some([x,y])
     }else{None}
 }
-fn jobs_bounds(points:&[(u64,[f64;2])])->Option<Bounds>{
-    if points.is_empty(){return None;}
-    let min_x=points.iter().map(|(_,p)|p[0]).fold(f64::INFINITY,f64::min);
-    let max_x=points.iter().map(|(_,p)|p[0]).fold(f64::NEG_INFINITY,f64::max);
-    let min_y=points.iter().map(|(_,p)|p[1]).fold(f64::INFINITY,f64::min);
-    let max_y=points.iter().map(|(_,p)|p[1]).fold(f64::NEG_INFINITY,f64::max);
-    let padding=500_f64.max((max_x-min_x)*0.18).max((max_y-min_y)*0.18);
-    Some(Bounds{min_x:min_x-padding,max_x:max_x+padding,
-        min_y:min_y-padding,max_y:max_y+padding})
-}
-fn map_point(rect:egui::Rect,bounds:Bounds,p:[f64;2])->Pos2{
-    Pos2::new(
-        rect.left()+((p[0]-bounds.min_x)/(bounds.max_x-bounds.min_x)) as f32*rect.width(),
-        rect.bottom()-((p[1]-bounds.min_y)/(bounds.max_y-bounds.min_y)) as f32*rect.height(),
-    )
-}
 fn show_jobs_map(ui:&mut egui::Ui,source:&[Job],indices:&[usize],
     browser:&mut BrowserUi,action:&mut Option<&'static str>){
-    let points=indices.iter().filter_map(|&i|{
-        job_rd_coordinates(&source[i].coordinates).map(|p|(source[i].job_id,p))
-    }).collect::<Vec<_>>();
-    let Some(visible_bounds)=jobs_bounds(&points) else {
-        ui.label("Geen jobs met geldige coördinaten gevonden.");
-        return;
-    };
-    ui.horizontal(|ui|{
-        if ui.button("Passend").clicked(){browser.map_bounds=Some(visible_bounds);browser.map_texture=None;}
-        if ui.button("Zoom naar selectie").clicked(){
-            let selected=points.iter().filter(|(id,_)|browser.selected.contains(id))
-                .copied().collect::<Vec<_>>();
-            if let Some(bounds)=jobs_bounds(&selected){browser.map_bounds=Some(bounds);browser.map_texture=None;}
-        }
-        if ui.button("Vernieuwen").clicked(){browser.map_texture=None;}
-        ui.small(format!("{} jobs met coördinaten",points.len()));
-    });
-    let bounds=*browser.map_bounds.get_or_insert(visible_bounds);
-    let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width().max(420.),350.),egui::Sense::click_and_drag());
-    let painter=ui.painter_at(rect);
-    painter.rect_filled(rect,0.,egui::Color32::from_rgb(238,242,247));
-    if browser.map_texture.as_ref().is_some_and(|(b,_)|
-        (b.min_x-bounds.min_x).abs()<0.01&&(b.max_x-bounds.max_x).abs()<0.01&&
-        (b.min_y-bounds.min_y).abs()<0.01&&(b.max_y-bounds.max_y).abs()<0.01){
-        if let Some((_,texture))=&browser.map_texture{
-            painter.image(texture.id(),rect,egui::Rect::from_min_max(
-                egui::pos2(0.,0.),egui::pos2(1.,1.)),egui::Color32::WHITE);
-        }
-    }else if browser.map_loading.is_none(){
-        let (tx,rx)=mpsc::channel();
-        browser.map_loading=Some(rx);
-        browser.map_status="OpenStreetMap-tegels ophalen…".into();
-        let dir=kickthemap_cache_dir().join("osm_jobs");
-        std::thread::spawn(move||{
-            let result=osm_tiles::request_map(bounds,900,480,dir);
-            let _=tx.send(result);
-        });
-    }
-    if response.dragged_by(egui::PointerButton::Middle){
-        let delta=response.drag_delta();
-        let dx=delta.x as f64/(rect.width() as f64)*(bounds.max_x-bounds.min_x);
-        let dy=delta.y as f64/(rect.height() as f64)*(bounds.max_y-bounds.min_y);
-        browser.map_bounds=Some(Bounds{min_x:bounds.min_x-dx,max_x:bounds.max_x-dx,
-            min_y:bounds.min_y+dy,max_y:bounds.max_y+dy});
-    }
-    let scroll=ui.input(|i|if response.hovered(){i.raw_scroll_delta.y}else{0.});
-    if scroll.abs()>0.1{
-        let factor=if scroll>0.{0.85}else{1.15};
-        let cx=(bounds.min_x+bounds.max_x)*0.5;
-        let cy=(bounds.min_y+bounds.max_y)*0.5;
-        let hx=(bounds.max_x-bounds.min_x)*0.5*factor;
-        let hy=(bounds.max_y-bounds.min_y)*0.5*factor;
-        browser.map_bounds=Some(Bounds{min_x:cx-hx,max_x:cx+hx,min_y:cy-hy,max_y:cy+hy});
-        browser.map_texture=None;
-    }
-    let mut nearest:Option<(u64,f32)>=None;
-    for (id,p) in points{
-        let pos=map_point(rect,bounds,p);
-        if !rect.contains(pos){continue;}
-        let is_selected=browser.selected.contains(&id);
-        painter.circle_filled(pos,if is_selected{7.}else{5.},
-            if is_selected{egui::Color32::from_rgb(249,115,22)}
-            else{egui::Color32::from_rgb(35,91,167)});
-        painter.circle_stroke(pos,if is_selected{7.}else{5.},
-            egui::Stroke::new(1.0_f32,egui::Color32::WHITE));
-        if let Some(mouse)=response.interact_pointer_pos(){
-            let distance=pos.distance(mouse);
-            if distance<16. && nearest.is_none_or(|(_,d)|distance<d){
-                nearest=Some((id,distance));
-            }
-        }
-    }
-    if (response.clicked()||response.double_clicked())&&nearest.is_some(){
-        let id=nearest.unwrap().0;
-        if !ui.input(|i|i.modifiers.ctrl){browser.selected.clear();}
-        browser.selected.insert(id);
-        if response.double_clicked(){browser.open_target=Some(id);*action=Some("open-job");}
-    }
-    theme::finish_map_frame(ui,rect,14.,theme::APP_BG);
-    ui.small(&browser.map_status);
-    ui.small("Klik op een marker om te selecteren; Ctrl voor meervoudige selectie. Dubbelklik opent een job. Muiswiel zoomt en de middelste muisknop verplaatst de kaart.");
+    jobs_map::show(ui,source,indices,browser,action);
 }
 fn read_download_capture(path:&std::path::Path)->Result<String,String>{
     use std::io::Read;
@@ -1170,6 +1133,128 @@ mod tests {
         app.browser_ui.open=true;
         app.browser_ui.selected.insert(42);
         app
+    }
+
+    #[test]
+    fn manual_geotiff_action_opens_the_selected_job_without_a_previous_browser() {
+        let mut app=native_editor_fixture();
+        let owner=app.live_jobs_owner.clone();
+        let ctx=egui::Context::default();theme::install(&ctx);
+        let render=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1450.,1000.))),
+            events,..Default::default()
+        },|ctx|app.show_kickthemap_workspace(ctx));
+        let position=|output:&egui::FullOutput,label:&str|output.shapes.iter().find_map(|shape|match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text()==label=>{
+                let point=text.pos+text.galley.rect.center().to_vec2();
+                shape.clip_rect.contains(point).then_some(point)
+            },_=>None,
+        }).unwrap_or_else(||panic!("visible action missing: {label}"));
+        let mut output=render(&mut app,vec![]);
+        for _ in 0..4 {output=render(&mut app,vec![]);}
+        for label in ["Meer opties en probleemoplossing","Handmatige GeoTIFF-download vastleggen in het ingebouwde venster"] {
+            let point=position(&output,label);
+            render(&mut app,vec![egui::Event::PointerMoved(point)]);
+            for pressed in [true,false] {
+                output=render(&mut app,vec![egui::Event::PointerButton {
+                    pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+                }]);
+            }
+            for _ in 0..3 {output=render(&mut app,vec![]);}
+        }
+        assert_eq!(app.browser_ui.launch_requests,1);
+        let task=app.browser_ui.opening_job.as_ref().expect("the manual action first opens the selected job");
+        assert_eq!(task.job.job_id,42);
+        assert_eq!(task.capture_generation,Some(app.project_generation));
+        assert!(app.browser_ui.web_visible);
+        assert!(!ctx.memory(|memory|memory.any_popup_open()),"the menu cannot cover the embedded page");
+        assert!(app.live_download_rx.is_none()&&!app.manual_kickthemap_capture_active(),"never arm before the job document is ready");
+        app.poll_kickthemap_browser(&ctx); // No real browser is launched by UI tests.
+        assert!(!app.browser_ui.web_visible&&app.live_download_rx.is_none());
+        assert_eq!(app.live_jobs_owner,owner);
+        assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
+    }
+
+    #[test]
+    fn pending_manual_capture_is_cancelled_on_project_cancel_or_account_change() {
+        for change in ["project","cancel","hide","login","account"] {
+            let mut app=native_editor_fixture();
+            app.capture_kickthemap_download(42);
+            let task=app.browser_ui.opening_job.as_ref().unwrap();
+            let cancel=task.cancel.clone();
+            let generation=task.capture_generation.unwrap();
+            match change {
+                "project"=>app.execute_project_action(ProjectAction::New,&egui::Context::default()),
+                "cancel"=>app.cancel_kickthemap_job_open(),
+                "hide"=>app.hide_kickthemap_pane(),
+                "login"=>app.open_kickthemap_login(),
+                _=>app.live_jobs_owner=None,
+            }
+            if matches!(change,"cancel"|"hide"|"login") {
+                assert!(cancel.load(Ordering::Acquire),"leaving the pane cancels the pending intent before its reply");
+                assert!(app.browser_ui.opening_job.is_some(),"retain the receiver so an existing browser can return");
+            }
+            app.poll_kickthemap_browser(&egui::Context::default());
+            assert!(cancel.load(Ordering::Acquire));
+            assert!(app.browser_ui.opening_job.is_none()&&app.live_download_rx.is_none());
+            assert!(!app.manual_kickthemap_capture_active()&&!app.browser_ui.web_visible);
+            assert!(app.live_session.is_some(),"an aborted browser opening does not borrow the native login");
+            if change=="project" {
+                assert_ne!(generation,app.project_generation);
+                assert!(app.browser_ui.status.contains("Project gewijzigd"));
+            } else if change=="account" {
+                assert!(app.browser_ui.status.contains("aanmelding is gewijzigd"));
+            } else {assert!(app.browser_ui.status.contains("geannuleerd"));}
+        }
+    }
+
+    #[test]
+    fn manual_capture_page_can_cancel_and_return_its_session_without_clearing_the_editor() {
+        let mut app=native_editor_fixture();
+        let session=app.live_session.take().unwrap();
+        let owner=session.snapshot_owner().clone();
+        let (download_tx,download_rx)=mpsc::channel();
+        app.live_download_rx=Some(download_rx);app.live_busy=true;
+        app.live_download_generation=app.project_generation;
+        app.browser_ui.manual_capture_job=Some(42);
+        app.browser_ui.web_visible=true;
+        let expected_url="https://www.my.kickthemap.com/viewJob/fixture_2026-11-16";
+        app.browser_ui.tools.set_job(app.live_jobs[0].clone(),expected_url.into());
+        let ctx=egui::Context::default();theme::install(&ctx);
+        let render=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),
+            events,..Default::default()
+        },|ctx|app.show_kickthemap_website(ctx));
+        let mut output=render(&mut app,vec![]);
+        for _ in 0..3 {output=render(&mut app,vec![]);}
+        let point=output.shapes.iter().find_map(|shape|match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text()=="Vastlegging annuleren"=>{
+                let point=text.pos+text.galley.rect.center().to_vec2();
+                shape.clip_rect.contains(point).then_some(point)
+            },_=>None,
+        }).expect("capture cancellation must be accessible while the job page is shown");
+        render(&mut app,vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true,false] {render(&mut app,vec![egui::Event::PointerButton {
+            pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
+        }]);}
+        assert!(app.browser_ui.cancel.load(Ordering::Acquire));
+        assert!(app.browser_ui.web_visible,"cancelling capture does not close the job browser");
+        let (status_tx,status_rx)=mpsc::channel();app.browser_ui.capture_status=Some(status_rx);
+        status_tx.send("Klaar na annuleren".into()).unwrap();
+        let cancelled_status=app.browser_ui.status.clone();
+        app.poll_kickthemap_browser(&ctx);
+        assert_eq!(app.browser_ui.status,cancelled_status,"ignore a late armed notice after cancellation");
+        app.browser_ui.cancel.store(false,Ordering::Release);
+        app.hide_kickthemap_pane();
+        assert!(app.browser_ui.cancel.load(Ordering::Acquire),"leaving the visible page also cancels its capture");
+        assert!(!app.browser_ui.web_visible);
+        assert_eq!(app.browser_ui.tools.job.as_ref().unwrap().job_id,42);
+        assert_eq!(app.browser_ui.tools.expected_url,expected_url);
+        download_tx.send((session,Err("Vastlegging geannuleerd".into()))).ok().unwrap();
+        app.poll_live_download(&ctx);app.poll_kickthemap_browser(&ctx);
+        assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),Some(&owner));
+        assert!(!app.manual_kickthemap_capture_active()&&!app.live_busy);
+        assert!(app.live_download_rx.is_none()&&app.file_intent.is_none());
     }
 
     #[test]

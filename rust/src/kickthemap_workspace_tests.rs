@@ -89,8 +89,20 @@ fn native_account_opens_verified_job_only_after_new_documents_are_ready() {
         ("Page.getFrameTree", frame(&home, "home-new")),
         ("Page.getFrameTree", frame(&job, "job-new")),
         ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Target.getTargets", targets(&job)),
+        ("Page.getFrameTree", frame(&job, "job-new")),
+        ("Page.getFrameTree", frame(&job, "job-new")),
+        // Capture cannot be injected while this document is still loading.
+        ("Runtime.evaluate", json!({"result":{"value":false}})),
+        ("Page.getFrameTree", frame(&job, "job-new")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
     ]);
     let actual = channel.prepare_authenticated_job(&json!([fixture_cookie()]), 42, &AtomicBool::new(false)).unwrap();
+    let capture = channel.arm_job_download_capture(42, &actual, &AtomicBool::new(false)).unwrap();
+    assert_eq!(capture.job_id(), 42);
+    capture.disarm().unwrap();
     worker.join().unwrap();
     assert_eq!(actual, job);
     let sent: Vec<_> = requests.try_iter().collect();
@@ -101,6 +113,14 @@ fn native_account_opens_verified_job_only_after_new_documents_are_ready() {
     assert_eq!(transferred["secure"], true);
     assert_eq!(transferred["httpOnly"], true);
     assert_eq!(sent[9]["params"]["url"], job);
+    for request in &sent[..19] {
+        assert!(!request["params"]["expression"].as_str().unwrap_or("")
+            .contains("const key='__sleufbaseNativeDownloadCapture'"));
+    }
+    let arm = sent[19]["params"]["expression"].as_str().unwrap();
+    assert!(arm.contains(&format!("location.href!=={}", json!(job))));
+    assert!(arm.contains("document.readyState==='loading'"));
+    assert!(arm.contains("const key='__sleufbaseNativeDownloadCapture'"));
 }
 
 #[test]
@@ -116,10 +136,74 @@ fn reopening_the_current_verified_job_preserves_unfinished_geometry() {
         ("Page.getFrameTree", frame(&job, "existing-job")),
         ("Page.getFrameTree", frame(&job, "existing-job")),
         ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Target.getTargets", targets(&job)),
+        ("Page.getFrameTree", frame(&job, "existing-job")),
+        ("Page.getFrameTree", frame(&job, "existing-job")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
     ]);
     assert_eq!(channel.open_verified_job(42, &AtomicBool::new(false)).unwrap(), job);
+    let capture = channel.arm_job_download_capture(42, &job, &AtomicBool::new(false)).unwrap();
+    capture.disarm().unwrap();
     worker.join().unwrap();
     assert!(requests.try_iter().all(|request| request["method"] != "Page.navigate"));
+}
+
+#[test]
+fn job_capture_rejects_invalid_expected_routes_before_contacting_the_browser() {
+    let channel = BrowserChannel { port:9, websocket:"ws://127.0.0.1:9/devtools/browser/unused".into() };
+    for url in ["https://other.example/viewJob/test", "http://www.my.kickthemap.com/viewJob/test",
+        "https://www.my.kickthemap.com/", "https://www.my.kickthemap.com/signin",
+        "https://www.my.kickthemap.com/viewJob/", "https://www.my.kickthemap.com/viewJob/test/extra",
+        "https://www.my.kickthemap.com/viewJob/test?redirect=x", "https://www.my.kickthemap.com/viewJob/test#other"]
+    {
+        assert_eq!(channel.arm_job_download_capture(42, url, &AtomicBool::new(false)).err().as_deref(),
+            Some("Ongeldige geselecteerde KickTheMap-joblocatie"), "{url}");
+    }
+}
+
+#[test]
+fn job_capture_requires_the_exact_owned_job_page_and_frame() {
+    let expected = format!("{ORIGIN}/viewJob/selected");
+    for url in [format!("{ORIGIN}/"), format!("{ORIGIN}/viewJob/other"),
+        "https://other.example/viewJob/selected".into()]
+    {
+        let (channel, requests, worker) = scripted(vec![("Target.getTargets", targets(&url))]);
+        assert!(channel.arm_job_download_capture(42, &expected, &AtomicBool::new(false)).is_err());
+        worker.join().unwrap();
+        assert_eq!(requests.try_iter().count(), 1, "must not inject in {url}");
+    }
+    let (channel, requests, worker) = scripted(vec![
+        ("Target.getTargets", targets(&expected)),
+        ("Page.getFrameTree", frame(&format!("{ORIGIN}/viewJob/other"), "changed-document")),
+    ]);
+    assert!(channel.arm_job_download_capture(42, &expected, &AtomicBool::new(false)).is_err());
+    worker.join().unwrap();
+    assert!(requests.try_iter().all(|request| request["method"] != "Runtime.evaluate"));
+}
+
+#[test]
+fn job_capture_rejects_a_failed_final_document_guard_and_cleans_up() {
+    let job = format!("{ORIGIN}/viewJob/selected");
+    let (channel, requests, worker) = scripted(vec![
+        ("Target.getTargets", targets(&job)),
+        ("Page.getFrameTree", frame(&job, "existing-job")),
+        ("Page.getFrameTree", frame(&job, "existing-job")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        // Navigation/loading can begin after the ready reply but before arming.
+        ("Runtime.evaluate", json!({"result":{"value":false}})),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+    ]);
+    assert!(channel.arm_job_download_capture(42, &job, &AtomicBool::new(false)).is_err());
+    worker.join().unwrap();
+    let sent: Vec<_> = requests.try_iter().collect();
+    let arm = sent[4]["params"]["expression"].as_str().unwrap();
+    let guard_end = arm.find("return false;").unwrap();
+    assert!(arm[..guard_end].contains(&format!("location.href!=={}", json!(job))));
+    assert!(arm[..guard_end].contains("document.readyState==='loading'"));
+    assert!(arm.find("const key='__sleufbaseNativeDownloadCapture'").unwrap() > guard_end);
+    assert!(sent[5]["params"]["expression"].as_str().unwrap().contains("s.cleanup()"));
 }
 
 #[test]
@@ -173,6 +257,8 @@ fn cancelled_operations_and_closed_browser_stop_without_mutation() {
         .err().unwrap().contains("geannuleerd"));
     assert!(channel.prepare_authenticated_job(&json!([fixture_cookie()]), 42, &cancel).is_err());
     assert!(channel.open_verified_job(42, &cancel).is_err());
+    assert!(channel.arm_job_download_capture(42, &format!("{ORIGIN}/viewJob/selected"), &cancel)
+        .err().unwrap().contains("geannuleerd"));
     assert!(channel.form_snapshot(&cancel).is_err());
     assert!(channel.reload_job(&format!("{ORIGIN}/viewJob/selected"), &cancel).is_err());
     assert!(channel.form_snapshot(&AtomicBool::new(false)).is_err());

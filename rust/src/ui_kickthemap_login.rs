@@ -207,6 +207,9 @@ impl SleufBaseApp {
     /// Embedded website is an explicit fallback for mandatory KickTheMap checks.
     /// It uses the parent SleufBase window and never launches an external browser.
     pub(super) fn hide_kickthemap_pane(&mut self) {
+        // A hidden page cannot supply the manual click we are waiting for.
+        // Cancel the bounded capture, while retaining the owned browser/draft.
+        self.cancel_kickthemap_download_capture();
         self.browser_ui.tools.cancel();
         self.browser_ui.web_visible = false;
         if let Some(dock) = &self.browser_ui.dock {

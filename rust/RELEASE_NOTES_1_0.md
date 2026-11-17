@@ -8,11 +8,22 @@
 - Bij het opnieuw openen van dezelfde job blijven het browservenster en de conceptinvoer beschikbaar. Afbreken of een fout bij het openen verwijdert een bestaand browservenster niet.
 - Met **Objecten opnieuw laden** haal je de actuele jobobjecten op; de bijbehorende kaartoverlay, TIFF- en proefsleufkoppelingen worden samen bijgewerkt.
 
+### Correcties in Jobs
+
+- **Handmatige GeoTIFF-download vastleggen** opent eerst de geselecteerde proefsleufpagina, ook wanneer er na het aanmelden nog geen browservenster bestaat. De vastlegging start pas wanneer die pagina gereed is; daarna kun je op de GeoTIFF-download klikken.
+- Je kunt de vastlegging annuleren vanuit het browserpaneel. Teruggaan, een andere aanmelding of een projectwissel kan geen late vastlegging voor de verkeerde job starten.
+- De Jobs-kaart behoudt de juiste verhoudingen bij het vergroten of verkleinen van het venster.
+- Sleep met de **linkermuisknop** een rechthoek om meerdere jobpunten te selecteren. Met **Ctrl** of **Shift** voeg je punten toe aan de bestaande selectie. De middelste of rechter muisknop verplaatst de kaart; het muiswiel zoomt.
+
+### Kaart laden tijdens slepen
+
+De hoofdkaart haalt ontbrekende kaartdelen al tijdens het slepen op. Nieuwe aanvragen worden begrensd en bruikbare lopende downloads kunnen afronden, zodat de kaart blijft reageren zonder een wachtrij per muisbeweging. De bestaande kaart blijft zichtbaar terwijl nieuwe delen binnenkomen.
+
 ### Meer ruimte en een rustigere kaartindeling
 
 - **Kabelinformatie** staat links uitgelijnd met de andere titels in de zijbalk. De knoppen staan direct naast de titel en zijn naar links verplaatst.
 - Het venster **Kabelobjecten** toont geen afzonderlijke tekst met het aantal gevonden objecten en geen sluitkruisje meer. Klik opnieuw op **Lijst** om het te sluiten.
-- De kabelkaarten zijn lager en passen zich aan de hoeveelheid tekst aan, zodat meer objecten tegelijk zichtbaar zijn. De selectie blijft behouden bij scrollen en het wijzigen van de venstergrootte.
+- De kabelkaarten zijn lager en tonen alleen de laagnaam en inhoudelijke kabelinformatie. De tekst **Actief** en de lichtgrijze metadataregels zijn verwijderd; de oranje markering geeft de selectie aan. De hoogte past zich aan de tekst aan en de selectie blijft behouden bij scrollen en het wijzigen van de venstergrootte.
 - De bediening uit **Weergave** staat nu in de witte strook onder **Kaart**, boven de kaart zelf. Daar kies je de kaartachtergrond en stel je de TIFF-weergave in.
 
 ### Build en controle

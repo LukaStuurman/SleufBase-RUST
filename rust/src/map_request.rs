@@ -122,6 +122,7 @@ pub struct Scheduler {
     active: Option<Request>,
     deadline: Option<Duration>,
     dragging: bool,
+    last_started: Option<Duration>,
     generation: u64,
 }
 impl Scheduler {
@@ -150,6 +151,9 @@ impl Scheduler {
         }
         let provider_changed = self.desired.map(|v| v.source) != view.map(|v| v.source);
         self.desired = view;
+        if provider_changed {
+            self.last_started = None;
+        }
         // A pan inside the active/cached buffer must not cancel its fetch.
         // Drag transitions alone never invalidate a usable world-space image.
         if !provider_changed && view.is_some_and(|v| !v.cadastral_too_far()
@@ -158,29 +162,45 @@ impl Scheduler {
             self.deadline=None;
             return Ok(false);
         }
+        let deadline = view
+            .filter(|v| {
+                v.size[0] >= 20
+                    && v.size[1] >= 20
+                    && !v.cadastral_too_far()
+                    && !self.cached.is_some_and(|c| c.covers(*v) || c.key() == v.key())
+            })
+            .map(|_| {
+                let debounce = now + Duration::from_millis(45);
+                if dragging && !provider_changed {
+                    // Keep the first deadline while the pointer keeps moving.
+                    // A fresh pan request starts at most once per 160 ms.
+                    let pending = self.deadline.unwrap_or(debounce);
+                    self.last_started.map_or(pending, |last| {
+                        pending.max(last + Duration::from_millis(160))
+                    })
+                } else {
+                    debounce
+                }
+            });
+        // OSM uses exact viewports, so even a one-pixel pan exposes a new edge.
+        // Let useful work finish instead of cancelling it on every mouse move.
+        // Only one latest follow-up is retained; no per-frame fetch queue grows.
+        if dragging && !provider_changed && deadline.is_some()
+            && view.is_some_and(|v| self.active.is_some_and(|r| useful_during_pan(r.view, v)))
+        {
+            self.deadline = deadline;
+            return Ok(false);
+        }
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
         if provider_changed || view.is_none() || view.is_some_and(Viewport::cadastral_too_far) {
             self.cached = None;
         }
-        self.deadline = view
-            .filter(|v| {
-                v.size[0] >= 20
-                    && v.size[1] >= 20
-                    && !v.cadastral_too_far()
-                    && !self
-                        .cached
-                        .is_some_and(|c| c.covers(*v) || c.key() == v.key())
-            })
-            .map(|_| now + Duration::from_millis(45));
+        self.deadline = deadline;
         Ok(true)
     }
     pub fn due(&mut self, now: Duration) -> Option<Request> {
-        if now < self.deadline? {
-            return None;
-        }
-        if self.dragging {
-            self.deadline = Some(now + Duration::from_millis(160));
+        if self.active.is_some() || now < self.deadline? {
             return None;
         }
         let request = Request {
@@ -189,6 +209,7 @@ impl Scheduler {
         };
         self.deadline = None;
         self.active = Some(request);
+        self.last_started = Some(now);
         Some(request)
     }
     pub fn accepts(&self, request: Request) -> bool {
@@ -210,6 +231,9 @@ impl Scheduler {
         self.active = None;
         if success {
             self.cached = Some(request.view);
+            if self.desired.is_some_and(|v| request.view.covers(v)) {
+                self.deadline = None;
+            }
         }
         true
     }
@@ -219,13 +243,32 @@ impl Scheduler {
         self.cached = None;
         self.active = None;
         self.deadline = None;
+        self.last_started = None;
     }
     pub fn next_deadline(&self) -> Option<Duration> {
-        self.deadline
+        // Active work already asks the UI to repaint. An elapsed follow-up
+        // deadline must not create a 1 ms repaint loop while it finishes.
+        if self.active.is_some() { None } else { self.deadline }
     }
     pub fn suppressed(&self) -> bool {
         self.desired.is_some_and(Viewport::cadastral_too_far)
     }
+}
+fn useful_during_pan(active: Viewport, desired: Viewport) -> bool {
+    let a = active.bounds;
+    let b = desired.bounds;
+    if active.source != desired.source || desired.cadastral_too_far()
+        || a.max_x <= b.min_x || b.max_x <= a.min_x
+        || a.max_y <= b.min_y || b.max_y <= a.min_y
+    {
+        return false;
+    }
+    // Retain same-scale pans, but promptly replace work after a zoom change.
+    let x = ((a.max_x - a.min_x) / f64::from(active.size[0]))
+        / ((b.max_x - b.min_x) / f64::from(desired.size[0]));
+    let y = ((a.max_y - a.min_y) / f64::from(active.size[1]))
+        / ((b.max_y - b.min_y) / f64::from(desired.size[1]));
+    (0.7..=1.15).contains(&x) && (0.7..=1.15).contains(&y)
 }
 pub struct Pixels {
     pub bounds: Bounds,
@@ -542,7 +585,7 @@ mod tests {
         }
     }
     #[test]
-    fn original_five_scheduling_decisions_after_canvas_debounce() {
+    fn baseline_scheduling_decisions_now_allow_loading_during_drag() {
         let data: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/map-request/reference.json"))
                 .unwrap();
@@ -565,8 +608,14 @@ mod tests {
             scheduler
                 .update(Some(v), row["drag"].as_bool().unwrap(), Duration::ZERO)
                 .unwrap();
-            // The UI adds its 45 ms debounce before the original start decision.
+            // Preserve the original disabled/cache/size decisions, but a drag
+            // now starts loading before the mouse button is released.
             let started = scheduler.due(Duration::from_millis(45)).is_some();
+            if row["drag"].as_bool().unwrap() {
+                assert!(started, "{row}");
+                assert!(scheduler.next_deadline().is_none());
+                continue;
+            }
             assert_eq!(
                 usize::from(started),
                 row["started"].as_u64().unwrap() as usize,
@@ -597,7 +646,7 @@ mod tests {
             .update(Some(zoom), true, Duration::from_millis(60))
             .unwrap());
         assert!(s.due(Duration::from_millis(105)).is_none());
-        assert_eq!(s.next_deadline(), Some(Duration::from_millis(265)));
+        assert_eq!(s.next_deadline(), Some(Duration::from_millis(205)));
         s.update(Some(zoom), false, Duration::from_millis(110))
             .unwrap();
         let second = s.due(Duration::from_millis(155)).unwrap();
@@ -735,6 +784,74 @@ mod tests {
         let huge=Viewport{size:[10000,5000],..base};
         huge.buffered().validate().unwrap();
         assert!(huge.buffered().covers(huge));
+    }
+
+    #[test]
+    fn continuous_drag_keeps_the_first_deadline_and_starts_the_latest_view() {
+        for source in [Provider::Aerial, Provider::Osm] {
+            let mut scheduler = Scheduler::default();
+            let mut latest = Viewport { source, ..view() };
+            scheduler.update(Some(latest), true, Duration::ZERO).unwrap();
+            for millis in (5..=40).step_by(5) {
+                latest.bounds.min_x += 2.;
+                latest.bounds.max_x += 2.;
+                scheduler.update(Some(latest), true, Duration::from_millis(millis)).unwrap();
+                assert_eq!(scheduler.next_deadline(), Some(Duration::from_millis(45)));
+                assert!(scheduler.due(Duration::from_millis(millis)).is_none());
+            }
+            let request = scheduler.due(Duration::from_millis(45)).unwrap();
+            assert!(request.view.covers(latest));
+            assert!(scheduler.dragging, "loading must not require pointer release");
+        }
+    }
+
+    #[test]
+    fn dragging_allows_useful_tiles_to_finish_then_loads_the_latest_edge() {
+        let mut scheduler = Scheduler::default();
+        let mut latest = Viewport { source: Provider::Osm, ..view() };
+        scheduler.update(Some(latest), true, Duration::ZERO).unwrap();
+        let first = scheduler.due(Duration::from_millis(45)).unwrap();
+        for millis in (60..=100).step_by(10) {
+            latest.bounds.min_x += 5.;
+            latest.bounds.max_x += 5.;
+            assert!(!scheduler.update(Some(latest), true, Duration::from_millis(millis)).unwrap());
+            assert!(scheduler.accepts(first), "a pan must not starve the active tile fetch");
+            assert!(scheduler.due(Duration::from_millis(millis)).is_none());
+            assert!(scheduler.next_deadline().is_none(), "active work owns its repaint cadence");
+        }
+        assert!(scheduler.preview(first));
+        assert!(scheduler.complete(first, true));
+        assert!(scheduler.due(Duration::from_millis(204)).is_none());
+        let second = scheduler.due(Duration::from_millis(205)).unwrap();
+        assert_eq!(second.view, latest);
+        assert!(!scheduler.complete(first, true), "late completion cannot replace the new request");
+        assert!(scheduler.complete(second, true));
+        assert!(scheduler.due(Duration::from_secs(1)).is_none());
+    }
+
+    #[test]
+    fn dragging_replaces_obsolete_extents_without_starting_a_request_per_frame() {
+        let mut scheduler = Scheduler::default();
+        let mut latest = Viewport { source: Provider::Osm, ..view() };
+        scheduler.update(Some(latest), true, Duration::ZERO).unwrap();
+        let first = scheduler.due(Duration::from_millis(45)).unwrap();
+        for millis in (60..=200).step_by(20) {
+            latest.bounds.min_x += 200.;
+            latest.bounds.max_x += 200.;
+            assert!(scheduler.update(Some(latest), true, Duration::from_millis(millis)).unwrap());
+            assert!(!scheduler.accepts(first));
+            assert!(scheduler.due(Duration::from_millis(millis)).is_none());
+            assert_eq!(scheduler.next_deadline(), Some(Duration::from_millis(205)));
+        }
+        let current = scheduler.due(Duration::from_millis(205)).unwrap();
+        assert_eq!(current.view, latest);
+        latest.source = Provider::Aerial;
+        assert!(scheduler.update(Some(latest), true, Duration::from_millis(210)).unwrap());
+        assert!(!scheduler.accepts(current));
+        assert!(scheduler.due(Duration::from_millis(254)).is_none());
+        assert_eq!(scheduler.due(Duration::from_millis(255)).unwrap().view.source, Provider::Aerial);
+        scheduler.invalidate();
+        assert!(scheduler.due(Duration::from_secs(1)).is_none());
     }
 
 }

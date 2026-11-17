@@ -105,7 +105,7 @@ fn same_job_page(actual: &str, expected: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-enum Action { Read, Apply, Reload, Jobs, Close, RefreshObjects, CancelRefresh }
+enum Action { Read, Apply, Reload, Jobs, Close, RefreshObjects, CancelRefresh, CancelCapture }
 
 impl SleufBaseApp {
     fn start_kickthemap_form_operation(&mut self, operation: Operation) {
@@ -193,6 +193,14 @@ impl SleufBaseApp {
             if !self.browser_ui.status.is_empty() {
                 ui.small(&self.browser_ui.status);
             }
+            if self.manual_kickthemap_capture_active() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spinner();
+                    ui.label("Open de GeoTIFF-download op deze jobpagina zodra de vastlegging klaarstaat.");
+                    if ui.add_enabled(!self.browser_ui.cancel.load(Ordering::Acquire),
+                        egui::Button::new("Vastlegging annuleren")).clicked() {action=Some(Action::CancelCapture);}
+                });
+            }
             if self.browser_ui.reloading.is_some() {
                 ui.horizontal(|ui| {
                     ui.spinner(); ui.label("Actuele objecten ophalen…");
@@ -240,6 +248,7 @@ impl SleufBaseApp {
             Some(Action::CancelRefresh) => {
                 if let Some(reload) = &self.browser_ui.reloading { reload.cancel(); }
             }
+            Some(Action::CancelCapture) => self.cancel_kickthemap_download_capture(),
             Some(Action::RefreshObjects) => {
                 if let Some(id) = self.browser_ui.tools.job.as_ref().map(|job| job.job_id) {
                     self.start_kickthemap_object_reload(id);
