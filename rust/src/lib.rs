@@ -140,6 +140,7 @@ pub mod leader_index;
 pub mod marxact_alignment;
 pub mod cadastral;
 pub mod settings_compat;
+pub mod client_logos;
 pub mod export;
 pub mod object_dxf;
 pub mod object_selection;

@@ -230,6 +230,9 @@ impl Dialog {
             trenches:app.virtual_trenches.iter().map(|t|(t.job_id,t.label.clone())).collect(),
         }
     }
+    pub(super) fn refresh_logo_choices(&mut self, preferences: &sleufbase_rust::settings_compat::ExportPreferences) {
+        self.opening_defaults.logo_choices = crate::ui_preferences::logo_choices(preferences);
+    }
     fn include_all(&mut self,included:bool) {
         for choice in &mut self.options.choices {
             if !matches!(choice.source,Source::Empty(_)){choice.include=included;}
@@ -360,7 +363,7 @@ fn project_map_card(ui:&mut egui::Ui,dialog:&mut Dialog) {
                 }
                 if !dialog.options.template.as_os_str().is_empty()&&ui.button("Ingebouwd sjabloon gebruiken").clicked(){dialog.options.template=PathBuf::new();}
             });
-            crate::template_dialog::logos(ui,&mut dialog.options.logos);
+            crate::template_dialog::logos(ui,&mut dialog.options.logos,&dialog.opening_defaults.logo_choices,&mut dialog.options.title_fields);
             crate::template_dialog::font_folders(ui,&mut dialog.options.font_directories);
         });
     });

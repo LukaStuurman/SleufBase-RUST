@@ -39,6 +39,12 @@ impl SleufBaseApp {
                 self.dirty = true;
             }
         }
+        if let Some(dialog) = &mut self.template_order_dialog {
+            dialog.refresh_logo_choices(&saved.settings.export_preferences);
+        }
+        if let Some(dialog) = &mut self.project_template_dialog {
+            dialog.refresh_logo_choices(&saved.settings.export_preferences);
+        }
         self.migrated_settings = saved.settings;
         self.backup_settings = saved.autosave;
         self.rule_editor = None;

@@ -66,6 +66,9 @@ struct TemplateTask {
     action: TemplateAction,
     result: mpsc::Receiver<Result<PathBuf, String>>,
 }
+struct LogoTask {
+    result: mpsc::Receiver<Result<sleufbase_rust::client_logos::PendingLogo, String>>,
+}
 struct TemplateNotice {
     text: &'static str,
     path: Option<PathBuf>,
@@ -88,6 +91,8 @@ pub(crate) struct Dialog {
     mappings: Vec<(String, String)>,
     template_task: Option<TemplateTask>,
     template_notice: Option<TemplateNotice>,
+    logo_task: Option<LogoTask>,
+    pending_logos: Vec<sleufbase_rust::client_logos::PendingLogo>,
 }
 // Reuse the production Python-compatible normalizers, including Unicode
 // casefold and whitespace behavior; do not create a competing UI interpretation.
@@ -124,8 +129,12 @@ fn check_text_budget<'a>(values: impl Iterator<Item = &'a str>) -> Result<(), St
 
 impl Dialog {
     pub fn new(settings: &MigratedSettings, autosave: &AutosaveSettings) -> Self {
+        let mut draft = settings.clone();
+        for logo in &mut draft.export_preferences.template_client_logos {
+            if logo.client_code.trim().is_empty() { logo.client_code = logo.effective_code(); }
+        }
         Self {
-            draft: settings.clone(),
+            draft,
             autosave: autosave.clone(),
             category: Category::Maps,
             words: false,
@@ -136,6 +145,8 @@ impl Dialog {
             restore_autosave_requested: false,
             template_task: None,
             template_notice: None,
+            logo_task: None,
+            pending_logos: Vec::new(),
             rules: settings
                 .object_rules
                 .iter()
@@ -211,6 +222,45 @@ impl Dialog {
             }),
         }
     }
+    fn start_logo_task(&mut self, ctx: &egui::Context, path: PathBuf) {
+        if self.logo_task.is_some() { return; }
+        let (tx, result) = mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        self.error.clear();
+        match std::thread::Builder::new().name("sleufbase-client-logo".into()).spawn(move || {
+            let _ = tx.send(sleufbase_rust::client_logos::stage(&path));
+            repaint.request_repaint();
+        }) {
+            Ok(_) => self.logo_task = Some(LogoTask { result }),
+            Err(error) => self.error = format!("Logo laden starten mislukt: {error}"),
+        }
+    }
+    fn poll_logo_task(&mut self, ctx: &egui::Context) {
+        let Some(task) = self.logo_task.as_ref() else { return; };
+        let result = match task.result.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(100));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => Err("Logo laden is onverwacht gestopt".into()),
+        };
+        self.logo_task = None;
+        match result {
+            Ok(mut pending) => {
+                let names = &self.draft.export_preferences.template_client_logos;
+                if names.len() >= sleufbase_rust::client_logos::MAX_LOGOS {
+                    self.error = "De lijst met opdrachtgeverslogo's is vol".into();
+                    return;
+                }
+                pending.logo.name = sleufbase_rust::client_logos::unique_name(&pending.logo.name, names);
+                self.draft.export_preferences.template_client_logos.push(pending.logo.clone());
+                self.pending_logos.push(pending);
+                self.error.clear();
+            }
+            Err(error) => self.error = error,
+        }
+    }
     pub fn open_words(&mut self) {
         self.words = true;
     }
@@ -239,6 +289,10 @@ impl Dialog {
         settings.kickthemap_material_choices = choices(&self.materials)?;
         settings.kickthemap_profile_extra_choices = choices(&self.extras)?;
         settings.marxact_name_mappings = mappings(&self.mappings)?;
+        for logo in &mut settings.export_preferences.template_client_logos {
+            logo.name = logo.name.trim().to_owned();
+            logo.client_code = logo.client_code.trim().to_owned();
+        }
         if let Some(viewer) = &self.viewer {
             // Keep global working-map preferences from the staged draft.
             settings.viewer.background_source = viewer.background_source.clone();
@@ -255,12 +309,17 @@ impl Dialog {
         &mut self,
         save: &mut impl FnMut(&MigratedSettings, &AutosaveSettings) -> Result<(), String>,
     ) -> Option<Saved> {
-        if self.template_task.is_some() {
-            self.error = "Wacht tot de sjabloontaak klaar is voordat je de instellingen opslaat".into();
+        if self.template_task.is_some() || self.logo_task.is_some() {
+            self.error = "Wacht tot het laden klaar is voordat je de instellingen opslaat".into();
             return None;
         }
-        match self.candidate().and_then(|candidate| {
+        match self.candidate().and_then(|mut candidate| {
+            let publication = sleufbase_rust::client_logos::publish_pending(
+                &sleufbase_rust::project::app_data_directory(),
+                &mut candidate.settings.export_preferences, &self.pending_logos,
+            )?;
             save(&candidate.settings, &candidate.autosave)?;
+            publication.commit();
             Ok(candidate)
         }) {
             Ok(saved) => {
@@ -513,8 +572,50 @@ fn template_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     });
     ui.small("Klik op Opslaan om je sjabloonkeuze voor volgende exports te bewaren. Annuleren behoudt de vorige keuze.");
 }
+fn client_logo_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    ui.label("Voeg logo's van opdrachtgevers toe en geef ze een herkenbare naam. Bij de DXF-sjabloonexport kies je daarna een logo uit de lijst.");
+    ui.small("PNG en JPEG worden als eigen kopie bewaard wanneer je op Opslaan klikt. Annuleren behoudt je vorige lijst.");
+    let p = &mut state.draft.export_preferences;
+    crate::ui_preferences::client_logo_default(ui, p);
+    ui.add_space(8.);
+    let mut remove = None;
+    for (index, logo) in p.template_client_logos.iter_mut().enumerate() {
+        ui.push_id(&logo.id, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Naam");
+                let width = (ui.available_width() - 112.).clamp(100., 360.);
+                ui.add(egui::TextEdit::singleline(&mut logo.name).desired_width(width))
+                    .on_hover_text(logo.path.display().to_string());
+                if ui.button("Verwijderen").clicked() { remove = Some(index); }
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Afkorting op blad");
+                ui.add(egui::TextEdit::singleline(&mut logo.client_code).desired_width(180.))
+                    .on_hover_text("Tekst na PROJECTNR., bijvoorbeeld ENEXIS. Maximaal 24 tekens; leeg gebruikt de naam.");
+            });
+            ui.add_space(6.);
+        });
+    }
+    if let Some(index) = remove {
+        let removed = p.template_client_logos.remove(index);
+        if p.template_client_logo_preset == removed.preset() {
+            p.template_client_logo_preset.clear();
+        }
+        state.pending_logos.retain(|pending| pending.logo.id != removed.id);
+    }
+    let can_add = state.logo_task.is_none() && p.template_client_logos.len() < sleufbase_rust::client_logos::MAX_LOGOS;
+    if ui.add_enabled(can_add, egui::Button::new("Logo toevoegen…")).clicked() {
+        if let Some(path) = rfd::FileDialog::new().set_title("Opdrachtgeverlogo toevoegen")
+            .add_filter("Logo (PNG of JPEG)", &["png", "jpg", "jpeg"]).pick_file() {
+            state.start_logo_task(ui.ctx(), path);
+        }
+    }
+    ui.small("Verwijderen haalt het logo uit de keuzelijst; eerder opgeslagen projecten houden hun afbeeldingsbestand.");
+}
 fn dxf_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     section(ui,"DXF-sjabloon",|ui| template_fields(ui,state));
+    ui.add_space(12.);
+    section(ui,"Opdrachtgeverslogo's",|ui| client_logo_fields(ui,state));
     ui.add_space(12.);
     section(ui,"Weergave proefsleuf in kadastrale DXF-export",|ui| {
     let p = &mut state.draft.export_preferences;
@@ -604,40 +705,7 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         ui.label("Diametertekst (leeg = Ø)");
         ui.text_edit_singleline(&mut p.template_cross_section_diameter_text);
     });
-    egui::ComboBox::from_label("Opdrachtgeverlogo op Blad1")
-        .selected_text(match p.template_client_logo_preset.as_str() {
-            ""=>"Geen", "brabant_water"=>"Brabant Water", "enexis"=>"Enexis", "wml"=>"WML",
-            "hurkmans"=>"Hurkmans groep", "hanab"=>"Hanab", "bgm"=>"BGM", "apk"=>"APK",
-            "custom"=>"Eigen bestand", _=>"Onbekend logo",
-        })
-        .show_ui(ui, |ui| {
-            for (key, label) in [
-                ("", "Geen"),
-                ("brabant_water", "Brabant Water"),
-                ("enexis", "Enexis"),
-                ("wml", "WML"),
-                ("hurkmans", "Hurkmans groep"),
-                ("hanab", "Hanab"),
-                ("bgm", "BGM"),
-                ("apk", "APK"),
-                ("custom", "Eigen bestand"),
-            ] {
-                ui.selectable_value(&mut p.template_client_logo_preset, key.into(), label);
-            }
-        });
-    if p.template_client_logo_preset == "custom" {
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut p.template_client_logo_path);
-            if ui.button("Kies bestand").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Afbeelding", &["png", "jpg", "jpeg"])
-                    .pick_file()
-                {
-                    p.template_client_logo_path = path.to_string_lossy().into_owned();
-                }
-            }
-        });
-    }
+    ui.small("Opdrachtgeverslogo's beheer je bij Instellingen > DXF-export.");
     ui.separator();
     super::theme::strong(ui,"Automatische uitvoer");
     checkbox(ui, &mut state.draft.template_auto_fill_bgt_fysiek_voorkomen,
@@ -655,6 +723,7 @@ pub(crate) fn show(
 ) -> Option<Saved> {
     let state = dialog.as_mut()?;
     state.poll_template_task(ctx);
+    state.poll_logo_task(ctx);
     let mut open = true;
     let mut cancel = false;
     let mut requested = false;
@@ -689,7 +758,7 @@ pub(crate) fn show(
                     if ui.button("Annuleren").clicked() {
                         cancel = true;
                     }
-                    if ui.add_enabled(state.template_task.is_none(),
+                    if ui.add_enabled(state.template_task.is_none() && state.logo_task.is_none(),
                         egui::Button::new(egui::RichText::new("Opslaan").color(egui::Color32::WHITE))
                         .fill(super::ORANGE)).clicked() {
                         requested = true;
@@ -698,6 +767,9 @@ pub(crate) fn show(
                         state.back();
                     }
                 });
+                if state.logo_task.is_some() {
+                    ui.horizontal(|ui| { ui.spinner(); ui.label("Opdrachtgeverlogo controleren en laden…"); });
+                }
                 if let Some(task) = &state.template_task {
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -729,8 +801,8 @@ pub(crate) fn show(
                         }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
-                            Category::Dxf => "Beheer je DXF-sjabloon, proefsleufweergave, kleuren, gekoppelde rasters en contactgegevens op de bladen.",
-                            Category::Trenches => "Stel dwarsprofielen, maaiveld en het opdrachtgeverlogo in.",
+                            Category::Dxf => "Beheer je DXF-sjabloon, opdrachtgeverslogo’s, proefsleufweergave, kleuren en contactgegevens op de bladen.",
+                            Category::Trenches => "Stel dwarsprofielen, maaiveld en automatische uitvoer in.",
                             Category::KickTheMap => "Beheer materiaalkeuzes, kabelnamen en de woordenlijst voor DXF-lagen.",
                             Category::Backups => "Stel automatisch opslaan in en herstel een eerdere versie.",
                         });

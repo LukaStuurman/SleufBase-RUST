@@ -44,6 +44,7 @@ pub struct ContactDetails {
     pub postcode: String,
     pub city: String,
     pub phone: String,
+    #[serde(deserialize_with = "deserialize_contact_email")]
     pub email: String,
     pub website: String,
 }
@@ -54,7 +55,7 @@ impl Default for ContactDetails {
             postcode: "5221 EC".into(),
             city: "'s-Hertogenbosch".into(),
             phone: "073 220 0341".into(),
-            email: "contact@hdbtechbase.nl".into(),
+            email: "contact@techbasebv.nl".into(),
             website: "www.techbasebv.nl".into(),
         }
     }
@@ -92,7 +93,19 @@ impl ContactDetails {
                 *target = crate::python_values::trim(value).to_owned();
             }
         }
+        self.email = current_contact_email(std::mem::take(&mut self.email));
     }
+}
+// Refresh the former shipped default in saved settings/projects while keeping
+// deliberately entered contact addresses unchanged.
+fn current_contact_email(value: String) -> String {
+    if value.trim().eq_ignore_ascii_case("contact@hdbtechbase.nl") {
+        "contact@techbasebv.nl".into()
+    } else { value }
+}
+fn deserialize_contact_email<'de, D>(deserializer: D) -> Result<String, D::Error>
+where D: serde::Deserializer<'de> {
+    <String as serde::Deserialize>::deserialize(deserializer).map(current_contact_email)
 }
 fn contact_text(value: &str) -> bool {
     let value = crate::python_values::trim(value);
@@ -104,7 +117,7 @@ fn contact_field(value: &str) -> Option<usize> {
         "5236 PV" | "5221 EC" => Some(1),
         "'s-Hertogenbosch" => Some(2),
         "073 - 220 0341" | "073 220 0341" | "0732200341" => Some(3),
-        "contact@hdbtechbase.nl" => Some(4),
+        "contact@hdbtechbase.nl" | "contact@techbasebv.nl" => Some(4),
         "www.hdbtechbase.nl" | "hdbtechbase.nl"
             | "http://www.hdbtechbase.nl" | "https://www.hdbtechbase.nl"
             | "http://hdbtechbase.nl" | "https://hdbtechbase.nl"

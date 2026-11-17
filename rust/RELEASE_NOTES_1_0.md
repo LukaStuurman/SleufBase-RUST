@@ -1,17 +1,19 @@
-## SleufBase Rust 1.0.26 voor Windows
+## SleufBase Rust 1.0.27 voor Windows
 
-### Iedere laag op een eigen regel
+### Opdrachtgeverslogo's beheren en kiezen
 
-De groepskop in **Kabelobjecten** toont iedere laag voortaan op een afzonderlijke regel, met het aantal objecten ervoor. Het &-teken tussen laagnamen is verwijderd. Bijvoorbeeld:
+- Voeg eigen PNG- of JPEG-logo's toe via **Instellingen → DXF-export → Opdrachtgeverslogo's**. Geef ieder logo een herkenbare naam en een **Afkorting op blad**.
+- Kies een standaard opdrachtgeverlogo. De ingebouwde logo's blijven beschikbaar.
+- De DXF-sjabloonexport heeft een keuzelijst met de bewaarde logo's. Nieuwe opdrachtgeverslogo's voeg je voortaan in Instellingen toe.
+- Bij het kiezen van een opdrachtgever verandert de projectnummerkop op de gebruikte DXF-bladen mee, bijvoorbeeld van **PROJECTNR. BGM:** naar **PROJECTNR. ENEXIS:**. Het ingevulde projectnummer blijft behouden.
+- Nieuwe logo's worden pas bij **Opslaan** als eigen kopie bewaard. Annuleren behoudt de bestaande instellingen; oudere eigen logokeuzes blijven beschikbaar.
 
-**5× B-WE-KL-DATA_DUCT-G**
+### Contactgegevens en uitlijning
 
-**1× B-WE-KL-DATA-G**
-
-- Alle laagregels blijven zichtbaar; de kop past zijn hoogte aan de inhoud aan.
-- Klik op de groepskop om de afzonderlijke kabelobjecten uit of in te klappen.
-- Individuele kabelselectie, oranje markering en de wisselknop blijven behouden.
-- De uitleg in **Info en handleiding** is bijgewerkt.
+- Het standaard e-mailadres is **contact@techbasebv.nl**. Het voormalige standaardadres wordt bij het laden van opgeslagen instellingen bijgewerkt; andere ingevulde adressen blijven behouden.
+- Het eerste kabelobject begint op dezelfde hoogte als de witte kaartcontainer. Beide panelen gebruiken dezelfde titelafstand.
+- De groepering met een afzonderlijke regel per laag uit 1.0.26 blijft behouden.
+- **Info en handleiding** is aangevuld met het beheren en kiezen van opdrachtgeverslogo's.
 
 ### Publicatie zonder tests
 

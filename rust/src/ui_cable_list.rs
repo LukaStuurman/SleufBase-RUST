@@ -298,8 +298,9 @@ pub(super) fn show(
         .frame(egui::Frame::new().fill(APP_BG).inner_margin(egui::Margin {
             left: 8, right: 18, top: 18, bottom: 18,
         })).show(ctx, |ui| {
-            ui.label(egui::RichText::new("Kabelobjecten").font(row_fonts(ui).0));
-            ui.add_space(6.);
+            // Match the map's title block: its normal item spacing already
+            // aligns the first card with the neighbouring white map container.
+            theme::title(ui, "Kabelobjecten");
             if candidates.is_empty() {
                 theme::card(12, 12, 12).show(ui, |ui| {
                     ui.set_width(ui.available_width());

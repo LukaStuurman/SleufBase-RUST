@@ -396,13 +396,28 @@ SleufBase bewaart een eigen kopie van het geladen sjabloon. **Origineel herstell
 
 ### Tekeningstempel en contactgegevens
 
-Bij **Tekeningstempel** in het exportvenster vul je onder meer **Gezien**, **Status**, **Versie**, **Referentie Tekeningen**, **ProjectNr.BGM** en **TEK.NR.** in. Bewaar het project om deze projectgegevens te behouden.
+Bij **Tekeningstempel** in het exportvenster vul je onder meer **Gezien**, **Status**, **Versie**, **Referentie Tekeningen**, **Projectnummer** en **TEK.NR.** in. Bewaar het project om deze projectgegevens te behouden.
 
-**Instellingen → DXF-export → Contactgegevens op DXF-bladen** bevat adres, postcode, plaats, telefoon, e-mail en website. Een leeg veld laat die contactregel weg. Met **Standaard Techbase-gegevens herstellen** zet je de meegeleverde waarden terug.
+**Instellingen → DXF-export → Contactgegevens op DXF-bladen** bevat adres, postcode, plaats, telefoon, e-mail en website. Een leeg veld laat die contactregel weg. Het standaard e-mailadres is **contact@techbasebv.nl**. Met **Standaard Techbase-gegevens herstellen** zet je de meegeleverde waarden terug.
 
-### Logo's en lettertypen
+### Opdrachtgeverslogo's beheren
 
-Onder **Meer exportinstellingen** in het exportvenster kun je eigen logo's kiezen en mappen met extra CAD-lettertypen toevoegen. Bij de portable versie moeten de meegeleverde standaardlogo's in `assets/template_logos` naast de applicatie beschikbaar blijven. Eigen fontmappen moeten tijdens het exporteren bereikbaar zijn.
+1. Open **Instellingen → DXF-export → Opdrachtgeverslogo's**.
+2. Klik op **Logo toevoegen…** en kies een PNG- of JPEG-bestand.
+3. Geef het logo een herkenbare **Naam** en een **Afkorting op blad** van maximaal 24 tekens, bijvoorbeeld ENEXIS.
+4. Kies eventueel het **Standaard opdrachtgeverlogo** en klik op **Opslaan**.
+
+SleufBase bewaart bij Opslaan een eigen kopie van nieuwe afbeeldingen. Je kunt meerdere logo's bewaren, namen en afkortingen aanpassen en logo's uit de keuzelijst verwijderen. **Annuleren** behoudt de bestaande instellingen. De verzameling is ook beschikbaar bij andere projecten; oudere eigen logokeuzes blijven bruikbaar.
+
+### Een logo kiezen voor de export
+
+Open **Meer exportinstellingen → Logo's op de bladen** in het DXF-sjabloonexportvenster. Kies bij **Opdrachtgeverlogo** een ingebouwd of zelf toegevoegd logo. Nieuwe opdrachtgeverslogo's voeg je in Instellingen toe. De afzonderlijke Techbase-logokeuze blijft beschikbaar.
+
+De projectnummerkop op de bladen volgt de gekozen opdrachtgever. Met de afkorting ENEXIS wordt **PROJECTNR. BGM:** bijvoorbeeld **PROJECTNR. ENEXIS:**. Het ingevulde **Projectnummer** blijft behouden.
+
+### CAD-lettertypen
+
+Onder **Meer exportinstellingen** kun je mappen met extra CAD-lettertypen toevoegen. Bij de portable versie moeten de meegeleverde standaardlogo's in `assets/template_logos` naast de applicatie beschikbaar blijven. Eigen fontmappen moeten tijdens het exporteren bereikbaar zijn.
 
 ## 18. Andere exports
 
@@ -424,7 +439,7 @@ Online achtergronden en aanvullende gegevens moeten beschikbaar zijn tijdens het
 | Categorie | Belangrijkste onderwerpen |
 | --- | --- |
 | Kaarten | Werkkaart, naambordjes en kaartuitvoer. |
-| DXF-export | Sjabloon, proefsleufweergave, kleuren, rasters en contactgegevens. |
+| DXF-export | Sjabloon, proefsleufweergave, kleuren, rasters, contactgegevens en opdrachtgeverslogo’s. |
 | Proefsleuven | Profielen, maaiveld, aanvullende gegevens en uitvoer. |
 | KickTheMap | Woordenlijst, materiaalkeuzes en marXact-naamkoppelingen. |
 | Back-ups | Autosave, bewaarinstellingen en herstel. |

@@ -5,6 +5,34 @@ fn unsupported(field:&str)->String{format!("Python-project kan de actieve sjablo
 fn standard_techbase(path:&Path)->bool{
     std::fs::read(path).is_ok_and(|bytes|bytes==include_bytes!("../../assets/template_logos/techbase_full.png"))
 }
+fn standard_client(path: &Path) -> Option<(&'static str, &'static str)> {
+    let bytes = std::fs::read(path).ok()?;
+    let builtins: [(&str, &str, &[u8]); 7] = [
+        ("brabant_water", "BW", include_bytes!("../../assets/template_logos/brabant_water.png")),
+        ("enexis", "ENEXIS", include_bytes!("../../assets/template_logos/enexis.png")),
+        ("wml", "WML", include_bytes!("../../assets/template_logos/wml.jpg")),
+        ("hurkmans", "HUR", include_bytes!("../../assets/template_logos/hurkmans.png")),
+        ("hanab", "HANAB", include_bytes!("../../assets/template_logos/hanab.jpg")),
+        ("bgm", "BGM", include_bytes!("../../assets/template_logos/bgm.png")),
+        ("apk", "APK", include_bytes!("../../assets/template_logos/apk.png")),
+    ];
+    builtins.into_iter().find(|(_, _, image)| bytes.as_slice() == *image).map(|(key, code, _)| (key, code))
+}
+fn client_choice(path: Option<&Path>, code: Option<&str>) -> Result<(&'static str, Option<Value>), String> {
+    let builtin = path.and_then(standard_client);
+    if let Some(code) = code {
+        // The original app can select its known stamp variants. A custom
+        // image uses its existing BGM caption; arbitrary Rust captions cannot
+        // be represented faithfully and must not silently revert on exchange.
+        if let Some((key, _)) = builtin.filter(|(_, expected)| *expected == code) {
+            return Ok((key, None));
+        }
+        if code != "BGM" || builtin.is_some() {
+            return Err(format!("{}; bewaar een Rust-project om het logo en de bladtekst samen te behouden.", unsupported("afkorting bij het opdrachtgeverlogo")));
+        }
+    } else if let Some((key, _)) = builtin { return Ok((key, None)); }
+    Ok(match path { Some(path) => ("custom", Some(path_value(path))), None => ("", None) })
+}
 fn merge_rules(active:&[crate::disciplines::Rule],old:Option<&Value>)->Result<Value,String>{
     let originals=old.and_then(Value::as_array).cloned().unwrap_or_default();let mut used=HashSet::new();let mut output=Vec::new();
     let extra=|v:&Value|v.as_array().is_some_and(|a|a.len()>4)||v.as_object().is_some_and(|m|m.keys().any(|key|!matches!(key.as_str(),"keywords"|"target_layer"|"color"|"profile_label")));
@@ -27,12 +55,29 @@ fn settings(active:&crate::settings_compat::MigratedSettings,raw:&mut Map<String
     if active.map_export.dpi!=defaults.map_export.dpi||active.map_export.scale!=defaults.map_export.scale{return Err(unsupported("kaart-DPI/schaal"));}
     if !active.export_preferences.cadastral_template_path.is_empty(){return Err(unsupported("DXF-sjabloonpad"));}
     if !matches!(active.map_export.background.as_str(),"pdok"|"osm"|"cadastral"){return Err(unsupported("kaartachtergrond"));}
-    let preferences=serde_json::to_value(&active.export_preferences).map_err(|e|e.to_string())?;
+    let mut export = active.export_preferences.clone();
+    if export.template_client_logo_preset.starts_with("saved:") {
+        let logo = export.template_client_logos.iter().find(|logo| logo.preset() == export.template_client_logo_preset)
+            .ok_or_else(|| unsupported("onbekend opdrachtgeverlogo"))?;
+        let (preset, path) = client_choice(Some(&logo.path), Some(&logo.effective_code()))?;
+        export.template_client_logo_preset = preset.into();
+        export.template_client_logo_path = path.as_ref().and_then(Value::as_str).unwrap_or("").into();
+    } else if export.template_client_logo_preset == "custom" && export.template_client_logo_code.is_some() {
+        let source = Path::new(&export.template_client_logo_path);
+        let (preset, path) = client_choice(Some(source), export.template_client_logo_code.as_deref())?;
+        export.template_client_logo_preset = preset.into();
+        export.template_client_logo_path = path.as_ref().and_then(Value::as_str).unwrap_or("").into();
+    }
+    export.template_client_logos.clear();
+    export.template_client_logo_code = None;
+    let preferences=serde_json::to_value(&export).map_err(|e|e.to_string())?;
+    raw.remove("template_client_logos");
+    raw.remove("template_client_logo_code");
     if raw.contains_key("template_contact") || !active.export_preferences.template_contact.is_default() {
         raw.insert("template_contact".into(),serde_json::to_value(&active.export_preferences.template_contact).map_err(|e|e.to_string())?);
     }
-    for(key,value)in preferences.as_object().unwrap(){if key!="cadastral_template_path"{raw.insert(key.clone(),value.clone());}}
-    if !active.export_preferences.template_client_logo_path.is_empty(){raw.insert("template_client_logo_path".into(),path_value(Path::new(&active.export_preferences.template_client_logo_path)));}
+    for(key,value)in preferences.as_object().unwrap(){if !matches!(key.as_str(),"cadastral_template_path"|"template_client_logos"|"template_client_logo_code"){raw.insert(key.clone(),value.clone());}}
+    if !export.template_client_logo_path.is_empty(){raw.insert("template_client_logo_path".into(),path_value(Path::new(&export.template_client_logo_path)));}
     raw.insert("map_export_background_source".into(),active.map_export.background.clone().into());raw.insert("include_klic_in_map_exports".into(),active.map_export.include_cad.into());raw.insert("dxf_label_gap".into(),json!(active.dxf_label_gap));
     raw.insert("kickthemap_object_layer_rules".into(),merge_rules(&active.object_rules,raw.get("kickthemap_object_layer_rules"))?);Ok(())
 }
@@ -51,7 +96,10 @@ fn state(project:&NativeProject,state:&crate::template_order::State,raw:&mut Map
     if state.effective_background()!=crate::template_project::BackgroundKind::Pdok || !state.include_cad {
         return Err(unsupported("sjabloonkaartachtergrond of uitgeschakelde KLIC-overlays"));
     }
-    if state.title_fields!=crate::template_metadata::TitleFields::default(){return Err(format!("{}; bewaar een Rust-project om deze velden te behouden.",unsupported("tekeningstempel")));}
+    let mut title_fields = state.title_fields.clone();
+    let client_code = title_fields.project_client.take();
+    if title_fields!=crate::template_metadata::TitleFields::default(){return Err(format!("{}; bewaar een Rust-project om deze velden te behouden.",unsupported("tekeningstempel")));}
+    let (client_preset, client_path) = client_choice(state.logos.client.as_deref(), client_code.as_deref())?;
     for(field,bad)in [("ongepaarde export",!state.paired),("omgekeerde basisrichting",state.reverse),("DXF-sjabloonpad",state.template.as_ref().is_some_and(|p|!p.as_os_str().is_empty())),("lettertypemappen",!state.font_directories.is_empty()),("getekend door",!state.drawn_by.is_empty()),("afwijkende sjabloonprojectnaam",!state.project.is_empty()&&state.project!=project.name),("geen luchtfoto",!state.aerial),("automatisch BGT uit",!state.auto_bgt),("eigen Techbase-logo",state.logos.techbase.as_ref().is_some_and(|path|!standard_techbase(path))) ]{if bad{return Err(unsupported(field));}}
     if !(0.005..=0.2).contains(&state.marker_diameter){return Err(unsupported("markerdiameter buiten Python-bereik"));}
     overview(&state.overview_settings,raw);
@@ -60,7 +108,10 @@ fn state(project:&NativeProject,state:&crate::template_order::State,raw:&mut Map
     }
     for(key,value)in [("template_include_cross_sections",state.profiles),("template_show_profile_direction",state.show_reference),("template_enable_maaiveld_edit_points",state.use_custom_maaiveld),("template_avoid_multileader_collisions",state.avoid_collisions),("template_clip_cross_section_markers_to_profile",state.clip_markers)]{raw.insert(key.into(),value.into());}
     raw.insert("template_cross_section_marker_diameter".into(),json!(state.marker_diameter));raw.insert("template_cross_section_diameter_text".into(),state.diameter_prefix.clone().into());raw.insert("dxf_label_gap".into(),json!(state.label_gap));
-    if let Some(path)=&state.logos.client{raw.insert("template_client_logo_preset".into(),"custom".into());raw.insert("template_client_logo_path".into(),path_value(path));}else{raw.insert("template_client_logo_preset".into(),"".into());raw.insert("template_client_logo_path".into(),"".into());}
+    raw.insert("template_client_logo_preset".into(), client_preset.into());
+    raw.insert("template_client_logo_path".into(), client_path.unwrap_or_else(|| "".into()));
+    raw.remove("template_client_logos");
+    raw.remove("template_client_logo_code");
     let originals=output.get("template_export_slots").and_then(Value::as_array).cloned().unwrap_or_default();let mut used=HashSet::new();let mut rows=Vec::<Value>::new();let labels=state.labels()?;
     for(index,(row,label))in state.rows.iter().zip(labels).enumerate(){
         if row.dataset.is_some()||row.without_profile||!row.comments.is_empty()||row.address.is_some(){return Err(unsupported("profielkoppeling/opmerking/adres per slot"));}

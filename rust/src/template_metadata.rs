@@ -1,10 +1,11 @@
-//! Per-export title values. Only attributes attached to selected paper layouts
-//! are edited; unused sheets, block definitions and later revisions stay intact.
+//! Per-export title values. Attribute values are scoped to selected layouts;
+//! the client caption follows their reachable title-block definitions without
+//! changing the project-number value or unrelated labels and revision rows.
 use crate::{
     dxf_document::{Change, Document, RecordView},
     python_values::{trim, uppercase},
 };
-use std::{collections::HashSet, fmt, sync::atomic::AtomicBool};
+use std::{collections::{HashMap, HashSet}, fmt, sync::atomic::AtomicBool};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Date {
@@ -68,6 +69,9 @@ pub struct TitleFields {
     pub version: String,
     pub reference_drawings: String,
     pub project_number: String,
+    /// None keeps an older/custom stamp caption; Some("") uses a neutral label.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub project_client: Option<String>,
     pub drawing_number: String,
 }
 impl Default for TitleFields {
@@ -78,18 +82,20 @@ impl Default for TitleFields {
             version: "1.0".into(),
             reference_drawings: "Proefsleuven".into(),
             project_number: String::new(),
+            project_client: None,
             drawing_number: String::new(),
         }
     }
 }
 impl TitleFields {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(code) = &self.project_client { crate::client_logos::validate_code(code)?; }
         for (name, value) in [
             ("Gezien", &self.checked_by),
             ("Status", &self.status),
             ("Versie", &self.version),
             ("Referentie Tekeningen", &self.reference_drawings),
-            ("ProjectNr.BGM", &self.project_number),
+            ("Projectnummer", &self.project_number),
             ("TEK.NR.", &self.drawing_number),
         ] {
             text(value).map_err(|error| format!("{name}: {error}"))?;
@@ -137,6 +143,129 @@ fn stage(changes: &mut Vec<Change>, bytes: &mut usize, change: Change) -> Result
     changes.push(change);
     Ok(())
 }
+fn scalar(record: RecordView<'_>, code: i32, default: f64) -> Result<f64, String> {
+    let value = record.current_value(code)?.map_or(Ok(default), |value| value.trim().parse::<f64>()
+        .map_err(|_| "Ongeldige titelbloktekstmaat".to_owned()))?;
+    if value.is_finite() { Ok(value) } else { Err("Ongeldige titelbloktekstmaat".into()) }
+}
+/// Follow the used paper layouts into nested title blocks and the original
+/// dynamic master. Updating both visible and hidden caption variants prevents
+/// the previous client name from returning after AutoCAD regenerates a block.
+fn client_caption_changes(
+    document: &Document, spaces: &HashSet<u64>, client: &str,
+    changes: &mut Vec<Change>, bytes: &mut usize, cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut blocks = HashMap::new();
+    let mut edges = HashMap::<u64, Vec<u64>>::new();
+    for record in document.records() {
+        if record.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if record.kind() != "BLOCK_RECORD" { continue; }
+        let Some(id) = record.handle() else { continue; };
+        if let Some(name) = record.first(2) { blocks.insert(uppercase(name), id); }
+        let mut dynamic_master = false;
+        for (code, value) in record.tags() {
+            if code == 1001 { dynamic_master = value.eq_ignore_ascii_case("AcDbBlockRepBTag"); }
+            else if dynamic_master && code == 1005 {
+                if let Ok(parent) = u64::from_str_radix(value.trim(), 16) {
+                    edges.entry(id).or_default().push(parent);
+                }
+            }
+        }
+    }
+    for record in document.records() {
+        if record.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if record.kind() != "INSERT" || !matches!(record.section(), Some("BLOCKS" | "ENTITIES")) { continue; }
+        if let (Some(parent), Some(child)) = (owner(record), record.first(2)
+            .and_then(|name| blocks.get(&uppercase(name))).copied()) {
+            edges.entry(parent).or_default().push(child);
+        }
+    }
+    let mut reachable = spaces.clone();
+    let mut pending: Vec<u64> = spaces.iter().copied().collect();
+    while let Some(parent) = pending.pop() {
+        crate::input::check(cancel)?;
+        for &child in edges.get(&parent).into_iter().flatten() {
+            if reachable.insert(child) { pending.push(child); }
+        }
+    }
+    // The built-in dynamic stamp already contains a correctly styled caption
+    // for every standard client. Reuse that exact style/position reference so
+    // selecting ENEXIS, BW etc. does not unnecessarily condense its lettering.
+    let mut reference_widths = HashMap::<(u64, String), Vec<(f64, f64, f64, f64, String)>>::new();
+    for record in document.records() {
+        if record.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if record.kind() != "TEXT" { continue; }
+        let Some(parent) = owner(record).filter(|id| reachable.contains(id)) else { continue; };
+        let Some(label) = record.current_value(1)? else { continue; };
+        let label = trim(label);
+        if label.len() > 256 || !label.get(..10).is_some_and(|prefix| prefix.eq_ignore_ascii_case("PROJECTNR.")) || !label.ends_with(':') { continue; }
+        reference_widths.entry((parent, uppercase(label))).or_default().push((
+            scalar(record, 10, 0.)?, scalar(record, 20, 0.)?, scalar(record, 40, 0.)?, scalar(record, 41, 1.)?,
+            record.current_value(7)?.unwrap_or("").to_owned(),
+        ));
+    }
+    // The fixed title cell's vertical border bounds even long custom captions.
+    // Coordinates remain in the block's local system; INSERT scale is untouched.
+    let mut borders = HashMap::<u64, Vec<(f64, f64, f64)>>::new();
+    for record in document.records() {
+        if record.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if record.kind() != "LINE" { continue; }
+        let Some(parent) = owner(record).filter(|id| reachable.contains(id)) else { continue; };
+        let x1 = scalar(record, 10, 0.)?;
+        let x2 = scalar(record, 11, 0.)?;
+        let y1 = scalar(record, 20, 0.)?;
+        let y2 = scalar(record, 21, 0.)?;
+        if (x1 - x2).abs() < 1e-7 && (y1 - y2).abs() > 1e-7 {
+            borders.entry(parent).or_default().push((x1, y1.min(y2), y1.max(y2)));
+        }
+    }
+    for record in document.records() {
+        if record.index().is_multiple_of(1024) { crate::input::check(cancel)?; }
+        if record.kind() != "TEXT" || !matches!(record.section(), Some("BLOCKS" | "ENTITIES")) { continue; }
+        let Some(parent) = owner(record).filter(|id| reachable.contains(id)) else { continue; };
+        let Some(current) = record.current_value(1)? else { continue; };
+        let current = trim(current);
+        if current.len() > 256 || !current.get(..10).is_some_and(|prefix| prefix.eq_ignore_ascii_case("PROJECTNR.")) || !current.ends_with(':') { continue; }
+        let old_code = current[10..current.len()-1].trim();
+        if crate::client_logos::validate_code(old_code).is_err() { continue; }
+        let replacement = if client.is_empty() { "PROJECTNR.:".to_owned() }
+            else { format!("PROJECTNR. {client}:") };
+        if current == replacement { continue; }
+        let height = scalar(record, 40, 0.)?;
+        let width = scalar(record, 41, 1.)?;
+        if height <= 0. || width <= 0. { return Err("Ongeldige breedte of hoogte van het projectnummerlabel".into()); }
+        let x = scalar(record, 10, 0.)?;
+        let y = scalar(record, 20, 0.)?;
+        let right = if scalar(record, 50, 0.)?.abs() < 1e-7 && scalar(record, 72, 0.)? == 0. {
+            borders.get(&parent).into_iter().flatten()
+                .filter(|(edge, bottom, top)| *edge > x + height && *bottom <= y && *top >= y + height)
+                .map(|(edge, _, _)| *edge).min_by(f64::total_cmp)
+        } else { None };
+        // 1.5 cap-heights per glyph is deliberately conservative, including
+        // wide capitals. Never enlarge an existing width factor. A custom
+        // borderless/rotated stamp stays within a conservative prior footprint.
+        let budget = right.map(|right| (right-x-height*0.75).max(height))
+            .unwrap_or_else(|| current.chars().count() as f64 * height * width * 0.5);
+        let reference = reference_widths.get(&(parent, uppercase(&replacement))).into_iter().flatten()
+            .find(|(rx, ry, rh, rw, style)| (*rx-x).abs() < 1e-7 && (*ry-y).abs() < 1e-7
+                && (*rh-height).abs() < 1e-7 && *rw > 0. && style.as_str() == record.first(7).unwrap_or(""))
+            .map(|(_, _, _, rw, _)| *rw);
+        let fitted = width.min(reference.unwrap_or_else(||
+            budget / (replacement.chars().count().max(1) as f64 * height * 1.5)));
+        if fitted < width {
+            // TEXT commonly omits its default width factor. Insert it inside
+            // AcDbText and publish caption + width as one record replacement.
+            let mut tags = crate::template_copy::tags(record);
+            crate::template_copy::scope_set(&mut tags, "AcDbText", 1, replacement)?;
+            crate::template_copy::scope_set(&mut tags, "AcDbText", 41, fitted.to_string())?;
+            stage(changes, bytes, document.record_change(record.index(), crate::template_copy::encode(&tags)))?;
+        } else {
+            stage(changes, bytes, document.tag_change(record.index(), 1, &replacement)?)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn update(
     document: &mut Document,
     layouts: &[String],
@@ -310,6 +439,9 @@ fn update_impl(
     }
     crate::input::check(cancel)?;
     drop(records);
+    if let Some(client) = title_fields.and_then(|fields| fields.project_client.as_deref()) {
+        client_caption_changes(document, &spaces, client, &mut changes, &mut bytes, cancel)?;
+    }
     let count = changes.len();
     document.apply(changes)?;
     Ok(count)

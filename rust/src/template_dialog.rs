@@ -15,6 +15,7 @@ pub(crate) struct ExportDefaults {
     pub overview: sleufbase_rust::cadastral_overview::Settings,
     profile_style: ProfilePreferences,
     logos: sleufbase_rust::template_branding::Logos,
+    pub logo_choices: Vec<crate::ui_preferences::LogoChoice>,
     pub contact: sleufbase_rust::template_branding::ContactDetails,
     template: std::path::PathBuf,
     paired: bool,
@@ -33,6 +34,7 @@ impl ExportDefaults {
             overview: sleufbase_rust::cadastral_overview::Settings::from_settings(settings)?,
             profile_style: ProfilePreferences::from_settings(settings),
             logos: crate::ui_preferences::logos(preferences),
+            logo_choices: crate::ui_preferences::logo_choices(preferences),
             contact: preferences.template_contact.clone(),
             template: preferences.cadastral_template_path.clone().into(),
             paired: preferences.template_generate_reverse_cross_section_sheet,
@@ -45,7 +47,9 @@ impl ExportDefaults {
     pub fn apply_project(&self, options: &mut Options) {
         options.overview_settings = self.overview.clone();
         options.profile_style = self.profile_style.clone();
+        if options.logos.client != self.logos.client { options.title_fields.project_client = None; }
         options.logos = self.logos.clone();
+        crate::ui_preferences::sync_client_title(&mut options.title_fields, &options.logos.client, &self.logo_choices);
         options.contact = self.contact.clone();
         options.template = self.template.clone();
         options.paired = self.paired;
@@ -61,7 +65,10 @@ impl ExportDefaults {
         refresh_unchanged(&mut options.background, &opening.background, &self.background);
         refresh_unchanged(&mut options.include_cad, &opening.include_cad, &self.include_cad);
         refresh_unchanged(&mut options.logos.techbase, &opening.logos.techbase, &self.logos.techbase);
+        let previous_client = options.logos.client.clone();
         refresh_unchanged(&mut options.logos.client, &opening.logos.client, &self.logos.client);
+        if options.logos.client != previous_client { options.title_fields.project_client = None; }
+        crate::ui_preferences::sync_client_title(&mut options.title_fields, &options.logos.client, &self.logo_choices);
         macro_rules! profile {
             ($($field:ident),+ $(,)?) => {$(
                 refresh_unchanged(&mut options.profile_style.$field,
@@ -74,7 +81,9 @@ impl ExportDefaults {
     fn apply_order(&self, state: &mut State) {
         state.overview_settings = self.overview.clone();
         state.template = (!self.template.as_os_str().is_empty()).then(|| self.template.clone());
+        if state.logos.client != self.logos.client { state.title_fields.project_client = None; }
         state.logos = self.logos.clone();
+        crate::ui_preferences::sync_client_title(&mut state.title_fields, &state.logos.client, &self.logo_choices);
         state.contact = self.contact.clone();
         state.profiles = self.profiles;
         state.paired = self.paired;
@@ -105,7 +114,10 @@ impl ExportDefaults {
         state.aerial = matches!(background, BackgroundKind::Pdok | BackgroundKind::PdokCadastral);
         refresh_unchanged(&mut state.include_cad, &opening.include_cad, &self.include_cad);
         refresh_unchanged(&mut state.logos.techbase, &opening.logos.techbase, &self.logos.techbase);
+        let previous_client = state.logos.client.clone();
         refresh_unchanged(&mut state.logos.client, &opening.logos.client, &self.logos.client);
+        if state.logos.client != previous_client { state.title_fields.project_client = None; }
+        crate::ui_preferences::sync_client_title(&mut state.title_fields, &state.logos.client, &self.logo_choices);
         macro_rules! profile {
             ($($state:ident => $field:ident),+ $(,)?) => {$(
                 refresh_unchanged(&mut state.$state,
@@ -142,17 +154,27 @@ pub(crate) struct Dialog {
     reveal_row: Option<usize>,
     opening_defaults: Option<ExportDefaults>,
 }
-pub(crate) fn logos(ui:&mut egui::Ui, logos:&mut sleufbase_rust::template_branding::Logos) {
-    ui.collapsing("Logo's op de bladen",|ui| {
-        for (label,path) in [("Techbase-logo",&mut logos.techbase),("Opdrachtgeverlogo",&mut logos.client)] {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                if ui.button("Kiezen…").clicked() {
-                    if let Some(chosen)=rfd::FileDialog::new().add_filter("Afbeeldingen",&["png","jpg","jpeg"]).pick_file() {*path=Some(chosen);}
+pub(crate) fn logos(
+    ui: &mut egui::Ui, logos: &mut sleufbase_rust::template_branding::Logos,
+    choices: &[crate::ui_preferences::LogoChoice],
+    fields: &mut sleufbase_rust::template_metadata::TitleFields,
+) {
+    ui.collapsing("Logo's op de bladen", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Techbase-logo");
+            if ui.button("Kiezen…").clicked() {
+                if let Some(chosen) = rfd::FileDialog::new().add_filter("Afbeeldingen", &["png", "jpg", "jpeg"]).pick_file() {
+                    logos.techbase = Some(chosen);
                 }
-                if path.is_some() && ui.small_button("Verwijderen").clicked() {*path=None;}
-            });
-            if let Some(path)=path {ui.small(path.display().to_string());}
+            }
+            if logos.techbase.is_some() && ui.small_button("Verwijderen").clicked() { logos.techbase = None; }
+        });
+        let previous_client = logos.client.clone();
+        crate::ui_preferences::client_logo_selector(ui, &mut logos.client, choices);
+        if logos.client != previous_client { fields.project_client = None; }
+        crate::ui_preferences::sync_client_title(fields, &logos.client, choices);
+        if let Some(code) = &fields.project_client {
+            ui.small(if code.is_empty() { "Bladtitel: PROJECTNR.:".into() } else { format!("Bladtitel: PROJECTNR. {code}:") });
         }
     });
 }
@@ -194,7 +216,7 @@ pub(crate) fn title_fields(ui: &mut egui::Ui, fields: &mut sleufbase_rust::templ
                 ("Status", &mut fields.status),
                 ("Versie", &mut fields.version),
                 ("Referentie Tekeningen", &mut fields.reference_drawings),
-                ("ProjectNr.BGM", &mut fields.project_number),
+                ("Projectnummer", &mut fields.project_number),
                 ("TEK.NR.", &mut fields.drawing_number),
             ]);
         })
@@ -364,6 +386,11 @@ impl Dialog {
         self.opening_defaults = Some(defaults);
         Ok(self)
     }
+    pub(crate) fn refresh_logo_choices(&mut self, preferences: &sleufbase_rust::settings_compat::ExportPreferences) {
+        if let Some(defaults) = &mut self.opening_defaults {
+            defaults.logo_choices = crate::ui_preferences::logo_choices(preferences);
+        }
+    }
     fn sync_controls(&mut self) {
         let rows = self
             .state
@@ -530,7 +557,8 @@ pub(crate) fn show(
         ui.label("De exportdatum wordt automatisch op ieder gebruikt blad ingevuld (dd-mm-jjjj).");
         font_folders(ui, &mut d.state.font_directories);
         server_mode(ui, &mut d.state.server_mode);
-        logos(ui, &mut d.state.logos);
+        let choices = d.opening_defaults.as_ref().map(|defaults| defaults.logo_choices.as_slice()).unwrap_or(&[]);
+        logos(ui, &mut d.state.logos, choices, &mut d.state.title_fields);
 
 
         ui.separator();

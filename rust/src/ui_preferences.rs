@@ -17,8 +17,8 @@ pub(super) fn fields(ui:&mut egui::Ui,preferences:&mut ExportPreferences){
         ui.checkbox(&mut preferences.template_clip_cross_section_markers_to_profile,"Objectmarkers binnen profiel houden");
         ui.horizontal(|ui|{ui.label("Markerdiameter (m)");ui.add(egui::DragValue::new(&mut preferences.template_cross_section_marker_diameter).range(0.005..=0.2).speed(0.001));});
         ui.horizontal(|ui|{ui.label("Diametertekst (leeg = Ø)");ui.text_edit_singleline(&mut preferences.template_cross_section_diameter_text);});
-        egui::ComboBox::from_label("Opdrachtgeverlogo").selected_text(preferences.template_client_logo_preset.clone()).show_ui(ui,|ui|{for (key,label) in [("","Geen"),("brabant_water","Brabant Water"),("enexis","Enexis"),("wml","WML"),("hurkmans","Hurkmans groep"),("hanab","Hanab"),("bgm","BGM"),("apk","APK"),("custom","Eigen bestand")]{ui.selectable_value(&mut preferences.template_client_logo_preset,key.into(),label);}});
-        if preferences.template_client_logo_preset=="custom"{ui.horizontal(|ui|{ui.text_edit_singleline(&mut preferences.template_client_logo_path);if ui.button("Logo kiezen…").clicked(){if let Some(path)=rfd::FileDialog::new().add_filter("Afbeelding",&["png","jpg","jpeg"]).pick_file(){preferences.template_client_logo_path=path.to_string_lossy().into_owned();}}});}
+        client_logo_default(ui, preferences);
+        ui.small("Opdrachtgeverslogo's toevoegen en beheren: Instellingen > DXF-export.");
     });
 }
 fn assets()->Option<PathBuf>{
@@ -27,13 +27,94 @@ fn assets()->Option<PathBuf>{
     roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets"));
     roots.into_iter().find(|p|p.join("template_logos").is_dir())
 }
+#[derive(Clone)]
+pub(crate) struct LogoChoice {
+    pub key: String,
+    pub label: String,
+    pub path: Option<PathBuf>,
+    pub client_code: Option<String>,
+}
+fn logo_directory() -> PathBuf {
+    assets().unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets"))
+        .join("template_logos")
+}
+pub(crate) fn logo_choices(preferences: &ExportPreferences) -> Vec<LogoChoice> {
+    let directory = logo_directory();
+    let mut choices = vec![LogoChoice { key: String::new(), label: "Geen".into(), path: None, client_code: Some(String::new()) }];
+    for &(key, label, code, file) in sleufbase_rust::client_logos::BUILTIN_LOGOS {
+        choices.push(LogoChoice {
+            key: key.into(), label: label.into(),
+            path: Some(directory.join(file)), client_code: Some(code.into()),
+        });
+    }
+    for logo in &preferences.template_client_logos {
+        choices.push(LogoChoice { key: logo.preset(), label: format!("{} (eigen)", logo.name.trim()), path: Some(logo.path.clone()), client_code: Some(logo.effective_code()) });
+    }
+    if !preferences.template_client_logo_path.trim().is_empty() {
+        let path = PathBuf::from(&preferences.template_client_logo_path);
+        let client_code = choices.iter().find(|choice| choice.path.as_ref() == Some(&path))
+            .and_then(|choice| choice.client_code.clone()).or_else(|| preferences.template_client_logo_code.clone());
+        choices.push(LogoChoice { key: "custom".into(), label: "Eerder gekozen eigen logo".into(),
+            path: Some(path), client_code });
+    }
+    choices
+}
+pub(crate) fn client_logo_default(ui: &mut egui::Ui, preferences: &mut ExportPreferences) {
+    let choices = logo_choices(preferences);
+    let selected = choices.iter().find(|choice| choice.key == preferences.template_client_logo_preset)
+        .map_or("Onbekend logo", |choice| choice.label.as_str());
+    ui.label("Standaard opdrachtgeverlogo");
+    egui::ComboBox::from_id_salt("settings-client-logo")
+        .width(ui.available_width().clamp(80., 300.))
+        .truncate().selected_text(selected).show_ui(ui, |ui| {
+            ui.set_width(ui.available_width().min(300.));
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            for choice in &choices {
+                ui.selectable_value(&mut preferences.template_client_logo_preset, choice.key.clone(), &choice.label);
+            }
+        });
+}
+pub(crate) fn client_logo_selector(ui: &mut egui::Ui, path: &mut Option<PathBuf>, choices: &[LogoChoice]) {
+    ui.label("Opdrachtgeverlogo");
+    let selected = choices.iter().find(|choice| choice.path.as_ref() == path.as_ref())
+        .map(|choice| choice.label.clone()).unwrap_or_else(|| {
+            path.as_ref().and_then(|path| path.file_name())
+                .map_or_else(|| "Geen".into(), |name| format!("Eigen logo: {}", name.to_string_lossy()))
+        });
+    egui::ComboBox::from_id_salt("template-client-logo")
+        .width(ui.available_width().clamp(80., 300.))
+        .truncate().selected_text(&selected).show_ui(ui, |ui| {
+            ui.set_width(ui.available_width().min(300.));
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            // A previously saved custom path remains selectable when it is not
+            // part of the current catalog. Opening the dialog never loses it.
+            if path.is_some() && !choices.iter().any(|choice| choice.path.as_ref() == path.as_ref()) {
+                let current = path.clone();
+                ui.selectable_value(path, current, &selected);
+            }
+            for (index, choice) in choices.iter().enumerate() {
+                if !choices[..index].iter().any(|previous| previous.path == choice.path) {
+                    ui.selectable_value(path, choice.path.clone(), &choice.label);
+                }
+            }
+        });
+    ui.small("Logo toevoegen of beheren: Instellingen > DXF-export > Opdrachtgeverslogo's.");
+}
+pub(crate) fn sync_client_title(
+    fields: &mut sleufbase_rust::template_metadata::TitleFields,
+    path: &Option<PathBuf>, choices: &[LogoChoice],
+) {
+    if let Some(choice) = choices.iter().find(|choice| choice.path == *path) {
+        if let Some(code) = &choice.client_code { fields.project_client = Some(code.clone()); }
+    }
+}
 pub(super) fn logos(preferences:&ExportPreferences)->Logos{
-    let directory=assets().map(|p|p.join("template_logos"));
-    let techbase=directory.as_ref().map(|p|p.join("techbase_full.png")).filter(|p|p.is_file());
-    let client=match preferences.template_client_logo_preset.as_str(){
-        ""=>None,"custom"=>(!preferences.template_client_logo_path.is_empty()).then(||PathBuf::from(&preferences.template_client_logo_path)),
-        preset=>directory.map(|p|p.join(format!("{preset}.{}",if matches!(preset,"hanab"|"wml"){ "jpg" }else{"png"}))),
-    };Logos{techbase,client}
+    let directory=logo_directory();
+    let techbase=Some(directory.join("techbase_full.png")).filter(|p|p.is_file());
+    let client=logo_choices(preferences).into_iter()
+        .find(|choice|choice.key==preferences.template_client_logo_preset)
+        .and_then(|choice|choice.path);
+    Logos{techbase,client}
 }
 pub(super) fn apply_order_defaults(state:&mut sleufbase_rust::template_order::State,settings:&MigratedSettings){
     state.overview_settings=sleufbase_rust::cadastral_overview::Settings::from_settings(settings).expect("validated project export settings");
@@ -46,7 +127,11 @@ pub(super) fn apply_order_defaults(state:&mut sleufbase_rust::template_order::St
     state.paired=p.template_generate_reverse_cross_section_sheet;
     state.show_reference=p.template_show_profile_direction;state.avoid_collisions=p.template_avoid_multileader_collisions;state.marker_diameter=p.template_cross_section_marker_diameter;
     state.use_custom_maaiveld=p.template_enable_maaiveld_edit_points;state.clip_markers=p.template_clip_cross_section_markers_to_profile;state.diameter_prefix=p.template_cross_section_diameter_text.clone();
-    state.auto_bgt=settings.template_auto_fill_bgt_fysiek_voorkomen;state.label_gap=settings.dxf_label_gap;state.logos=logos(p);
+    state.auto_bgt=settings.template_auto_fill_bgt_fysiek_voorkomen;state.label_gap=settings.dxf_label_gap;
+    let next_logos=logos(p);
+    if state.logos.client!=next_logos.client { state.title_fields.project_client=None; }
+    state.logos=next_logos;
+    sync_client_title(&mut state.title_fields, &state.logos.client, &logo_choices(p));
 }
 
 #[cfg(test)]

@@ -42,6 +42,10 @@ pub struct ExportPreferences {
     pub cadastral_template_path:String,
     pub template_client_logo_preset:String,
     pub template_client_logo_path:String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub template_client_logo_code:Option<String>,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub template_client_logos:Vec<crate::client_logos::ClientLogo>,
     #[serde(default,skip_serializing_if="crate::template_branding::ContactDetails::is_default")]
     pub template_contact:crate::template_branding::ContactDetails,
     pub template_include_cross_sections:bool,
@@ -58,7 +62,7 @@ impl Default for ExportPreferences {
         dxf_trench_export_mode:"centerline".into(),include_tiffs_in_dxf_export:false,
         dxf_centerline_color:"#000000".into(),dxf_label_color:"#000000".into(),
         cadastral_template_path:String::new(),template_client_logo_preset:"bgm".into(),
-        template_client_logo_path:String::new(),template_contact:Default::default(),template_include_cross_sections:true,
+        template_client_logo_path:String::new(),template_client_logo_code:None,template_client_logos:Vec::new(),template_contact:Default::default(),template_include_cross_sections:true,
         template_generate_reverse_cross_section_sheet:false,template_show_profile_direction:true,
         template_enable_maaiveld_edit_points:true,template_avoid_multileader_collisions:true,
         template_clip_cross_section_markers_to_profile:true,
@@ -89,6 +93,8 @@ impl ExportPreferences {
     }
     pub fn validate(&self)->Result<(),String>{
         self.template_contact.validate()?;
+        crate::client_logos::validate(&self.template_client_logos)?;
+        if let Some(code)=&self.template_client_logo_code { crate::client_logos::validate_code(code)?; }
         if self.cadastral_template_path.len()>32768||self.template_client_logo_path.len()>32768||self.template_cross_section_diameter_text.len()>32768||self.template_client_logo_preset.len()>256
             || !self.template_cross_section_marker_diameter.is_finite()||!(0.005..=0.2).contains(&self.template_cross_section_marker_diameter)
             || !matches!(self.dxf_trench_export_mode.as_str(),"centerline"|"polygon"|"none")
@@ -277,6 +283,14 @@ pub fn with_project_overrides(base:&MigratedSettings,payload:&Value)->Result<Mig
     let fields=preferences.as_object_mut().unwrap();
     for (key,value) in source{if fields.contains_key(key)||key=="template_contact"{fields.insert(key.clone(),value.clone());}}
     out.export_preferences=ExportPreferences::from_legacy(&preferences);
+    out.export_preferences.template_client_logos=base.export_preferences.template_client_logos.clone();
+    if !source.contains_key("template_client_logo_preset") {
+        out.export_preferences.template_client_logo_preset=base.export_preferences.template_client_logo_preset.clone();
+    }
+    if out.export_preferences.template_client_logo_preset=="custom"
+        && out.export_preferences.template_client_logo_path==base.export_preferences.template_client_logo_path {
+        out.export_preferences.template_client_logo_code=base.export_preferences.template_client_logo_code.clone();
+    }
     if let Some(contact)=source.get("template_contact") {
         let mut effective=base.export_preferences.template_contact.clone();
         effective.apply_legacy(contact);

@@ -212,11 +212,16 @@ impl SleufBaseApp {
         self.dirty|=previous!=self.project_view.selected_tiff;
     }
     pub(super) fn project_export_settings(&self)->Result<MigratedSettings,String>{
-        if let Some(settings)=&self.project_settings{settings.validate()?;return Ok(settings.clone());}
-        if let Some(value)=self.legacy_archive.as_ref().and_then(|a|a.original.get("template_export_settings")) {
-            return settings_compat::with_project_overrides(&self.migrated_settings,value);
-        }
-        self.migrated_settings.validate()?;Ok(self.migrated_settings.clone())
+        let mut settings = if let Some(settings) = &self.project_settings {
+            settings.clone()
+        } else if let Some(value) = self.legacy_archive.as_ref().and_then(|a| a.original.get("template_export_settings")) {
+            settings_compat::with_project_overrides(&self.migrated_settings, value)?
+        } else { self.migrated_settings.clone() };
+        sleufbase_rust::client_logos::apply_global_catalog(
+            &mut settings.export_preferences, &self.migrated_settings.export_preferences,
+        );
+        settings.validate()?;
+        Ok(settings)
     }
 }
 
