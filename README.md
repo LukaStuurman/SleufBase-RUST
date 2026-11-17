@@ -1,61 +1,57 @@
 # SleufBase Rust
 
-Native Rust-versie van SleufBase voor Windows. De desktopapp heeft geen Python-runtime nodig.
+SleufBase Rust is een Windows-app voor proefsleuven, kabels en leidingen. Je brengt KickTheMap-jobs, GeoTIFF-beelden, KLIC-tekeningen, marXact-metingen en zelf getekende proefsleuven samen op één kaart. Daarna maak je kaarten, DXF-sjabloontekeningen en discipline-overzichten. De desktopapp heeft geen Python-installatie nodig.
 
-De code staat nu in deze zelfstandige repository. **Dit is een migratiepreview:**
-publicatie betekent niet dat alle oorspronkelijke functies en praktijksituaties
-volledig zijn geaccepteerd. Zie [de overdracht en testresultaten](rust/HANDOFF_2026-10-26.md)
-en [de volledige acceptatievoorwaarden](rust/PARITY.md).
-De [browsercontroles](rust/VERIFICATION_2026-10-26_CONTROLS.md) en
-[parallelle exportvoorbereiding met PNG-herstel](rust/VERIFICATION_2026-10-26_ASSETS.md)
-beschrijven de aanvullende tests en opgeloste fouten.
+## Downloaden
 
-De export ondersteunt een projectnaam en vult de bladdatum automatisch in.
-Cyclomedia-kaartachtergronden en het StreetSmart-venster zijn op verzoek verwijderd.
-Ook de Gemma-AI-functie is verwijderd. Handmatig maaiveldteksten en lijnkleuren
-invullen en AHN-hoogtes aanvullen blijven beschikbaar.
+- [Windows-installer](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-Setup.exe): installeren en bijwerken via de installatiewizard.
+- [Portable ZIP](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-portable.zip): volledig uitpakken en `sleufbase-rust.exe` starten.
+- [Laatste release](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest): wijzigingsnotities en SHA-256-controlebestanden.
 
-## Downloaden en starten
+Sluit SleufBase voordat je bijwerkt. Lees [installeren, bijwerken en portable gebruik](rust/PORTABLE.md) voor uitleg over de bestanden, WebView2 en het bewaren van instellingen.
 
-Download de [Windows-installer](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-Setup.exe)
-of de [portable ZIP](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest/download/SleufBase-Rust-portable.zip)
-van de [laatste release](https://github.com/LukaStuurman/SleufBase-RUST/releases/latest).
-Sluit SleufBase voor het bijwerken. Pak bij de portable versie de volledige ZIP uit
-en start `sleufbase-rust.exe`.
-Ontwikkelbuilds staan bij [Actions](https://github.com/LukaStuurman/SleufBase-RUST/actions)
-in de workflow **Rust Windows**.
-Zie [de gebruiksinstructies](rust/PORTABLE.md).
+## Handleidingen
 
-## Dagelijks gebruik
+De **[gebruikershandleiding](rust/HANDLEIDING.md)** beschrijft de bediening stap voor stap, inclusief de recentere kaart-, job-, invoer- en exportfuncties. In het programma open je de lokale uitleg met **Info** of **F1**.
 
-- **KickTheMap:** open **KickTheMap → Inloggen**, meld je aan en laat **Inloggegevens onthouden en automatisch aanmelden** aangevinkt als je de aanmelding op dit apparaat wilt bewaren. Een bewaarde aanmelding wordt bij het starten op de achtergrond hersteld. Bij een verplichte beveiligingscontrole gebruik je de ingebouwde websiteweergave. **Uitloggen** schakelt automatisch aanmelden uit. Bij een tijdelijke fout tijdens **Vernieuwen** blijven je sessie en joblijst behouden; probeer opnieuw te vernieuwen. Het accountvenster blijft tijdens vernieuwen en downloaden de verbonden status tonen. De uitleg bij **Onthouden** volgt je keuze; uitgeschakeld geldt de volgende geslaagde aanmelding alleen voor die sessie.
-- **Kabels en leidingen in KickTheMap:** selecteer één live job in **KickTheMap → Jobs** en kies **Open in KickTheMap-browser**. De job opent binnen SleufBase met je huidige aanmelding. Teken of selecteer een punt of lijn in de website en open de eigenschappen. Het Rust-paneel ernaast biedt type, materiaal, diameter, bundelaantal en dekband; typen en materialen volgen de projectinstellingen en eigen waarden blijven mogelijk. **Vul gegevens in** vult het geselecteerde formulier; klik daarna op **Opslaan** in KickTheMap. **Gebruik vorige invoer** helpt bij meerdere vergelijkbare objecten. **Objecten opnieuw laden** haalt na het opslaan een verse kopie op en vervangt de bijbehorende lokale objectlaag en gekoppelde profielgegevens. **Terug naar jobs** opent de joblijst; terugkeer naar dezelfde job behoudt de geopende website zolang de aanmelding en job nog geldig zijn.
-- **Virtuele proefsleuf:** teken de sleuf op de kaart en open de editor. Klik in de doorsnede om een positie te kiezen, vul type en afmetingen in en kies **Kabel/leiding toevoegen**. Met **Toevoegen en herhalen** bewaar je de kabel en zet je de eigenschappen klaar voor de volgende; kies daarna een nieuwe positie. Nummers en kleuren koppelen de doorsnede aan de lijst. **Invoer wissen** of **Wijzigingen herstellen** herstelt alleen het actieve formulier. Typen en materialen volgen de projectinstellingen. **Opslaan in project** bewaart de volledige sleuf, inclusief actieve invoer. **Sluiten zonder opslaan** verwerpt het concept.
-- **DXF-sjabloon:** kies projectgegevens en een nieuwe uitvoer-DXF, vink de gewenste sleuven aan en controleer de samenvatting. Iedere regel toont het echte exportvak en uiteindelijke label; **Niet in export** telt niet mee en een leeg vak behoudt zijn plek. De oranje regelselectie is bedoeld om regels te verplaatsen of samen aan te passen; **Meenemen** bepaalt de export. De standaardkaart gebruikt een luchtfoto; offline wordt een witte achtergrond met al geladen gegevens gebruikt. Exacte schaal, resolutie, eigen sjabloon, logo's en lettertypen staan onder **Meer exportinstellingen**. Bronkeuze, profielschaal, foto's en opmerkingen zijn per sleuf beschikbaar.
+| Ik wil… | Waar vind ik de uitleg? |
+| --- | --- |
+| Snel een project opbouwen | [Snel beginnen](rust/HANDLEIDING.md#1-snel-beginnen) |
+| Navigeren, lagen kiezen of kabelinformatie bekijken | [Kaart en lagen](rust/HANDLEIDING.md#2-het-hoofdscherm-en-de-kaart) en [kabelinformatie](rust/HANDLEIDING.md#5-kabelinformatie-en-lijnselectie) |
+| Jobs laden of op de jobskaart selecteren | [Jobs zoeken en laden](rust/HANDLEIDING.md#7-jobs-zoeken-selecteren-en-laden) |
+| Kabelgegevens op de KickTheMap-webpagina invullen | [Apart KickTheMap-jobvenster](rust/HANDLEIDING.md#9-kabels-en-leidingen-in-de-kickthemap-browser) |
+| marXact-namen koppelen of een virtuele sleuf bewerken | [marXact](rust/HANDLEIDING.md#11-marxact-metingen-importeren) en [virtuele proefsleuven](rust/HANDLEIDING.md#12-virtuele-proefsleuven-maken-en-bewerken) |
+| Een DXF met kaarten en profielen maken | [DXF-sjabloonexport](rust/HANDLEIDING.md#15-dxf-sjabloonexport) |
+| Een eigen sjabloon gebruiken of een back-up herstellen | [Eigen sjabloon](rust/HANDLEIDING.md#17-eigen-sjabloon-stempel-en-logos) en [bewaren en herstellen](rust/HANDLEIDING.md#19-instellingen-projecten-en-back-ups) |
 
-## Zelf bouwen
+## De dagelijkse werkwijze
 
-Installeer Rust stable op Windows met de benodigde C++-buildtools. Voer vanuit
-deze repository uit:
+1. **Gegevens laden.** Gebruik **KickTheMap → Jobs**, **Acties → Laad GeoTIFF(s)**, **Acties → Laad KLIC DXF** of **marXact → marXact import**.
+2. **Op de kaart bekijken.** Kies de achtergrond boven de kaart. Dubbelklik op een proefsleuf of overlay om ernaartoe te zoomen. De vinkjes bepalen de zichtbaarheid; **Acties → Zoom naar extent** toont het overzicht van zichtbare gegevens.
+3. **Gegevens aanvullen.** Open een job in het aparte KickTheMap-venster, bewerk een virtuele sleuf of voeg beginpunten, referenties, maaiveldinformatie en opmerkingen toe.
+4. **Bewaren.** Gebruik **Acties → Project opslaan**. Het opslaan van een sleuf in het project en het opslaan van het projectbestand zijn afzonderlijke stappen.
+5. **Exporteren.** Gebruik **Acties → Proefsleuven sjabloon DXF**. Controleer **Meenemen**, bronkoppelingen, volgorde, PS-nummer, vrije varianttekst en schaal. Bewaar bij het delen de DXF en de bijbehorende afbeeldingen samen.
+
+Het KickTheMap-jobvenster heeft kabel- en leidingvelden **in de webpagina zelf**. Sla je wijzigingen op in KickTheMap en gebruik daarna **Objecten opnieuw laden** in Jobs om de lokale projectgegevens bij te werken. Dubbelklikken op een jobregel laadt de gegevens; dubbelklikken op een punt in de jobskaart opent het jobvenster. De handleiding legt deze bediening verder uit.
+
+## Voor ontwikkeling
+
+[Technische documentatie en historische migratienotities](rust/README.md) beschrijven de opbouw en eerdere vergelijkingen. De gedateerde rapporten leggen resultaten van hun eigen bronrevisie vast; ze vervangen de actuele gebruikershandleiding niet.
+
+Zelf bouwen op Windows met Rust stable en de C++-buildtools:
 
 ```powershell
-cargo test --locked --manifest-path rust/Cargo.toml --all-targets --jobs 2
 cargo build --locked --release --manifest-path rust/Cargo.toml --bin sleufbase-rust
 .\rust\target\release\sleufbase-rust.exe
 ```
 
-De map `assets/template_logos` moet naast de executable staan voor de standaardlogo's.
-De CI maakt hiervoor een volledig pakket met licenties en SHA-256-controlebestand.
-Python is alleen nodig voor ontwikkelhulpmiddelen, zoals pakket- en uitvoercontroles.
+Voor een compleet pakket zijn ook de meegeleverde logo's en licentiebestanden nodig. De Windows-workflow maakt de installer en de portable ZIP. Ontwikkelbuilds staan bij [Actions](https://github.com/LukaStuurman/SleufBase-RUST/actions).
 
-## Inhoud
+## Repository
 
-- `rust/`: applicatie, tests, oorspronkelijke referentie-uitkomsten en installerbron.
+- `rust/`: applicatie, gebruikershandleiding, technische documentatie, tests en installerbron.
 - `assets/`: DXF-sjabloon, logo's en iconen.
-- `tools/`: pakketcontrole, browserregressies en vergelijking van echte exportuitvoer.
-- `SOURCE_MANIFEST.json`: herkomst en SHA-256 bij de eerste bronoverdracht;
-  daaropvolgende verbeteringen zijn afzonderlijk in de Git-geschiedenis vastgelegd.
+- `tools/`: bouw-, pakket- en uitvoerhulpmiddelen.
+- `SOURCE_MANIFEST.json`: herkomst en controlesommen bij de oorspronkelijke bronoverdracht.
 
-De oorspronkelijke Python-bron en onafhankelijke vergelijkingshulpmiddelen blijven
-beschikbaar in [SleufBase](https://github.com/LukaStuurman/SleufBase).
-Historische rapporten onder `rust/` verwijzen naar die bronrepository en hun eigen revisie.
+De oorspronkelijke Python-bron staat in [SleufBase](https://github.com/LukaStuurman/SleufBase). SleufBase Rust heeft eigen projectopslag en een eigen installatie. Ondersteuning van een oudere projectindeling betekent niet dat iedere functie van beide apps identiek is.

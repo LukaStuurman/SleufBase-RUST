@@ -1,16 +1,20 @@
-# SleufBase Rust (0.1.0-preview)
+# SleufBase Rust — technische documentatie
 
-Dit is een aparte native Rust-desktopapp naast de bestaande SleufBase v0.3.62 (Python).
-De Rust-versie is nog niet productiegelijkwaardig aan SleufBase.
+Voor de actuele bediening gebruik je de [gebruikershandleiding](HANDLEIDING.md) of **Info / F1** in het programma. [Installeren, bijwerken en portable gebruik](PORTABLE.md) beschrijft de Windows-downloads, WebView2 en de opslaglocaties. De [hoofdpagina](../README.md) bevat de actuele downloadlinks.
 
-De zelfstandige Rust-broncode wordt overgedragen naar
-[LukaStuurman/SleufBase-RUST](https://github.com/LukaStuurman/SleufBase-RUST).
-De overdracht is een migratiepreview. De volledige acceptatievoorwaarden in
-[PARITY.md](PARITY.md) blijven vereist; zie [de overdracht](HANDOFF_2026-10-26.md).
+## Huidige toepassing
 
-De Gemma-AI-functie is op gebruikersverzoek verwijderd, inclusief het menu,
-analysevenster en de modelruntime. Handmatige maaiveldinvoer en AHN-aanvulling
-blijven beschikbaar; bestaande maaiveldteksten blijven in projecten bewaard.
+SleufBase Rust is de zelfstandige native Windows-app voor KickTheMap-jobs, GeoTIFFs, KLIC-DXF, marXact-metingen en virtuele proefsleuven. De werkkaart, kabelinformatie, gecombineerde DXF-sjabloonexport, instellingen en projectopslag hebben een eigen Rust-interface. De normale KickTheMap-aanmelding gebeurt in de app; jobs openen in een afzonderlijk websitevenster met kabel- en leidingvelden in de pagina.
+
+De actuele versie staat in `Cargo.toml` en in **Info**. Het bestaan van een release bewijst geen volledige gelijkheid met de oorspronkelijke Python-app; raadpleeg voor concrete werking de huidige broncode en de gebruikershandleiding.
+
+## Historische migratienotities
+
+De onderstaande tekst is bewaard als technisch werkdocument van de migratie vanaf de eerdere Python-versie. Vermeldingen van een preview, nog ontbrekende onderdelen, oude menunamen, oorspronkelijke testresultaten of voorgenomen vervolgstappen beschrijven die eerdere ontwikkelstand. Ze zijn geen actuele bedieningsinstructie of toezegging over de huidige release.
+
+Ook [PARITY.md](PARITY.md), de [overdracht](HANDOFF_2026-10-26.md), gedateerde verificatierapporten en fixturebeschrijvingen horen bij hun beschreven revisies. Nieuwe gebruikersstappen staan in [HANDLEIDING.md](HANDLEIDING.md); historische meet- en testgegevens hieronder zijn niet opnieuw uitgevoerd voor deze documentatie-update.
+
+---
 
 ## Wat er in deze preview zit
 

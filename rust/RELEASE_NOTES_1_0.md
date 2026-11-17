@@ -1,16 +1,24 @@
-## SleufBase Rust 1.0.21 voor Windows
+## SleufBase Rust 1.0.22 voor Windows
 
-### Variant-keuzepijl binnen het invoervak
+### Actuele Info en handleiding
 
-- In het gecombineerde DXF-sjabloonexportvenster krijgt de keuzepijl voor **Variant** eerst de ruimte die de knop werkelijk nodig heeft. Het tekstveld gebruikt de resterende breedte van dezelfde rij.
-- Daardoor overlapt de pijl de verticale scrollbar van het instellingenpaneel niet meer, ook wanneer het venster smaller wordt gemaakt.
-- Eigen varianttekst, de standaardvarianten en de optie **Automatisch (B/C/D...)** blijven beschikbaar.
+- De ingebouwde uitleg bevat nu 22 afzonderlijke onderwerpen voor onder meer de jobskaart, het aparte KickTheMap-jobvenster, handmatige GeoTIFF-vastlegging, kabelselectie, marXact-naamkoppelingen en de DXF-sjabloonexport.
+- Stappen en knopnamen sluiten aan op de huidige bediening. De uitleg verwijst niet meer naar de verwijderde TIFF-schuif, het oude Weergave-vak of het vroegere invoerpaneel naast KickTheMap.
+- De handleiding legt het verschil uit tussen dubbelklikken in de joblijst en op de jobskaart, opslaan op de KickTheMap-website en lokale objecten opnieuw laden, en regels selecteren tegenover Meenemen in de export.
+- Vrije varianttekst, standaardvarianten, eigen DXF-sjablonen, maaiveldgegevens, projectopslag en backupherstel hebben praktische instructies. Er zijn ook onderwerpen voor sneltoetsen en veelvoorkomende vragen.
 
-### DXF-sjabloonvensters verplaatsen
+### Handiger hulpvenster
 
-- Beide DXF-sjabloonexportvensters zijn weer aan de titelbalk te verslepen.
-- Het vaste middenanker is vervangen door een eenmalige beginpositie. Daarna blijft de gekozen positie bruikbaar tijdens verplaatsen en vergroten of verkleinen.
-- De begrensde inhoudsindeling uit versie 1.0.20 blijft behouden, zodat overlopende inhoud het venster niet steeds groter maakt. De vensters blijven begrensd tot het scherm.
+- Open de lokale handleiding met **Info** of **F1**. Zoeken doorzoekt ook de uitleg binnen de onderwerpen.
+- Het venster is te verplaatsen en te vergroten of verkleinen, met begrensde inhoud tegen vanzelf groeiende vensters. Bij een smaller venster gebruik je een onderwerpkeuzelijst.
+- Lange onderwerpnamen mogen over meerdere regels lopen. Bij een ander onderwerp of een aangepaste zoekterm begint de uitleg bovenaan.
+- Met **Uitleg kopiëren** kopieer je het huidige onderwerp als gewone tekst om te bewaren of te delen.
+
+### Bijgewerkte gebruikersdocumentatie
+
+- De [Nederlandstalige gebruikershandleiding](https://github.com/LukaStuurman/SleufBase-RUST/blob/v1.0.22/rust/HANDLEIDING.md) bundelt de dagelijkse workflows in 21 hoofdstukken, met inhoudslinks en probleemoplossing.
+- De startpagina en installatie-instructies verwijzen naar de huidige downloads en bediening.
+- Eerdere technische migratie-aantekeningen blijven herkenbaar als historische documentatie bewaard.
 
 ### Publicatie zonder tests
 
