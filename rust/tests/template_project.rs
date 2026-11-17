@@ -258,10 +258,17 @@ fn virtual_marxact_sheet_exports_with_builtin_template_and_no_external_geotiff()
         }],
         ..Options::default()
     };
-    let request=template_project::build(
+    let mut request=template_project::build(
         &options,&[],&[],&[trench.clone()],&[],None,&reference.rules,
         &Control::default(),
     ).unwrap();
+    request.settings.export_date=Some([2026,11,17]);
+    let font=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/map-export/Hack-Regular.ttf");
+    for slot in request.slots.iter_mut().flatten() {
+        slot.map_source.as_mut().unwrap().fonts=Some(sleufbase_rust::map_text::Paths {
+            regular:font.clone(),bold:font.clone(),
+        });
+    }
     let slot=request.slots[0].as_ref().unwrap();
     assert!(slot.tiff_png.as_os_str().is_empty());
     assert!(slot.tiff_source.is_none());
@@ -280,7 +287,13 @@ fn virtual_marxact_sheet_exports_with_builtin_template_and_no_external_geotiff()
     let synthetic=image::open(photo).unwrap().to_rgba8();
     assert!(synthetic.pixels().any(|p|p[3]==0));
     assert!(synthetic.pixels().any(|p|p[0]==0&&p[3]==255));
-    assert!(synthetic.pixels().any(|p|p[2]==235&&p[3]>=235));
+    let water_rule=sleufbase_rust::matching_rule("WATER",&request.rules)
+        .expect("the fixture's WATER object must match an active utility rule");
+    assert_eq!(water_rule.color_aci,5,"the fixture uses ACI 5 for Waterleiding");
+    assert!(synthetic.pixels().any(|p|p.0[..3]==[0,0,255]&&p[3]>=235),
+        "the exported water object must use the active rule's full RGB color");
+    assert!(!synthetic.pixels().any(|p|p.0[..3]==[37,99,235]&&p[3]>=235),
+        "the exported water object must not retain the old fixed blue fallback");
     assert!(export.published.assets.join("slot00001_kaart.png").is_file());
     let doc=sleufbase_rust::dxf_document::Document::load(
         &output,&std::sync::atomic::AtomicBool::new(false)).unwrap();
