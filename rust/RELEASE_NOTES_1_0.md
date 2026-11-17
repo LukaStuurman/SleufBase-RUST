@@ -1,4 +1,4 @@
-## SleufBase Rust 1.0.23 voor Windows
+## SleufBase Rust 1.0.24 voor Windows
 
 ### Rustige uitlijning van de Info-onderwerpen
 

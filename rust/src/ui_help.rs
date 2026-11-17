@@ -103,7 +103,8 @@ fn topic_list(ui: &mut egui::Ui, matches: &[usize], selected: &mut usize, height
                         // row keeps every wrapped title at the same left inset.
                         let response = ui.allocate_ui_with_layout(
                             egui::vec2(width, height),
-                            egui::Layout::left_to_right(egui::Align::Center),
+                            egui::Layout::left_to_right(egui::Align::Center)
+                                .with_main_align(egui::Align::Min),
                             |ui| ui.add(egui::Button::new(galley)
                                 .selected(active)
                                 .fill(if active { ORANGE } else { Color32::WHITE })
