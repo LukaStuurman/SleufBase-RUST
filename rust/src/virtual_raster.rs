@@ -87,11 +87,19 @@ pub fn prepare_for_template(source:&Source,cancel:&AtomicBool)
 pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&AtomicBool)
     ->Result<crate::template_raster::Prepared,String>
 {
+    prepare_for_template_direction_with_rules(source,reverse,&[],cancel)
+}
+/// Template exports use the active object rules just like the main map. A
+/// measured/custom point color still takes precedence; source pixels are never
+/// recolored and the stored trench is not changed by export.
+pub fn prepare_for_template_direction_with_rules(source:&Source,reverse:bool,rules:&[crate::Rule],cancel:&AtomicBool)
+    ->Result<crate::template_raster::Prepared,String>
+{
     input::check(cancel)?;
     let info=layout(&source.trench,source.quality)?;
     // Print detail uses stronger cable strokes without changing the general
     // virtual-raster contract used by previews and independent map sources.
-    let image=render_with_style(source,cancel,true,true)?;
+    let image=render_with_style(source,cancel,true,true,rules)?;
     let transform=info.transform();
     let start=[source.trench.start.x,source.trench.start.y];
     let end=[source.trench.end.x,source.trench.end.y];
@@ -110,15 +118,20 @@ pub fn prepare_for_template_direction(source:&Source,reverse:bool,cancel:&Atomic
 /// Render the original virtual-raster appearance at the requested resolution.
 /// Template export explicitly selects stronger strokes in its detail pane.
 pub fn render(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
-    render_with_style(source,cancel,false,true)
+    render_with_rules(source,&[],cancel)
+}
+/// Resolve missing utility colors from the effective project object rules.
+/// The legacy renderer remains available when no rule context is supplied.
+pub fn render_with_rules(source:&Source,rules:&[crate::Rule],cancel:&AtomicBool)->Result<RgbaImage,String>{
+    render_with_style(source,cancel,false,true,rules)
 }
 /// Template maps draw the boundary once at the final page resolution. Omitting
 /// it here prevents a preview-width border from growing when this raster zooms.
 /// The polygon mask and all utility/dekband geometry remain unchanged.
-pub(crate) fn render_for_template_map(source:&Source,cancel:&AtomicBool)->Result<RgbaImage,String>{
-    render_with_style(source,cancel,false,false)
+pub(crate) fn render_for_template_map(source:&Source,rules:&[crate::Rule],cancel:&AtomicBool)->Result<RgbaImage,String>{
+    render_with_style(source,cancel,false,false,rules)
 }
-fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_border:bool)->Result<RgbaImage,String>{
+fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_border:bool,rules:&[crate::Rule])->Result<RgbaImage,String>{
     input::check(cancel)?;
     let t=&source.trench;
     let info=layout(t,source.quality)?;
@@ -170,7 +183,10 @@ fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_b
         let ((ax,ay),(bx,by))=crate::cross_section::object_segment_on_boundary(t,object,&border)
             .unwrap_or(((cx+vx*point_width,cy+vy*point_width),(cx-vx*point_width,cy-vy*point_width)));
         let a=pixel(info,ax,ay);let b=pixel(info,bx,by);
-        let color=display_rgb(&object.metadata).unwrap_or([37,99,235]);
+        let color=display_rgb(&object.metadata)
+            .or_else(||crate::matching_rule(&object.source_name,rules)
+                .map(|rule|crate::cad::aci_rgb(i32::from(rule.color_aci))))
+            .unwrap_or([37,99,235]);
         draw::line(&mut result,&[a,b],point_width_px,[color[0],color[1],color[2],235],cancel,&mut budget)?;
     }
     let polygon=border.iter().map(|&(x,y)|pixel(info,x,y)).collect::<Vec<_>>();

@@ -20,6 +20,7 @@ use crate::windows_job::Process as BrowserProcess;
 use std::process::Child as BrowserProcess;
 const ORIGIN:&str="https://www.my.kickthemap.com";
 const MAX_CDP_RESPONSE:usize=24*1024*1024;
+const BROWSER_SIGNIN_REQUIRED:&str="Het KickTheMap-jobvenster heeft geen actieve aanmelding.";
 #[derive(Clone,Debug)]
 pub struct BrowserCookie {
     pub name:String,
@@ -98,6 +99,22 @@ pub(crate) fn native_session_cookie_params(payload: &Value) -> Result<Vec<Value>
         }));
     }
     Ok(result)
+}
+
+fn verify_native_cookie_handoff(expected: &[Value], payload: &Value) -> Result<(), String> {
+    let received = payload["cookies"].as_array().filter(|items| items.len() <= 4096);
+    if received.is_some_and(|received| expected.iter().all(|cookie| {
+        let mut matches = received.iter().filter(|actual| actual["name"] == cookie["name"]);
+        matches.next().is_some_and(|actual| actual["value"] == cookie["value"]
+            && actual["domain"] == "www.my.kickthemap.com"
+            && actual["path"] == "/" && actual["secure"] == true && actual["httpOnly"] == true
+            && actual.get("partitionKey").is_none()
+            && actual["expires"].as_f64().is_none_or(|expires| expires <= 0.))
+            && matches.next().is_none()
+    })) { return Ok(()); }
+    // Never include cookie names or values in diagnostics. A successful CDP
+    // write alone does not prove that the page received the native session.
+    Err("De aanmelding kon niet naar het KickTheMap-jobvenster worden overgedragen. Probeer het venster opnieuw te openen.".into())
 }
 
 fn is_job_url(url: &reqwest::Url) -> bool {
@@ -341,6 +358,13 @@ impl Browser {
         crate::input::check(cancel)?;
         Ok(url)
     }
+    /// Reuse a verified document without reloading unfinished geometry. Only a
+    /// completed sign-in page permits a fresh native-session handoff.
+    pub fn open_job_with_native_session_hidden(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        let url = self.channel().open_verified_job_with_native_session(cookies, job_id, cancel)?;
+        crate::input::check(cancel)?;
+        Ok(url)
+    }
     /// Transfer the active native account into an owned temporary browser. The
     /// caller retains its existing SnapshotOwner; no browser identity is adopted.
     pub fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
@@ -439,9 +463,18 @@ impl BrowserChannel {
             if frame["id"] == load.frame_id && loader_matches {
                 if let Some(url) = frame["url"].as_str().and_then(|raw| reqwest::Url::parse(raw).ok()) {
                     if is_kickthemap_origin(&url) && matches!(url.path().trim_end_matches('/'), "/signin" | "/login") {
-                        return Err("De KickTheMap-sessie is verlopen. Meld je opnieuw aan.".into());
-                    }
-                    if url == load.url {
+                        // The frame tree can change before its JavaScript
+                        // document. Classify only the same, ready login page;
+                        // never infer that the independent native session died.
+                        let login = serde_json::to_string(url.as_str()).map_err(|_| "Ongeldige aanmeldlocatie")?;
+                        let ready = format!("(()=>{{return location.href==={login}&&document.readyState!=='loading';}})()");
+                        let result = self.command_until("Runtime.evaluate",
+                            json!({"expression":ready,"returnByValue":true}), Some(target), cancel, deadline, 64 * 1024);
+                        if result.as_ref().is_ok_and(|reply| reply["result"]["value"] == true) {
+                            return Err(BROWSER_SIGNIN_REQUIRED.into());
+                        }
+                        crate::input::check(cancel)?;
+                    } else if url == load.url {
                         let result = self.command_until("Runtime.evaluate",
                             json!({"expression":script,"returnByValue":true}), Some(target), cancel, deadline, 64 * 1024);
                         if result.as_ref().is_ok_and(|reply| reply["result"]["value"] == true) { return Ok(()); }
@@ -497,14 +530,29 @@ impl BrowserChannel {
         Ok(url.to_string())
     }
     fn open_verified_job(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        self.open_verified_job_until(job_id, cancel, Instant::now() + Duration::from_secs(60))
+    }
+    fn open_verified_job_until(&self, job_id: u64, cancel: &AtomicBool, deadline: Instant) -> Result<String, String> {
         crate::input::check(cancel)?;
         if job_id == 0 { return Err("Selecteer een geldige KickTheMap-job".into()); }
-        let deadline = Instant::now() + Duration::from_secs(60);
         let (target, url) = self.owned_target(cancel, deadline)?;
         self.current_page_ready(&target, &url, cancel, deadline)?;
         self.open_job_at(&target, job_id, Some(&url), cancel, deadline)
     }
+    fn open_verified_job_with_native_session(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        crate::input::check(cancel)?;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        match self.open_verified_job_until(job_id, cancel, deadline) {
+            Err(error) if error == BROWSER_SIGNIN_REQUIRED => {
+                self.prepare_authenticated_job_until(cookies, job_id, cancel, deadline)
+            }
+            result => result,
+        }
+    }
     fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        self.prepare_authenticated_job_until(cookies, job_id, cancel, Instant::now() + Duration::from_secs(60))
+    }
+    fn prepare_authenticated_job_until(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool, deadline: Instant) -> Result<String, String> {
         crate::input::check(cancel)?;
         if job_id == 0 { return Err("Selecteer een geldige KickTheMap-job".into()); }
         let mut cookies = native_session_cookie_params(cookies)?;
@@ -512,11 +560,16 @@ impl BrowserChannel {
             cookie.as_object_mut().unwrap().remove("domain");
             cookie["url"] = json!(format!("{ORIGIN}/"));
         }
-        let deadline = Instant::now() + Duration::from_secs(60);
         let (target, _) = self.owned_target(cancel, deadline)?;
         self.command_until("Page.stopLoading", json!({}), Some(&target), cancel, deadline, 64 * 1024)?;
-        self.command_until("Storage.clearCookies", json!({}), None, cancel, deadline, 64 * 1024)?;
-        self.command_until("Storage.setCookies", json!({"cookies":cookies}), None, cancel, deadline, 64 * 1024)?;
+        // Storage.* on the browser socket addresses its default context, which
+        // need not be the WebView's storage partition. Network.* on the owned
+        // page uses the exact cookie jar that will issue the next navigation.
+        self.command_until("Network.clearBrowserCookies", json!({}), Some(&target), cancel, deadline, 64 * 1024)?;
+        self.command_until("Network.setCookies", json!({"cookies":cookies}), Some(&target), cancel, deadline, 64 * 1024)?;
+        let received = self.command_until("Network.getCookies", json!({"urls":[format!("{ORIGIN}/")]}),
+            Some(&target), cancel, deadline, 1024 * 1024)?;
+        verify_native_cookie_handoff(&cookies, &received)?;
         let home = reqwest::Url::parse(&format!("{ORIGIN}/")).map_err(|_| "Ongeldige KickTheMap-accountlocatie")?;
         self.navigate_ready(&target, &home, true, cancel, deadline)?;
         self.open_job_at(&target, job_id, None, cancel, deadline)

@@ -705,6 +705,74 @@ fn double_clicking_a_physical_or_virtual_trench_fits_only_that_trench() {
         }
     }
 }
+
+#[test]
+fn double_clicking_job_and_drawing_overlays_fits_the_clicked_extent_without_changing_visibility() {
+    for drawing in [false,true] {
+        for visible in [false,true] {
+            let ctx=egui::Context::default();
+            let mut app=layer_app();
+            app.datasets.push(Dataset {
+                job_id:1,title:"Far away".into(),source_path:"far-away.json".into(),
+                features:vec![sleufbase_rust::Feature {
+                    object_name:"Reference".into(),source_name:"Reference".into(),
+                    geometry:Geometry::Point(Vertex{x:100000.,y:100000.,z:None}),
+                    attributes:Default::default(),
+                }],
+            });
+            let target;
+            let label;
+            let path;
+            if drawing {
+                path=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad-space/R2018-normal-ascii.dxf");
+                let mut overlay=load_dxf(&path).unwrap();
+                overlay.visible=visible;
+                target=overlay.bounds().unwrap();
+                label=path.file_name().unwrap().to_str().unwrap().to_owned();
+                app.overlays.push(overlay);
+            }else{
+                path=PathBuf::from("zoom-job.json");
+                let job=Dataset {
+                    job_id:2,title:"Zoomjob".into(),source_path:path.clone(),
+                    features:vec![sleufbase_rust::Feature {
+                        object_name:"Kabel".into(),source_name:"Kabel".into(),
+                        geometry:Geometry::Polyline(vec![
+                            Vertex{x:100.,y:200.,z:None},Vertex{x:120.,y:240.,z:None},
+                        ]),attributes:Default::default(),
+                    }],
+                };
+                target=Bounds::from_datasets(std::slice::from_ref(&job)).unwrap();
+                label="Job: Zoomjob (1 objecten)".to_owned();
+                app.datasets.push(job);
+                if !visible{app.project_view.hidden_object_layers.push(path.clone());}
+            }
+            frame(&mut app,&ctx,vec![]);
+            let out=frame(&mut app,&ctx,vec![]);
+            let before=app.project_view.camera.clone().unwrap();
+            let pos=label_position(&out,&label);
+            click(&mut app,&ctx,pos);
+            assert_eq!(app.project_view.camera.as_ref(),Some(&before),"single click must only select the overlay");
+            click(&mut app,&ctx,pos);
+            let after=app.project_view.camera.as_ref().unwrap();
+            assert!((after.center[0]-(target.min_x+target.max_x)/2.).abs()<1e-6);
+            assert!((after.center[1]-(target.min_y+target.max_y)/2.).abs()<1e-6);
+            assert!(after.meters_per_pixel<before.meters_per_pixel);
+            let viewport=app.navigation.viewport.unwrap();
+            assert!(viewport.min_x<=target.min_x&&viewport.max_x>=target.max_x);
+            assert!(viewport.min_y<=target.min_y&&viewport.max_y>=target.max_y);
+            assert_eq!(app.shell.overlay_selection.indices(),vec![1]);
+            if drawing {
+                assert_eq!(app.project_view.selected_dxf.as_ref(),Some(&path));
+                assert_eq!(app.overlays[0].visible,visible);
+            }else{
+                assert_eq!(app.selected,Some(1));
+                assert_eq!(!app.project_view.hidden_object_layers.contains(&path),visible);
+            }
+            assert_eq!(app.virtual_trenches.len(),2);
+        }
+    }
+}
+
 #[test]
 fn login_menu_opens_native_form_and_never_starts_browser() {
     let ctx=egui::Context::default();

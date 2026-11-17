@@ -37,9 +37,15 @@ fn scripted(replies: Vec<(&'static str, Value)>) -> (BrowserChannel, mpsc::Recei
             stream.set_nonblocking(false).unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
             stream.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
-            let mut socket = tungstenite::accept(stream).unwrap();
-            let request: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+            let mut endpoint = String::new();
+            let mut socket = tungstenite::accept_hdr(stream,
+                |request: &tungstenite::handshake::server::Request, response| {
+                    endpoint = request.uri().path().to_owned();
+                    Ok(response)
+                }).unwrap();
+            let mut request: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
             assert_eq!(request["method"], method);
+            request["fixture_endpoint"] = json!(endpoint);
             tx.send(request).unwrap();
             socket.send(Message::Text(json!({"id":1,"result":result}).to_string().into())).unwrap();
         }
@@ -77,8 +83,9 @@ fn native_account_opens_verified_job_only_after_new_documents_are_ready() {
     let (channel, requests, worker) = scripted(vec![
         ("Target.getTargets", targets(&format!("{ORIGIN}/signin"))),
         ("Page.stopLoading", json!({})),
-        ("Storage.clearCookies", json!({})),
-        ("Storage.setCookies", json!({})),
+        ("Network.clearBrowserCookies", json!({})),
+        ("Network.setCookies", json!({})),
+        ("Network.getCookies", json!({"cookies":[fixture_cookie()]})),
         ("Page.navigate", json!({"frameId":"frame","loaderId":"home-new"})),
         // The old home can have the right URL while navigation is still pending.
         ("Page.getFrameTree", frame(&home, "home-old")),
@@ -112,12 +119,17 @@ fn native_account_opens_verified_job_only_after_new_documents_are_ready() {
     assert_eq!(transferred["url"], home);
     assert_eq!(transferred["secure"], true);
     assert_eq!(transferred["httpOnly"], true);
-    assert_eq!(sent[9]["params"]["url"], job);
-    for request in &sent[..19] {
+    assert_eq!(sent[4]["params"]["urls"], json!([home]));
+    for request in &sent[1..5] {
+        assert_eq!(request["fixture_endpoint"], "/devtools/page/fixture-page",
+            "native cookies must reach the same WebView that opens the job");
+    }
+    assert_eq!(sent[10]["params"]["url"], job);
+    for request in &sent[..20] {
         assert!(!request["params"]["expression"].as_str().unwrap_or("")
             .contains("const key='__sleufbaseNativeDownloadCapture'"));
     }
-    let arm = sent[19]["params"]["expression"].as_str().unwrap();
+    let arm = sent[20]["params"]["expression"].as_str().unwrap();
     assert!(arm.contains(&format!("location.href!=={}", json!(job))));
     assert!(arm.contains("document.readyState==='loading'"));
     assert!(arm.contains("const key='__sleufbaseNativeDownloadCapture'"));
@@ -143,11 +155,130 @@ fn reopening_the_current_verified_job_preserves_unfinished_geometry() {
         ("Runtime.evaluate", json!({"result":{"value":true}})),
         ("Runtime.evaluate", json!({"result":{"value":true}})),
     ]);
-    assert_eq!(channel.open_verified_job(42, &AtomicBool::new(false)).unwrap(), job);
+    assert_eq!(channel.open_verified_job_with_native_session(&json!([fixture_cookie()]), 42, &AtomicBool::new(false)).unwrap(), job);
     let capture = channel.arm_job_download_capture(42, &job, &AtomicBool::new(false)).unwrap();
     capture.disarm().unwrap();
     worker.join().unwrap();
-    assert!(requests.try_iter().all(|request| request["method"] != "Page.navigate"));
+    assert!(requests.try_iter().all(|request| request["method"] != "Page.navigate"
+        && !request["method"].as_str().unwrap().contains("Cookies")));
+}
+
+#[test]
+fn native_handoff_refuses_missing_changed_or_widened_page_cookies_before_navigation() {
+    let mut wrong_value = fixture_cookie();
+    wrong_value["value"] = json!("fixture-other-session");
+    let mut wider_domain = fixture_cookie();
+    wider_domain["domain"] = json!(".my.kickthemap.com");
+    let mut readable = fixture_cookie();
+    readable["httpOnly"] = json!(false);
+    let mut persistent = fixture_cookie();
+    persistent["expires"] = json!(2_000_000_000);
+    let mut partitioned = fixture_cookie();
+    partitioned["partitionKey"] = json!({"topLevelSite":ORIGIN});
+    for received in [json!([]), json!([wrong_value]), json!([wider_domain]),
+        json!([readable]), json!([persistent]), json!([partitioned]),
+        json!([fixture_cookie(), fixture_cookie()])]
+    {
+        let (channel, requests, worker) = scripted(vec![
+            ("Target.getTargets", targets(&format!("{ORIGIN}/signin"))),
+            ("Page.stopLoading", json!({})),
+            ("Network.clearBrowserCookies", json!({})),
+            ("Network.setCookies", json!({})),
+            ("Network.getCookies", json!({"cookies":received})),
+        ]);
+        let error = channel.prepare_authenticated_job(&json!([fixture_cookie()]), 42,
+            &AtomicBool::new(false)).unwrap_err();
+        worker.join().unwrap();
+        assert!(error.contains("overgedragen"));
+        assert!(!error.contains("verlopen") && !error.contains("fixture-session")
+            && !error.contains("laravel_session"));
+        let sent: Vec<_> = requests.try_iter().collect();
+        assert_eq!(sent.len(), 5, "a failed cookie transfer must never navigate or read jobs");
+        assert!(sent[2..].iter().all(|request| request["fixture_endpoint"] == "/devtools/page/fixture-page"));
+    }
+}
+
+#[test]
+fn login_route_is_not_expired_until_its_current_document_is_ready() {
+    let home = format!("{ORIGIN}/");
+    let signin = format!("{ORIGIN}/signin");
+    let (channel, requests, worker) = scripted(vec![
+        ("Page.getFrameTree", frame(&signin, "home-new")),
+        // The current JS document is still loading or already changed again.
+        ("Runtime.evaluate", json!({"result":{"value":false}})),
+        ("Page.getFrameTree", frame(&home, "home-new")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+    ]);
+    let load = PageLoad { url:reqwest::Url::parse(&home).unwrap(), frame_id:"frame".into(),
+        loader_id:Some("home-new".into()), require_csrf:true };
+    let target = format!("ws://127.0.0.1:{}/devtools/page/fixture-page", channel.port);
+    channel.wait_page(&target, &load, &AtomicBool::new(false), Instant::now() + Duration::from_secs(2)).unwrap();
+    worker.join().unwrap();
+    let sent: Vec<_> = requests.try_iter().collect();
+    let guard = sent[1]["params"]["expression"].as_str().unwrap();
+    assert!(guard.contains(&format!("location.href==={}", json!(signin))));
+    assert!(guard.contains("document.readyState!=='loading'"));
+}
+
+#[test]
+fn signed_out_job_window_recovers_from_current_native_session_and_verifies_the_job() {
+    let signin = format!("{ORIGIN}/signin");
+    let home = format!("{ORIGIN}/");
+    let job = format!("{ORIGIN}/viewJob/fixture_2026-11-16");
+    let payload = json!({"data":[{"Id":42,"user_id":"fixture","project_date":"2026-11-16"}]}).to_string();
+    let (channel, requests, worker) = scripted(vec![
+        ("Target.getTargets", targets(&signin)),
+        ("Page.getFrameTree", frame(&signin, "signed-out")),
+        ("Page.getFrameTree", frame(&signin, "signed-out")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Target.getTargets", targets(&signin)),
+        ("Page.stopLoading", json!({})),
+        ("Network.clearBrowserCookies", json!({})),
+        ("Network.setCookies", json!({})),
+        ("Network.getCookies", json!({"cookies":[fixture_cookie()]})),
+        ("Page.navigate", json!({"frameId":"frame","loaderId":"home-new"})),
+        ("Page.getFrameTree", frame(&home, "home-new")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Runtime.evaluate", json!({"result":{"value":payload}})),
+        ("Page.navigate", json!({"frameId":"frame","loaderId":"job-new"})),
+        ("Page.getFrameTree", frame(&job, "job-new")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+    ]);
+    assert_eq!(channel.open_verified_job_with_native_session(&json!([fixture_cookie()]), 42,
+        &AtomicBool::new(false)).unwrap(), job);
+    worker.join().unwrap();
+    let sent: Vec<_> = requests.try_iter().collect();
+    assert_eq!(sent.iter().filter(|request| request["method"] == "Network.setCookies").count(), 1);
+    assert_eq!(sent[9]["params"]["url"], home);
+    assert_eq!(sent[13]["params"]["url"], job);
+    assert!(sent[12]["params"]["expression"].as_str().unwrap().contains("/jobs/get-user-jobs"));
+}
+
+#[test]
+fn native_session_recovery_stops_after_one_rejected_handoff() {
+    let signin = format!("{ORIGIN}/signin");
+    let (channel, requests, worker) = scripted(vec![
+        ("Target.getTargets", targets(&signin)),
+        ("Page.getFrameTree", frame(&signin, "signed-out")),
+        ("Page.getFrameTree", frame(&signin, "signed-out")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+        ("Target.getTargets", targets(&signin)),
+        ("Page.stopLoading", json!({})),
+        ("Network.clearBrowserCookies", json!({})),
+        ("Network.setCookies", json!({})),
+        ("Network.getCookies", json!({"cookies":[fixture_cookie()]})),
+        ("Page.navigate", json!({"frameId":"frame","loaderId":"rejected-session"})),
+        ("Page.getFrameTree", frame(&signin, "rejected-session")),
+        ("Runtime.evaluate", json!({"result":{"value":true}})),
+    ]);
+    let error = channel.open_verified_job_with_native_session(&json!([fixture_cookie()]), 42,
+        &AtomicBool::new(false)).unwrap_err();
+    worker.join().unwrap();
+    assert_eq!(error, BROWSER_SIGNIN_REQUIRED);
+    assert!(!error.contains("sessie is verlopen"));
+    let sent: Vec<_> = requests.try_iter().collect();
+    assert_eq!(sent.iter().filter(|request| request["method"] == "Network.setCookies").count(), 1);
+    assert_eq!(sent.iter().filter(|request| request["method"] == "Page.navigate").count(), 1);
 }
 
 #[test]
@@ -216,7 +347,7 @@ fn job_not_in_current_account_never_navigates_to_a_cached_or_guessed_job() {
         ("Runtime.evaluate", json!({"result":{"value":true}})),
         ("Runtime.evaluate", json!({"result":{"value":"{\"data\":[]}"}})),
     ]);
-    assert!(channel.open_verified_job(42, &AtomicBool::new(false)).is_err());
+    assert!(channel.open_verified_job_with_native_session(&json!([fixture_cookie()]), 42, &AtomicBool::new(false)).is_err());
     worker.join().unwrap();
     assert!(requests.try_iter().all(|request| request["method"] != "Page.navigate"));
 }
@@ -257,6 +388,7 @@ fn cancelled_operations_and_closed_browser_stop_without_mutation() {
         .err().unwrap().contains("geannuleerd"));
     assert!(channel.prepare_authenticated_job(&json!([fixture_cookie()]), 42, &cancel).is_err());
     assert!(channel.open_verified_job(42, &cancel).is_err());
+    assert!(channel.open_verified_job_with_native_session(&json!([fixture_cookie()]), 42, &cancel).is_err());
     assert!(channel.arm_job_download_capture(42, &format!("{ORIGIN}/viewJob/selected"), &cancel)
         .err().unwrap().contains("geannuleerd"));
     assert!(channel.form_snapshot(&cancel).is_err());

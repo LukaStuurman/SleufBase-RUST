@@ -639,7 +639,7 @@ fn export_with_asset_policy(
     template_geometry::add(&mut doc, &request.layers, &request.geometry, control.flag())?;
     let mut overview_plan=request.overview.as_ref().map(|overview| {
         progress("Kadastraal overzicht opbouwen");
-        crate::cadastral_overview::populate(&mut doc,overview,&tx,control,&mut progress)
+        crate::cadastral_overview::populate_with_rules(&mut doc,overview,&tx,&request.rules,control,&mut progress)
     }).transpose()?;
     let templates = if request
         .slots

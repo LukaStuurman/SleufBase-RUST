@@ -26,6 +26,7 @@ impl SleufBaseApp {
             loader.cancel();
         }
         self.file_intent = None;
+        self.marxact_mapping = None;
     }
     fn start_file_load(&mut self, purpose: LoadPurpose, kind: FileKind, paths: Vec<PathBuf>) {
         if self.project_sources_owned(){self.message="Wacht tot de lopende taak is afgerond".into();return;}
@@ -91,10 +92,11 @@ impl SleufBaseApp {
         self.start_file_load(LoadPurpose::ExportedDxf(path.clone()),FileKind::Dxf,vec![path]);
     }
     pub(super) fn import_marxact(&mut self, paths: Vec<PathBuf>) {
-        let settings = match self.project_export_settings() {
-            Ok(settings) => settings,
-            Err(error) => { self.message = error; return; }
-        };
+        if self.settings_dialog.is_some() || self.rule_editor.is_some() {
+            self.message = "Sluit eerst Instellingen voordat je marXact-metingen importeert.".into();
+            return;
+        }
+        if let Err(error) = self.marxact_import_settings() { self.message = error; return; }
         let paths = self.new_paths(paths, |path| {
             self.virtual_trenches.iter().any(|t| {
                 t.source_path.as_deref() == Some(path.as_path()) && !t.boundary_3d.is_empty()
@@ -102,9 +104,9 @@ impl SleufBaseApp {
         });
         self.start_file_load(
             LoadPurpose::MarXact,
-            FileKind::MarXact(Arc::new(
-                settings.marxact_name_mappings,
-            )),
+            // Keep every measurement staged so remembered ignored names can
+            // also be reviewed and reassigned before publishing the import.
+            FileKind::MarXact(Arc::default()),
             paths,
         );
     }
@@ -150,13 +152,15 @@ impl SleufBaseApp {
             return;
         }
         match ready.result {
+            Ok(outcomes) if matches!(&intent.purpose, LoadPurpose::MarXact) =>
+                self.prepare_marxact_mapping(outcomes, ctx),
             Ok(outcomes) => self.apply_file_outcomes(intent.purpose, outcomes, ctx),
             Err(e) => {
                 self.message = format!("Bestanden niet geladen; huidige gegevens behouden: {e}")
             }
         }
     }
-    fn apply_file_outcomes(
+    pub(super) fn apply_file_outcomes(
         &mut self,
         purpose: LoadPurpose,
         outcomes: Vec<FileOutcome>,
@@ -271,7 +275,7 @@ impl SleufBaseApp {
                             .collect();
                     }
                     added += prepared.result.trenches.len();
-                    objects += prepared.result.assigned_insert_count;
+                    objects += prepared.result.trenches.iter().map(|trench| trench.objects.len()).sum::<usize>();
                     self.virtual_trenches.extend(prepared.result.trenches);
                     self.trench_markers.extend(prepared.markers);
                 }
@@ -491,6 +495,7 @@ mod tests {
         assert!(app.message.contains("missing.dxf"));
         app.import_marxact(vec![root.join("marxact-cad/nested-leaders.dxf")]);
         drain(&mut app, &ctx);
+        app.accept_test_marxact_mapping(&ctx);
         assert!(!app.virtual_trenches.is_empty());
         assert_eq!(app.trench_markers.len(), app.virtual_trenches.len());
         assert!(app.trench_markers.iter().any(|m| !m.is_empty()));

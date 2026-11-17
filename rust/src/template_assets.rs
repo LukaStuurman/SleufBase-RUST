@@ -152,9 +152,10 @@ impl<'a> Batch<'a> {
                             )?;
                         }
                         Kind::Virtual { source, reverse } => {
-                            let raster = virtual_raster::prepare_for_template_direction(
+                            let raster = virtual_raster::prepare_for_template_direction_with_rules(
                                 source,
                                 *reverse,
+                                &request.rules,
                                 batch.flag(),
                             )?;
                             template_raster::save_image_budgeted(
@@ -182,11 +183,12 @@ impl<'a> Batch<'a> {
                             let page = renderers[worker]
                                 .lock()
                                 .map_err(|_| "Kaartwerker is onverwacht gestopt")?
-                                .render_template_with_raster(
+                                .render_template_with_raster_and_rules(
                                     source,
                                     *bounds,
                                     fallback,
                                     *reference,
+                                    &request.rules,
                                     batch.flag(),
                                 )?;
                             template_raster::save_image_budgeted(

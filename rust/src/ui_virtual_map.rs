@@ -265,6 +265,7 @@ mod tests {
             app.poll_file_jobs(&ctx);
             std::thread::sleep(Duration::from_millis(5));
         }
+        app.accept_test_marxact_mapping(&ctx);
         assert!(app.virtual_trenches.len() > 1);
         assert_eq!(app.trench_markers.len(), app.virtual_trenches.len());
         assert_eq!(app.virtual_map.references, vec![before]);

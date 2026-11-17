@@ -34,7 +34,9 @@ pub struct MarXactResult {
 }
 
 pub fn normalize_name(value:&str)->String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    let value=value.split(|c:char|c.is_whitespace()||matches!(c,'\u{1c}'..='\u{1f}'))
+        .filter(|part|!part.is_empty()).collect::<Vec<_>>().join(" ");
+    crate::python_values::casefold(&value)
 }
 
 pub fn parse_leader_content(value:&str)->(String,Option<f64>) {
@@ -211,7 +213,12 @@ pub fn parse_overlay_with_cancel(overlay:&DxfOverlay,mappings:&std::collections:
         trench.boundary_3d=boundary.points;
         trench.alignment=Some(crate::marxact_alignment::MarXactAlignment::new(start,end,width));
         trench.source_path=Some(overlay.path.clone());
-        for object in boundary.objects{trench.add_object(object)?;}
+        // Keep every measured INSERT in the axis calculation above. Ignoring
+        // an object changes exported utilities, never the measured geometry.
+        for object in boundary.objects{
+            if normalize_name(&object.source_name)==normalize_name(crate::marxact_names::IGNORE){continue;}
+            trench.add_object(object)?;
+        }
         trenches.push(trench);
     }
     Ok(MarXactResult{
@@ -296,6 +303,38 @@ mod tests{
         assert_eq!(result.trenches[0].objects[0].position.z,Some(3.1));
         assert_eq!(result.trenches[0].objects[0].attributes[1],"Laagspanning");
         assert_eq!(result.trenches[0].source_path.as_deref(),Some(Path::new("file.dxf")));
+    }
+    #[test]
+    fn direct_import_ignores_mapped_objects_only_after_measuring_the_axis(){
+        let boundary=vec![p(0.,0.,10.),p(8.,0.,18.),p(8.,3.,22.),p(0.,3.,14.)];
+        let mut items=Vec::new();
+        for point in &boundary{
+            items.push(feature("MULTILEADER",vec![*point,*point],"Name=PS42","TEXT"));
+        }
+        items.push(feature("POLYLINE",[boundary.clone(),vec![boundary[0]]].concat(),"","0"));
+        for y in [0.5,1.5,2.5]{
+            let point=p(4.,y,3.);
+            items.push(feature("MULTILEADER",vec![point,point],"Name=fixture^JHeight=3.12","TEXT"));
+            items.push(feature("INSERT",vec![point,point],"","Straße"));
+        }
+        let overlay=DxfOverlay{space_policy:Default::default(),path:PathBuf::from("synthetic.dxf"),visible:true,
+            features:items,layers:Default::default(),layer_aliases:Default::default(),blocks:Default::default(),
+            warnings:Vec::new(),expanded:Default::default(),block_visibility:Default::default(),block_warnings:Vec::new(),
+            cached_bounds:None,bounds_ready:false};
+        let staged=parse_overlay(&overlay,&Default::default()).unwrap();
+        let ignored=parse_overlay(&overlay,&std::collections::BTreeMap::from([
+            (" STRASSE\t".into(),crate::marxact_names::IGNORE.into()),
+        ])).unwrap();
+        assert_eq!(staged.assigned_insert_count,3);
+        assert_eq!(ignored.assigned_insert_count,3,"the counter describes assigned source measurements");
+        assert_eq!(ignored.insert_count,3);
+        assert_eq!(staged.trenches[0].objects.len(),3);
+        assert!(ignored.trenches[0].objects.is_empty());
+        assert!((staged.trenches[0].start.x-4.).abs()<1e-6);
+        assert!((staged.trenches[0].end.x-4.).abs()<1e-6);
+        let mut expected=serde_json::to_value(&staged.trenches[0]).unwrap();
+        expected["objects"]=serde_json::json!([]);
+        assert_eq!(serde_json::to_value(&ignored.trenches[0]).unwrap(),expected);
     }
     #[test]
     fn rejects_unlabelled_or_collinear_boundaries(){

@@ -6,18 +6,26 @@ type JobPoint = (u64, [f64; 2]);
 const JOBS_RASTER_SCALE: f32 = 2.;
 const JOBS_RASTER_MAX_SIDE: u32 = 4096;
 const JOBS_RASTER_MAX_PIXELS: u64 = 8_388_608;
+const BACKGROUND_REQUEST_INTERVAL: f64 = 0.25;
+const BACKGROUND_RETRY_DELAY: f64 = 3.;
 
 #[derive(Default)]
 pub(super) struct Interaction {
     selection: Option<SelectionDrag>,
     surface: Option<(egui::Rect, egui::LayerId)>,
     background: Option<BackgroundRequest>,
+    completed: Option<Result<OsmRaster, String>>,
+    viewport: Option<(Bounds, [u32; 2])>,
+    request_after: f64,
+    refresh: bool,
 }
 
 struct BackgroundRequest {
     bounds: Bounds,
     size: [u32; 2],
     cancel: Arc<AtomicBool>,
+    #[cfg(test)]
+    reply: mpsc::Sender<Result<OsmRaster, String>>,
 }
 
 impl Drop for BackgroundRequest {
@@ -120,50 +128,162 @@ fn zoom_bounds(base: Bounds, factor: f64) -> Bounds {
     Bounds { min_x: cx - hx, max_x: cx + hx, min_y: cy - hy, max_y: cy + hy }
 }
 
-fn background(ui: &egui::Ui, browser: &mut BrowserUi, rect: egui::Rect, bounds: Bounds, moving: bool) {
+fn overlap(a: Bounds, b: Bounds) -> Option<Bounds> {
+    let shared = Bounds { min_x: a.min_x.max(b.min_x), max_x: a.max_x.min(b.max_x),
+        min_y: a.min_y.max(b.min_y), max_y: a.max_y.min(b.max_y) };
+    (shared.min_x < shared.max_x && shared.min_y < shared.max_y).then_some(shared)
+}
+
+fn covered_area(image: Bounds, view: Bounds) -> f64 {
+    overlap(image, view).map_or(0., |shared|
+        (shared.max_x - shared.min_x) * (shared.max_y - shared.min_y))
+}
+
+/// Crop in world coordinates before constructing a mesh. A retained image stays
+/// attached to its original RD extent during pan, zoom and aspect-ratio changes.
+fn raster_rects(rect: egui::Rect, view: Bounds, image: Bounds) -> Option<(egui::Rect, egui::Rect)> {
+    let shared = overlap(view, image)?;
+    let destination = egui::Rect::from_min_max(
+        map_point(rect, view, [shared.min_x, shared.max_y]),
+        map_point(rect, view, [shared.max_x, shared.min_y]),
+    );
+    let width = image.max_x - image.min_x;
+    let height = image.max_y - image.min_y;
+    let uv = egui::Rect::from_min_max(
+        egui::pos2(((shared.min_x - image.min_x) / width) as f32,
+            ((image.max_y - shared.max_y) / height) as f32),
+        egui::pos2(((shared.max_x - image.min_x) / width) as f32,
+            ((image.max_y - shared.min_y) / height) as f32),
+    );
+    Some((destination, uv))
+}
+
+fn background(ui: &egui::Ui, browser: &mut BrowserUi, rect: egui::Rect, bounds: Bounds) {
     // Always request extra native map detail, including on a 100% DPI screen.
-    let size = raster_size(rect.size(), JOBS_RASTER_SCALE);
+    let size = raster_size(rect.size(), JOBS_RASTER_SCALE.max(ui.ctx().pixels_per_point()));
+    let now = ui.input(|input| input.time);
+    if browser.map_interaction.viewport != Some((bounds, size)) {
+        // A failure's retry delay belongs to that old view. New navigation
+        // retains only the ordinary throttle, without postponing on every move.
+        browser.map_interaction.request_after = browser.map_interaction.request_after
+            .min(now + BACKGROUND_REQUEST_INTERVAL);
+    }
+    browser.map_interaction.viewport = Some((bounds, size));
     if let Some(request) = &browser.map_interaction.background {
-        if request.bounds != bounds || request.size != size {
+        // Let a still-useful request finish while the pointer moves. Cancelling
+        // every different extent starves downloads throughout a continuous pan.
+        if overlap(request.bounds, bounds).is_none() {
             request.cancel.store(true, Ordering::Release);
         }
     }
-    // A late response for a previous zoom/resize must never be stretched into
-    // the new extent. The next request starts once that response is consumed.
-    let matching = browser.map_texture.as_ref().filter(|(cached, _)| *cached == bounds);
-    if let Some((_, texture)) = matching {
-        ui.painter_at(rect).image(texture.id(), rect,
-            egui::Rect::from_min_max(Pos2::ZERO, egui::pos2(1., 1.)), Color32::WHITE);
+    // Global polling happens before this frame's pointer/resize handling. Only
+    // now is it safe to compare a reply with the actual visible world extent.
+    poll_background(ui.ctx(), browser);
+    apply_background_reply(ui.ctx(), browser);
+    if let Some((cached, texture)) = &browser.map_texture {
+        if let Some((destination, uv)) = raster_rects(rect, bounds, *cached) {
+            ui.painter_at(rect).image(texture.id(), destination, uv, Color32::WHITE);
+        }
     }
-    let resolution_matches = matching.is_some_and(|(_, texture)| {
-        texture.size() == [size[0] as usize, size[1] as usize]
+    let resolution_matches = browser.map_texture.as_ref().is_some_and(|(cached, texture)| {
+        *cached == bounds && texture.size() == [size[0] as usize, size[1] as usize]
     });
-    if !moving && !resolution_matches && browser.map_loading.is_none() {
-        request_background(browser, bounds, size);
+    if browser.map_loading.is_some() {
+        ui.ctx().request_repaint_after(Duration::from_millis(60));
+    } else if !resolution_matches || browser.map_interaction.refresh {
+        if now >= browser.map_interaction.request_after {
+            request_background(ui.ctx(), browser, bounds, size, now);
+        } else {
+            ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                browser.map_interaction.request_after - now));
+        }
     }
 }
 
-#[cfg(not(test))]
-fn request_background(browser: &mut BrowserUi, bounds: Bounds, size: [u32; 2]) {
+fn request_background(ctx: &egui::Context, browser: &mut BrowserUi, bounds: Bounds, size: [u32; 2], now: f64) {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
-    browser.map_interaction.background = Some(BackgroundRequest { bounds, size, cancel: cancel.clone() });
+    browser.map_interaction.background = Some(BackgroundRequest { bounds, size, cancel: cancel.clone(),
+        #[cfg(test)] reply: tx.clone(),
+    });
+    browser.map_interaction.request_after = now + BACKGROUND_REQUEST_INTERVAL;
+    browser.map_interaction.refresh = false;
     browser.map_loading = Some(rx);
     browser.map_status = "OpenStreetMap-tegels ophalen…".into();
-    let dir = kickthemap_cache_dir().join("osm_jobs");
-    std::thread::spawn(move || {
-        // The old 24-tile preview path rounded the source zoom down, undoing
-        // higher output resolution. Reuse the main map's native-detail planner:
-        // only visible tiles, at most 256 tiles and two global network workers.
-        let mut renderer = sleufbase_rust::osm_tiles::ViewportRenderer::default();
-        let result = renderer.request(bounds, size[0], size[1], &dir, &cancel, &mut |_| Ok(()));
-        let _ = tx.send(result);
-    });
+    #[cfg(not(test))]
+    {
+        let dir = kickthemap_cache_dir().join("osm_jobs");
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            // Only visible tiles, at most 256 tiles and two global network
+            // workers. There is one active request and no queue of old views.
+            let mut renderer = sleufbase_rust::osm_tiles::ViewportRenderer::default();
+            let result = renderer.request(bounds, size[0], size[1], &dir, &cancel, &mut |_| Ok(()));
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+    // Headless tests keep the sender for deterministic replies, never network.
+    #[cfg(test)] let _ = (ctx, tx);
 }
 
-#[cfg(test)]
-fn request_background(_: &mut BrowserUi, _: Bounds, _: [u32; 2]) {
-    // Headless interaction tests never contact the public tile service.
+pub(super) fn poll_background(ctx: &egui::Context, browser: &mut BrowserUi) {
+    let result = match browser.map_loading.as_ref().map(|rx| rx.try_recv()) {
+        Some(Ok(result)) => result,
+        Some(Err(TryRecvError::Disconnected)) => Err("Kaartdownload onderbroken".into()),
+        Some(Err(TryRecvError::Empty)) => {
+            ctx.request_repaint_after(Duration::from_millis(60));
+            return;
+        }
+        None => return,
+    };
+    browser.map_loading = None;
+    if browser.map_interaction.background.as_ref().is_some_and(|request|
+        !request.cancel.load(Ordering::Acquire)) {
+        // Keep at most one completed raster until the canvas has updated its
+        // view. This never replaces displayed pixels using last frame's bounds.
+        browser.map_interaction.completed = Some(result);
+    } else {
+        browser.map_interaction.background = None;
+        browser.map_interaction.completed = None;
+    }
+}
+
+fn apply_background_reply(ctx: &egui::Context, browser: &mut BrowserUi) {
+    let Some(result) = browser.map_interaction.completed.take() else { return; };
+    let Some(request) = browser.map_interaction.background.take() else { return; };
+    if request.cancel.load(Ordering::Acquire) { return; }
+    let Some((view, size)) = browser.map_interaction.viewport else { return; };
+    if overlap(request.bounds, view).is_none() { return; }
+    match result {
+        Ok(raster) if raster.bounds == request.bounds
+            && [raster.width, raster.height] == request.size => {
+            // A user may pan back while a nearby request finishes. Do not lose
+            // already-covered pixels by adopting a less useful late image.
+            let keep_existing = browser.map_texture.as_ref().is_some_and(|(cached, _)|
+                covered_area(*cached, view) > covered_area(raster.bounds, view));
+            if keep_existing {
+                browser.map_status = "OpenStreetMap geladen".into();
+                return;
+            }
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [raster.width as usize, raster.height as usize], &raster.rgba);
+            let texture = ctx.load_texture("kickthemap-jobs-osm", image, egui::TextureOptions::LINEAR);
+            browser.map_texture = Some((raster.bounds, texture));
+            browser.map_status = if raster.stale_cache {
+                "OpenStreetMap geladen vanuit verouderde tegelcache".into()
+            } else { "OpenStreetMap geladen".into() };
+        }
+        result => {
+            // Retry a failed unchanged view at a bounded rate. A newer viewport
+            // can proceed immediately once this single worker has finished.
+            if request.bounds == view && request.size == size {
+                browser.map_interaction.request_after = ctx.input(|input| input.time) + BACKGROUND_RETRY_DELAY;
+                let error = result.err().unwrap_or_else(|| "Kaartafmetingen komen niet overeen".into());
+                browser.map_status = format!("Kaartachtergrond niet beschikbaar: {error}");
+            }
+        }
+    }
 }
 
 fn select_with_pointer(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect,
@@ -255,7 +375,7 @@ fn canvas(ui: &mut egui::Ui, points: &[JobPoint], browser: &mut BrowserUi,
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0., Color32::from_rgb(238, 242, 247));
-    background(ui, browser, rect, bounds, panning || scroll.abs() > 0.1);
+    background(ui, browser, rect, bounds);
     let mut nearest: Option<(u64, f32)> = None;
     for (id, point) in points {
         let position = map_point(rect, bounds, *point);
@@ -305,17 +425,18 @@ pub(super) fn show(ui: &mut egui::Ui, source: &[Job], indices: &[usize],
         if ui.button("Passend").clicked() {
             browser.map_bounds = Some(visible_bounds);
             browser.map_interaction.selection = None;
-            browser.map_texture = None;
         }
         if ui.button("Zoom naar selectie").clicked() {
             let selected = points.iter().filter(|(id, _)| browser.selected.contains(id)).copied().collect::<Vec<_>>();
             if let Some(bounds) = jobs_bounds(&selected) {
                 browser.map_bounds = Some(bounds);
                 browser.map_interaction.selection = None;
-                browser.map_texture = None;
             }
         }
-        if ui.button("Vernieuwen").clicked() { browser.map_texture = None; }
+        if ui.button("Vernieuwen").clicked() {
+            browser.map_interaction.refresh = true;
+            browser.map_interaction.request_after = 0.;
+        }
         ui.small(format!("{} jobs met coördinaten", points.len()));
     });
     ui.small("Klik op een punt of sleep met links een selectievak. Ctrl/Shift voegt toe. Dubbelklik opent een job; het muiswiel zoomt; midden/rechts slepen verplaatst. Esc annuleert het selectievak.");

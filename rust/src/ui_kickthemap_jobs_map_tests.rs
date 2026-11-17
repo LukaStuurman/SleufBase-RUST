@@ -39,6 +39,8 @@ impl MapHarness {
             time: Some(self.time), modifiers: self.modifiers, focused: self.focused,
             events, ..Default::default()
         }, |ctx| {
+            // The application polls workers before rendering the Jobs window.
+            poll_background(ctx, &mut self.browser);
             egui::CentralPanel::default().show(ctx, |ui| {
                 self.rect = canvas(ui, &self.points, &mut self.browser, &mut self.action, self.size);
             });
@@ -234,18 +236,139 @@ fn jobs_map_middle_and_right_pan_use_incremental_motion_without_selecting() {
     }
 }
 
+fn assert_texture_tracks_world(map: &MapHarness, output: &egui::FullOutput,
+    id: egui::TextureId, image: Bounds) {
+    let shape = output.shapes.iter().find(|shape| {
+        matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.texture_id == id)
+    }).expect("overlapping map pixels must remain visible");
+    let egui::Shape::Mesh(mesh) = &shape.shape else { unreachable!() };
+    let view = viewport_bounds(map.browser.map_bounds.unwrap(), map.rect.size());
+    for vertex in &mesh.vertices {
+        let world = [image.min_x + f64::from(vertex.uv.x) * (image.max_x - image.min_x),
+            image.max_y - f64::from(vertex.uv.y) * (image.max_y - image.min_y)];
+        assert!(vertex.pos.distance(map_point(map.rect, view, world)) < 0.001,
+            "cached pixels must follow RD coordinates, never stretch across the new viewport");
+        assert!(map.rect.expand(0.001).contains(vertex.pos));
+        assert!(egui::Rect::from_min_max(Pos2::ZERO, egui::pos2(1., 1.)).contains(vertex.uv));
+    }
+    assert_eq!(shape.clip_rect.intersect(map.rect), shape.clip_rect);
+}
+
+fn send_background(request: &BackgroundRequest) {
+    request.reply.send(Ok(OsmRaster {
+        bounds: request.bounds, width: request.size[0], height: request.size[1],
+        rgba: vec![255; request.size[0] as usize * request.size[1] as usize * 4],
+        stale_cache: false,
+    })).unwrap();
+}
+
 #[test]
-fn jobs_map_never_draws_a_background_for_an_old_extent() {
+fn jobs_map_retains_georeferenced_pixels_during_pan_zoom_resize_and_dpi_changes() {
     let mut map = MapHarness::new();
     let texture = map.ctx.load_texture("old-jobs-map", egui::ColorImage::new([2, 2], Color32::GREEN), egui::TextureOptions::LINEAR);
     let id = texture.id();
-    let matches_texture = |output: &egui::FullOutput| output.shapes.iter().any(|shape| {
-        matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.texture_id == id)
-    });
-    map.browser.map_texture = Some((viewport_bounds(base_bounds(), map.rect.size()), texture));
-    assert!(matches_texture(&map.frame(vec![])));
+    let image_bounds = viewport_bounds(base_bounds(), map.rect.size());
+    map.browser.map_texture = Some((image_bounds, texture));
+    let start = map.rect.center();
+    map.begin_drag(start, start + egui::vec2(30., 20.), egui::PointerButton::Secondary);
+    let output = map.frame(vec![egui::Event::PointerMoved(start + egui::vec2(60., 40.))]);
+    assert_texture_tracks_world(&map, &output, id, image_bounds);
+    map.button(start + egui::vec2(60., 40.), egui::PointerButton::Secondary, false);
     map.size = egui::vec2(300., 700.);
-    assert!(!matches_texture(&map.frame(vec![])), "stale raster must not stretch after resizing");
-    map.size = egui::vec2(600., 400.);
-    assert!(matches_texture(&map.frame(vec![])), "return to the same viewport reuses the matching raster");
+    let output = map.frame(vec![]);
+    assert_texture_tracks_world(&map, &output, id, image_bounds);
+    map.browser.map_bounds = Some(zoom_bounds(map.browser.map_bounds.unwrap(), 0.5));
+    map.ctx.set_pixels_per_point(3.);
+    let output = map.frame(vec![]);
+    assert_texture_tracks_world(&map, &output, id, image_bounds);
+    assert_eq!(map.browser.map_interaction.viewport.unwrap().1, raster_size(map.rect.size(), 3.));
+    map.browser.map_bounds = Some(Bounds { min_x: 120_000., max_x: 121_000., ..base_bounds() });
+    let output = map.frame(vec![]);
+    assert!(!output.shapes.iter().any(|shape| {
+        matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.texture_id == id)
+    }), "a retained image outside the current world extent must not be shown");
+
+    // Pan away and back while a neighboring request is still in flight. The
+    // late partial coverage must not evict the fully covered original view.
+    let mut map = MapHarness::new();
+    send_background(map.browser.map_interaction.background.as_ref().unwrap());
+    map.frame(vec![]);
+    let retained = map.browser.map_texture.as_ref().unwrap().1.id();
+    map.time += BACKGROUND_REQUEST_INTERVAL;
+    let start = map.rect.center();
+    map.begin_drag(start, start + egui::vec2(120., 0.), egui::PointerButton::Secondary);
+    assert!(map.browser.map_interaction.background.is_some());
+    send_background(map.browser.map_interaction.background.as_ref().unwrap());
+    // B's result is already queued when global polling runs. Returning the
+    // pointer to A occurs later in this same frame, inside canvas().
+    let output = map.frame(vec![egui::Event::PointerMoved(start)]);
+    assert_eq!(map.browser.map_texture.as_ref().unwrap().1.id(), retained,
+        "a late overlapping image must not expose gray space that the retained image already covers");
+    assert_texture_tracks_world(&map, &output, retained, viewport_bounds(base_bounds(), map.rect.size()));
+    assert!(map.browser.map_loading.is_none(), "the restored full view needs no replacement request");
+}
+
+#[test]
+fn jobs_map_requests_during_pan_are_throttled_without_cancelling_useful_work() {
+    let mut map = MapHarness::new();
+    let first = map.browser.map_interaction.background.as_ref().unwrap().cancel.clone();
+    let start = map.rect.center();
+    map.begin_drag(start, start + egui::vec2(20., 10.), egui::PointerButton::Secondary);
+    assert!(!first.load(Ordering::Acquire), "an overlapping request must survive moving the pointer");
+    send_background(map.browser.map_interaction.background.as_ref().unwrap());
+    map.frame(vec![]);
+    assert!(map.browser.map_texture.is_some(), "completed overlapping imagery is usable even after a pan");
+    let deadline = map.browser.map_interaction.request_after;
+    while map.time + 0.03 < deadline {
+        map.frame(vec![]);
+        assert!(map.browser.map_loading.is_none(), "do not request every moving frame");
+    }
+    map.frame(vec![]);
+    let active = map.browser.map_interaction.background.as_ref().unwrap().cancel.clone();
+    assert!(!Arc::ptr_eq(&first, &active), "new view loads while the mouse remains held");
+    for step in 2..15 {
+        map.frame(vec![egui::Event::PointerMoved(start + egui::vec2(20. + step as f32, 10.))]);
+        assert!(Arc::ptr_eq(&active, &map.browser.map_interaction.background.as_ref().unwrap().cancel));
+        assert!(!active.load(Ordering::Acquire));
+    }
+    let latest = map.browser.map_interaction.viewport.unwrap().0;
+    send_background(map.browser.map_interaction.background.as_ref().unwrap());
+    map.frame(vec![]);
+    assert_eq!(map.browser.map_interaction.background.as_ref().unwrap().bounds, latest,
+        "after completion request only the latest view, never queued intermediate positions");
+}
+
+#[test]
+fn jobs_map_cancelled_replies_and_failed_refreshes_preserve_retained_pixels() {
+    let mut map = MapHarness::new();
+    let texture = map.ctx.load_texture("retained-jobs-map", egui::ColorImage::new([2, 2], Color32::GREEN), egui::TextureOptions::LINEAR);
+    let retained = texture.id();
+    map.browser.map_texture = Some((base_bounds(), texture));
+    let old = map.browser.map_interaction.background.as_ref().unwrap().cancel.clone();
+    map.browser.map_bounds = Some(Bounds { min_x: 120_000., max_x: 121_000., ..base_bounds() });
+    map.frame(vec![]);
+    assert!(old.load(Ordering::Acquire), "fully offscreen work is no longer useful");
+    send_background(map.browser.map_interaction.background.as_ref().unwrap());
+    map.frame(vec![]);
+    assert_eq!(map.browser.map_texture.as_ref().unwrap().1.id(), retained,
+        "a cancelled late result must never replace the retained image");
+    map.time += BACKGROUND_REQUEST_INTERVAL;
+    map.frame(vec![]);
+    let task = map.browser.map_interaction.background.as_ref().unwrap();
+    task.reply.send(Err("synthetic offline response".into())).unwrap();
+    map.frame(vec![]);
+    assert_eq!(map.browser.map_texture.as_ref().unwrap().1.id(), retained);
+    map.frame(vec![]);
+    assert!(map.browser.map_loading.is_none(), "network failure must use retry backoff");
+    map.browser.map_bounds = Some(Bounds { min_x: 120_100., max_x: 121_100., ..base_bounds() });
+    map.frame(vec![]);
+    map.time += BACKGROUND_REQUEST_INTERVAL;
+    map.frame(vec![]);
+    assert!(map.browser.map_loading.is_some(), "a different viewport must not inherit the old failure's long backoff");
+    let reply = map.browser.map_interaction.background.as_ref().unwrap().reply.clone();
+    map.browser.map_interaction = Default::default();
+    reply.send(Err("late reply after hiding the map".into())).unwrap();
+    poll_background(&map.ctx, &mut map.browser);
+    assert_eq!(map.browser.map_texture.as_ref().unwrap().1.id(), retained);
+    assert!(map.browser.map_loading.is_none());
 }

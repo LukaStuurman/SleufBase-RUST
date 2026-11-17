@@ -363,7 +363,7 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
-        self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, &[], cancel)
     }
     /// Leave room for coordinates around the DXF template map, including
     /// their resolution-scaled labels on high-DPI pages.
@@ -375,6 +375,20 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
+        self.render_template_with_raster_and_rules(source, bounds, fallback, profile_reference, &[], cancel)
+    }
+    /// The template coordinator supplies the same effective rules as the DXF
+    /// profiles. Only synthetic utility geometry uses these colors; TIFFs,
+    /// backgrounds and explicit CAD stroke colors retain their source pixels.
+    pub fn render_template_with_raster_and_rules(
+        &mut self,
+        source: &Source,
+        bounds: Bounds,
+        fallback: Option<Raster<'_>>,
+        profile_reference: Option<[f64; 2]>,
+        rules: &[crate::Rule],
+        cancel: &AtomicBool,
+    ) -> Result<Page, String> {
         // A supplied PNG map is already rasterized for the legacy A4 layout.
         // Do not change its expected dimensions or silently resample it.
         let margin = if matches!(&source.background, Background::Png { .. }) {
@@ -382,7 +396,7 @@ impl Renderer {
         } else {
             (82. * f64::from(source.settings.dpi) / 300.).round_ties_even().max(82.) as u32
         };
-        self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, rules, cancel)
     }
     fn render_with_margin(
         &mut self,
@@ -392,6 +406,7 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         margin: u32,
         template_detail: bool,
+        rules: &[crate::Rule],
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
         input::check(cancel)?;
@@ -456,8 +471,8 @@ impl Renderer {
                         &reduced
                     } else { *source };
                     let image = if template_detail {
-                        crate::virtual_raster::render_for_template_map(map_source, cancel)?
-                    } else { crate::virtual_raster::render(map_source, cancel)? };
+                        crate::virtual_raster::render_for_template_map(map_source, rules, cancel)?
+                    } else { crate::virtual_raster::render_with_rules(map_source, rules, cancel)? };
                     (image, info.transform())
                 }
             };

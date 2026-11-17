@@ -702,28 +702,7 @@ impl SleufBaseApp {
         // OpeningJob owns a different cancellation flag; dropping it must not
         // cancel the capture that starts after the browser is back in the UI.
         if let Some(id)=capture_after_open{self.begin_kickthemap_download_capture(id);}
-        match self.browser_ui.map_loading.as_ref().map(|rx|rx.try_recv()) {
-            Some(Ok(Ok(raster)))=>{
-                let bytes=raster.rgba;
-                let image=egui::ColorImage::from_rgba_unmultiplied(
-                    [raster.width as usize,raster.height as usize],&bytes);
-                let texture=ctx.load_texture("kickthemap-jobs-osm",image,egui::TextureOptions::LINEAR);
-                self.browser_ui.map_texture=Some((raster.bounds,texture));
-                self.browser_ui.map_loading=None;
-                self.browser_ui.map_status=if raster.stale_cache{
-                    "OpenStreetMap geladen vanuit verouderde tegelcache".into()
-                }else{"OpenStreetMap geladen".into()};
-            }
-            Some(Ok(Err(e)))=>{
-                self.browser_ui.map_loading=None;
-                self.browser_ui.map_status=format!("Kaartachtergrond niet beschikbaar: {e}");
-            }
-            Some(Err(TryRecvError::Disconnected))=>{
-                self.browser_ui.map_loading=None;
-                self.browser_ui.map_status="Kaartdownload onderbroken".into();
-            }
-            _=>{}
-        }
+        jobs_map::poll_background(ctx,&mut self.browser_ui);
         match self.browser_ui.capture_status.as_ref().map(|rx|rx.try_recv()){
             Some(Ok(status))=>{
                 if self.live_download_rx.is_some()&&self.live_busy&&self.live_download_generation==self.project_generation
@@ -874,12 +853,14 @@ impl SleufBaseApp {
         let same_owner=self.browser_ui.editor_owner.as_ref()==Some(&owner);
         let reuse_browser=same_owner && self.browser_ui.browser.as_ref().is_some_and(Browser::is_detached)
             && self.browser_ui.dock.as_ref().is_some_and(BrowserDock::is_detached);
-        let cookies=if !reuse_browser {
-            match session.embedded_session_cookies() {
-                Ok(cookies)=>Some(cookies),
-                Err(error)=>{self.browser_ui.status=error;return;}
-            }
-        }else{None};
+        // The native HTTP session may have refreshed its cookies while this
+        // separate window was hidden. Keep a current snapshot for a bounded
+        // recovery if the existing window is back on the sign-in page.
+        let cookies=match session.embedded_session_cookies() {
+            Ok(cookies)=>Some(cookies),
+            Err(_) if reuse_browser=>None,
+            Err(error)=>{self.browser_ui.status=error;return;}
+        };
         #[cfg(not(test))]
         let dock=match if reuse_browser {self.browser_ui.dock.clone().map(Ok).unwrap_or_else(BrowserDock::detached)}
             else {BrowserDock::detached()} {
@@ -919,6 +900,7 @@ impl SleufBaseApp {
                         None=>Browser::launch_embedded_with_cancel(dock,host,false,&cancel)?,
                     };
                     let result=match cookies {
+                        Some(cookies) if reuse_browser=>browser.open_job_with_native_session_hidden(&cookies,id,&cancel),
                         Some(cookies)=>browser.prepare_authenticated_job_hidden(&cookies,id,&cancel),
                         None=>browser.open_job_hidden(id,&cancel),
                     };

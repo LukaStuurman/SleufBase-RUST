@@ -1,35 +1,36 @@
-## SleufBase Rust 1.0.17 voor Windows
+## SleufBase Rust 1.0.18 voor Windows
 
-### Invoervelden direct gebruiken
+### Iedere marXact-import begint met naamkoppelingen
 
-De verborgen KickTheMap-aanmelding neemt bij het starten geen toetsenbordfocus meer over. Een klik in het SleufBase-hoofdvenster herstelt de focus gericht naar dat venster, zodat je in invoervelden kunt typen zonder eerst naar een andere app en terug te schakelen.
+- Na het lezen van een geldig marXact-bestand verschijnt **altijd** het venster **marXact: kabels en leidingen koppelen**. Ook als alle namen al bekend zijn, controleer je de koppelingen vóór de metingen worden toegevoegd.
+- Per bronnaam zie je het aantal meetobjecten en kies je een kabel- of leidingtype uit de actieve woordenlijst. Opgeslagen koppelingen staan vooraf ingevuld. Onbekende namen vragen een bewuste keuze; met **Negeren** laat je niet-gewenste meetpunten weg.
+- **Deze koppelingen onthouden voor volgende imports** staat standaard aan. De koppelingen blijven beschikbaar na herstart en bij andere projecten. Je kunt onthouden uitschakelen voor alleen de huidige import.
+- De oorspronkelijke marXact-laagnamen krijgen de juiste voorstellen, onder andere laag-/middenspanning, gas met lage/hoge druk en beide riooltypen. Deze expliciete koppelingen voorkomen onjuiste herkenning door losse woorddelen.
+- **Annuleren**, sluiten en een projectwissel voegen niets toe. Wanneer opslaan van de koppelingen mislukt, blijven je keuzes beschikbaar.
+- Het koppelen of negeren verandert geen gemeten sleufgrens, meetas of XYZ-coördinaten van behouden objecten. De originele meetnamen en eigenschappen blijven bij de objecten bewaard.
 
-### Een apart KickTheMap-jobvenster
+### Juiste kabelkleuren in de DXF-sjabloonexport
 
-- **Open in KickTheMap-browser** opent de geselecteerde job in een eigen, verplaatsbaar en schaalbaar venster. Het hoofdvenster en de Jobs-lijst blijven beschikbaar.
-- De kabel- en leidingvelden staan op de KickTheMap-webpagina zelf, met de bediening uit de oorspronkelijke SleufBase: **Kabel/Leiding afkorting**, **Materiaal**, **Diameter**, **Bundel (aantal)** en **Dekband**.
-- De keuzelijsten gebruiken de effectieve projectinstellingen, inclusief extra profielkeuzes en materialen. Bestaande afwijkende waarden blijven behouden. Je tekent en slaat het object op met de eigen bediening van KickTheMap.
-- Sluiten met het kruisje verbergt het jobvenster. Dezelfde job opnieuw openen brengt het venster terug en behoudt de nog niet opgeslagen invoer.
-- **Handmatige GeoTIFF-vastlegging** opent eerst de juiste proefsleufpagina in dit aparte venster. De vastlegging start nadat de pagina gereed is. Via het Jobs-venster kun je de vastlegging annuleren.
-- Na opslaan op de website kun je vanuit Jobs de geselecteerde **objecten opnieuw laden** om de lokale joblaag bij te werken.
+Kabels en leidingen zonder een eigen vastgelegde kleur gebruiken nu de kleuren uit de actieve objectregels in het detailraster, de kaart en het overzicht van de DXF-sjabloonexport. Dit herstelt de vaste blauwe weergave van marXact en oudere virtuele proefsleuven. Eigen objectkleuren en de echte pixels van TIFF-beelden, luchtfoto's en foto's blijven behouden.
 
-### Compactere en flexibelere Jobs
+### Dubbelklikken op overlays
 
-- De belangrijkste acties staan bij elkaar, met een duidelijke hoofdknop voor laden en aparte acties voor openen en vernieuwen.
-- De jobregels zijn compacter en hebben minder witruimte. Kolommen gebruiken de beschikbare vensterbreedte; aanvullende gegevens blijven via de aanwijzer beschikbaar wanneer een smal venster minder kolommen toont.
-- Zoeken, sorteren, meervoudige selectie en het scrollen door grote joblijsten blijven beschikbaar. De indeling past mee bij het vergroten en verkleinen van het venster.
+Dubbelklik in **Overlays** op een jobobjectlaag of DXF/DWG-tekening om naar de grenzen van die laag te zoomen, met dezelfde camerabediening als bij Proefsleuven. Een enkele klik selecteert de laag; de ingestelde zichtbaarheid blijft behouden.
 
-### Selectie en scherpere Jobs-kaart
+### KickTheMap-jobbrowser en aanmelding
 
-- De kaart reserveert een sleepbeweging binnen de kaart, zodat het verplaatsbare Jobs-venster de selectie niet meer overneemt.
-- Sleep met de **linkermuisknop** een selectievak om meerdere jobpunten te kiezen. **Ctrl** of **Shift** voegt toe aan de selectie; **Esc** annuleert het vak. Midden/rechts slepen verplaatst de kaart en het muiswiel zoomt.
-- De kaart haalt bronkaarten met meer detail op, met tweemaal de logische beeldresolutie binnen een begrensd geheugen- en tegelbudget. Verouderde aanvragen worden geannuleerd bij een andere zoomstand of venstergrootte.
-- De kaart behoudt de juiste verhoudingen bij het wijzigen van het vensterformaat.
+De bestaande aanmelding wordt overgedragen aan de cookieopslag van het concrete jobvenster en daar gecontroleerd vóór de jobpagina opent. Een hergebruikt venster dat terug op de aanmeldpagina staat kan eenmaal worden hersteld vanuit de actuele aanmelding van SleufBase. Een fout in het aparte venster wordt niet meer ten onrechte gemeld als een verlopen aanmelding van het gehele programma. Een nog geopende tekening wordt eerst hergebruikt om conceptinvoer te behouden.
 
-### Build zonder tests
+### Jobs-kaart blijft zichtbaar tijdens bewegen
 
-Op uitdrukkelijk verzoek zijn voor deze release **geen tests uitgevoerd**: geen Rust-tests, browser- of formuliercontracttests, Clippy of installatie-/starttests. De broncode is beoordeeld en de Windows-releasebuild, het samenstellen van de installer en portable ZIP en de controles van pakketinhoud, versie, bronrevisie en SHA-256 blijven onderdeel van de publicatie. Deze controles zijn geen bevestiging van de werking op een echte gebruikerscomputer.
+Beschikbare kaartdelen schuiven op hun juiste geografische positie mee tijdens verplaatsen en zoomen. Ontbrekende kaartdelen kunnen ook tijdens het slepen worden opgehaald. Aanvragen worden begrensd en bruikbare lopende downloads mogen afronden. Een kaartvernieuwing of mislukte download wist het beschikbare kaartbeeld niet.
+
+### Controle
+
+De meegeleverde marXact-DXF is lokaal met de Rust-importeur ingelezen: **26 proefsleuven, 211 toegewezen meetobjecten en 15 verschillende bronnamen**. De controle omvat naamkoppelingen, behoud van meetgeometrie en eigenschappen en opslaan/opnieuw lezen van het project. De oorspronkelijke tekening is niet in de repository opgenomen.
+
+Gerichte regressies dekken de koppeldialoog en opslag, semantische exportkleuren, overlayzoom, browseroverdracht en het behouden van het kaartbeeld tijdens bewegen. De Windows-build en publicatieworkflow controleren de installer, portable ZIP, versie, bronrevisie en SHA-256-controlesommen. De KickTheMap-overdracht is gecontroleerd met synthetische browserantwoorden; hiervoor is geen echte accountaanmelding uitgevoerd.
 
 ### Downloaden en bijwerken
 
-Gebruik **SleufBase-Rust-Setup.exe** om de Windows-app bij te werken, of **SleufBase-Rust-portable.zip** voor gebruik zonder installatie. Sluit SleufBase voor het bijwerken en pak de portable ZIP volledig uit voordat je het programma start. Bij beide downloads staat een SHA-256-controlebestand.
+Gebruik **SleufBase-Rust-Setup.exe** voor installatie of bijwerken, of pak **SleufBase-Rust-portable.zip** volledig uit. Sluit SleufBase voordat je bijwerkt. Bij beide downloads staat een SHA-256-controlebestand.

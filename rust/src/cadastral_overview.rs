@@ -270,15 +270,16 @@ struct Prepared {
     tx: GeoTransform,
     bounds: Bounds,
 }
-fn prepare(layer: &Layer, cancel: &AtomicBool) -> Result<Prepared, String> {
+fn prepare(layer: &Layer, rules: &[crate::Rule], cancel: &AtomicBool) -> Result<Prepared, String> {
     if let Some(trench) = &layer.virtual_trench {
         let layout = crate::virtual_raster::layout(trench, 2.5)?;
-        let image = crate::virtual_raster::render(
+        let image = crate::virtual_raster::render_with_rules(
             &crate::virtual_raster::Source {
                 trench: trench.clone(),
                 quality: 2.5,
                 reverse: false,
             },
+            rules,
             cancel,
         )?;
         return Ok(Prepared {
@@ -640,6 +641,18 @@ pub fn populate(
     request: &Request,
     tx: &Transaction,
     control: &Control,
+    progress: impl FnMut(&str),
+) -> Result<Plan, String> {
+    populate_with_rules(doc,request,tx,&[],control,progress)
+}
+/// A template overview uses its active object rules for virtual utility
+/// rasters. Independent overview exports keep their existing source colors.
+pub fn populate_with_rules(
+    doc: &mut Document,
+    request: &Request,
+    tx: &Transaction,
+    rules: &[crate::Rule],
+    control: &Control,
     mut progress: impl FnMut(&str),
 ) -> Result<Plan, String> {
     control.check()?;
@@ -663,7 +676,7 @@ pub fn populate(
         // Virtual axes/boundaries are already measured source geometry. Do not
         // render or allocate a raster merely to retrieve those coordinates.
         let prepared = if request.settings.include_tiff_images || layer.virtual_trench.is_none() {
-            Some(prepare(layer, control.flag())?)
+            Some(prepare(layer, rules, control.flag())?)
         } else {
             None
         };

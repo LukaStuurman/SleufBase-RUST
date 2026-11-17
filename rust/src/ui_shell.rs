@@ -715,6 +715,14 @@ impl SleufBaseApp {
         self.dirty |= old != self.project_view.selected_dxf;
     }
 
+    fn fit_shell_layer(&mut self, bounds: Bounds) {
+        self.navigation.fit_bounds = Some(bounds);
+        self.navigation.viewport = None;
+        self.zoom = 1.;
+        self.pan = egui::Vec2::ZERO;
+        self.dirty = true;
+    }
+
     fn show_shell_tiffs(&mut self, ui: &mut egui::Ui, height: f32) {
         self.sync_trench_selection();
         theme::title(ui, "Proefsleuven");
@@ -800,10 +808,7 @@ impl SleufBaseApp {
             else { self.set_raster_visibility(index, visible); }
         }
         if let Some(bounds) = zoom_target {
-            self.navigation.fit_bounds = Some(bounds);
-            self.navigation.viewport = None;
-            self.zoom = 1.; self.pan = egui::Vec2::ZERO;
-            self.dirty = true;
+            self.fit_shell_layer(bounds);
         }
         // Deletion is deferred until all row menus have used the original indices.
         for (row, response) in contexts {
@@ -827,6 +832,7 @@ impl SleufBaseApp {
         self.sync_overlay_selection();
         theme::title(ui, "Overlays");
         let mut remove = false;
+        let mut zoom_target = None;
         let mut contexts = Vec::new();
         theme::card(18, 14, 14).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -850,6 +856,9 @@ impl SleufBaseApp {
                                     clicked = Some((index, response.secondary_clicked(), ui.input(|i| i.modifiers)));
                                 }
                                 if response.has_focus() { self.shell.focused_layer = Some((response.id, true)); }
+                                if response.double_clicked() {
+                                    zoom_target = Bounds::from_datasets(std::slice::from_ref(job));
+                                }
                                 contexts.push(response);
                             });
                         });
@@ -866,6 +875,7 @@ impl SleufBaseApp {
                                     clicked = Some((row, response.secondary_clicked(), ui.input(|i| i.modifiers)));
                                 }
                                 if response.has_focus() { self.shell.focused_layer = Some((response.id, true)); }
+                                if response.double_clicked() { zoom_target = overlay.bounds(); }
                                 contexts.push(response);
                             });
                         });
@@ -915,6 +925,7 @@ impl SleufBaseApp {
                 }
             });
         });
+        if let Some(bounds) = zoom_target { self.fit_shell_layer(bounds); }
         for response in contexts {
             response.context_menu(|ui| {
                 if ui.button(format!("Verwijder selectie ({})", self.shell.overlay_selection.len())).clicked() {

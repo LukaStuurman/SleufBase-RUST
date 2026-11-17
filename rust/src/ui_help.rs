@@ -82,7 +82,7 @@ const TOPICS: &[Topic] = &[
         keywords: "marxact marXact import meting 3d polyline richting rotatie namen koppeling",
         sections: &[
             ("Een meting importeren", "Ga naar marXact > marXact import en kies de DXF-bestanden. Gevonden proefsleuven komen in het project en in Proefsleuven terecht. Ze hebben ook een eigen naambordje op de werkkaart."),
-            ("Namen koppelen", "Onder Instellingen > KickTheMap kun je MarXact-namen aan kabel- of leidingnamen koppelen. De woordenlijst bepaalt daarnaast hoe herkende objecten worden benoemd en op DXF-lagen terechtkomen."),
+            ("Namen koppelen", "Na het lezen van een marXact-bestand kies je per bronnaam het bekende kabel- of leidingtype. Bewaarde koppelingen staan al ingevuld. Kies Negeren voor meetpunten die je niet wilt opnemen. Met onthouden worden de keuzes voor volgende imports bewaard. Je beheert ze ook onder Instellingen > KickTheMap."),
             ("Oriëntatie controleren", "Open marXact > Oriëntatie aanpassen. Kies de sleuf en pas zo nodig de Rotatiecorrectie aan met de schuif, het getal of de kleine stappen. Correctie 0° verwijdert de extra correctie; Automatisch opnieuw bepalen berekent de uitlijning opnieuw vanuit de meting."),
             ("Gemeten gegevens bewerken", "Via het contextmenu kun je het bewerkscherm openen. De oorspronkelijke 3D-meetgrenzen en uitlijning worden beschermd. Kies Handmatige kopie als je een afzonderlijke bewerkbare versie met een gewijzigde as nodig hebt. Sla de gewenste wijzigingen daarna in het project op."),
         ],

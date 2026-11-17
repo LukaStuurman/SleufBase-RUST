@@ -135,6 +135,7 @@ pub mod bgt_geometry;
 pub mod bgt_features;
 pub mod ahn;
 pub mod marxact;
+pub mod marxact_names;
 pub mod leader_index;
 pub mod marxact_alignment;
 pub mod cadastral;

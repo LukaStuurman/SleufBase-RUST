@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 
 #[path="ui_file_loading.rs"]
 mod file_loading;
+#[path="ui_marxact_mapping.rs"]
+mod marxact_mapping_ui;
 #[path="ui_kickthemap_login.rs"]
 mod kickthemap_login_ui;
 #[path="ui_exporting.rs"]
@@ -199,6 +201,7 @@ pub struct SleufBaseApp {
     template_preferences:Option<sleufbase_rust::template_prefs::TemplatePreferences>,
     template_job:Option<template_exporting::TemplateJob>,
     file_intent:Option<file_loading::FileIntent>,
+    marxact_mapping:Option<marxact_mapping_ui::Dialog>,
     datasets: Vec<Dataset>,
     geotiffs: Vec<GeoTiffInfo>,
     raster_textures: Vec<Option<egui::TextureHandle>>,
@@ -307,6 +310,7 @@ impl Default for SleufBaseApp {
             template_preferences:None,
             template_job:None,
             file_intent:None,
+            marxact_mapping:None,
             datasets:Vec::new(),
             geotiffs:Vec::new(),
             raster_textures:Vec::new(),
@@ -382,7 +386,7 @@ impl Default for SleufBaseApp {
 }
 
 impl SleufBaseApp {
-    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.overview_ui.busy()}
+    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.overview_ui.busy()||self.marxact_mapping.is_some()}
     fn snapshot(&self) -> NativeProject {
         NativeProject {
             view:Some(self.project_view.clone()),project_settings:self.project_settings.clone(),
@@ -1654,7 +1658,9 @@ impl SleufBaseApp {
             }
         }
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}
+        if self.marxact_mapping.is_some(){self.show_marxact_mapping(ctx);return;}
         self.poll_file_jobs(ctx);
+        if self.marxact_mapping.is_some(){self.show_marxact_mapping(ctx);return;}
         self.process_input_paths(ctx);
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}
         self.try_autosave();
