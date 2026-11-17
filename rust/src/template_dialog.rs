@@ -499,6 +499,8 @@ pub(crate) fn show(
     let contents = |ui: &mut egui::Ui| {
         ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
         ui.spacing_mut().icon_width=18.;
+        // Match Resize's requested height even when the footer uses less space.
+        ui.set_min_height(ui.available_height());
         let footer_height=if d.error.is_empty() {104.} else {128.}
             + if ui.available_width()<440. {28.} else {0.};
         let body_height=(ui.available_height()-footer_height).max(64.);

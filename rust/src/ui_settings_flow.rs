@@ -42,6 +42,7 @@ impl SleufBaseApp {
         self.migrated_settings = saved.settings;
         self.backup_settings = saved.autosave;
         self.rule_editor = None;
+        self.refresh_virtual_editor_settings();
         self.message = "Instellingen opgeslagen".into();
         if let Some(viewer) = saved.viewer {
             if generation != Some(self.project_generation) {

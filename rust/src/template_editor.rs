@@ -19,6 +19,7 @@ pub struct Editor {
     pub number: String,
     pub variant: String,
     pub scale: String,
+    variant_edited: bool,
     labels: Vec<Label>,
 }
 impl Editor {
@@ -70,6 +71,7 @@ impl Editor {
             number: String::new(),
             variant: String::new(),
             scale: String::new(),
+            variant_edited: false,
             labels,
         };
         result.sync(choices);
@@ -104,6 +106,11 @@ impl Editor {
             }),
             "Auto",
         );
+        self.variant_edited = false;
+    }
+    /// Distinguish literal input from the unchanged mixed-selection placeholder.
+    pub fn mark_variant_edited(&mut self) {
+        self.variant_edited = true;
     }
     pub fn select(&mut self, choices: &[Choice], index: usize, control: bool, shift: bool) {
         if index >= choices.len() {
@@ -172,21 +179,28 @@ impl Editor {
                     .ok_or("Vul een positief of nul PS-nummer in, bijvoorbeeld 5 of PS5.")?,
             )
         };
-        let variant = if self.variant.trim().eq_ignore_ascii_case("gemengd") {
+        let variant = if !self.variant_edited && self.variant.trim().eq_ignore_ascii_case("gemengd") {
             None
         } else {
             let raw = self.variant.trim();
-            let raw = if raw.eq_ignore_ascii_case("geen variant") {
-                String::new()
-            } else if raw.to_uppercase().starts_with("VARIANT ") {
-                raw[8..].into()
-            } else if raw.eq_ignore_ascii_case("automatisch (b/c/d...)") {
-                "AUTO".into()
-            } else {
-                raw.into()
-            };
-            Some(template_order::variant(&serde_json::Value::String(raw)))
+            // The legacy metadata decoder treats unrecognised text as AUTO.
+            // User input is instead a literal suffix; only AUTO is reserved.
+            Some(if raw.eq_ignore_ascii_case("AUTO") { "AUTO".into() } else { raw.to_owned() })
         };
+        // Validate every resulting label before changing any selected source.
+        for (i,c) in choices.iter().enumerate() {
+            if self.selected[i] && c.include && !matches!(c.source, Source::Empty(_)) {
+                let n=number.as_ref().unwrap_or(&self.labels[i].number);
+                let v=variant.as_ref().unwrap_or(&self.labels[i].variant);
+                let label=format!("PS{n}{v}");
+                let normalized=template_order::typed_label(&label).ok_or(
+                    "Het nummer met variant is te lang of bevat niet-ondersteunde tekens. Gebruik een kort label op één regel."
+                )?;
+                if normalized!=label {
+                    return Err("Dit nummer met deze variant zou bij export anders worden gelezen. Begin de variant met een letter of een teken zoals '-', bijvoorbeeld B1 of -2.".into());
+                }
+            }
+        }
         for (i, c) in choices.iter_mut().enumerate() {
             if self.selected[i] && c.include && !matches!(c.source, Source::Empty(_)) {
                 if let Some(n) = &number {

@@ -3,7 +3,6 @@
 use super::*;
 
 const SURFACE: Color32 = Color32::from_rgb(119, 89, 59);
-const CABLE: Color32 = Color32::from_rgb(37, 99, 235);
 
 #[derive(Clone, Copy)]
 struct Section {
@@ -93,7 +92,7 @@ fn measured_depth(
 }
 
 impl Editor {
-    pub(super) fn show_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn show_section(&mut self, ui: &mut egui::Ui, rules: &[sleufbase_rust::Rule]) {
         ui.small(if self.selected.is_some() {
             "Sleep een object om de afstand en diepte te wijzigen. Kies Nieuwe kabel/leiding om er een bij te plaatsen."
         } else {
@@ -266,10 +265,8 @@ impl Editor {
         let mut hit: Option<(f32, Option<usize>, Pos2)> = None;
         for (index, along, depth, object) in objects {
             let point = section.point(along, depth);
-            let rgb = sleufbase_rust::virtual_raster::display_rgb(&object.metadata);
-            let color = rgb
-                .map(|[r, g, b]| Color32::from_rgb(r, g, b))
-                .unwrap_or(CABLE);
+            let color = utility_color(&object.source_name,
+                sleufbase_rust::virtual_raster::display_rgb(&object.metadata), rules);
             let radius = section.radius(object_diameter(object));
             painter.circle_filled(point, radius, color);
             let label_beside = depth.is_none() || point.y - radius - 18. < plot.top();
@@ -301,12 +298,10 @@ impl Editor {
         if active {
             let point = section.point(self.object.chainage, active_depth);
             let radius = section.radius(self.object.diameter);
-            let rgb = self.object.rgb;
             painter.circle_filled(
                 point,
                 radius,
-                rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b))
-                    .unwrap_or(CABLE),
+                utility_color(&self.object.source, self.object.rgb, rules),
             );
             painter.circle_stroke(point, radius + 2., Stroke::new(2.0_f32, ORANGE));
             let diameter = if self.object.diameter > 0. {

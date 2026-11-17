@@ -1,35 +1,55 @@
-## SleufBase Rust 1.0.18 voor Windows
+## SleufBase Rust 1.0.19 voor Windows
 
-### Iedere marXact-import begint met naamkoppelingen
+### Typekleuren in de virtuele proefsleufeditor
 
-- Na het lezen van een geldig marXact-bestand verschijnt **altijd** het venster **marXact: kabels en leidingen koppelen**. Ook als alle namen al bekend zijn, controleer je de koppelingen vóór de metingen worden toegevoegd.
-- Per bronnaam zie je het aantal meetobjecten en kies je een kabel- of leidingtype uit de actieve woordenlijst. Opgeslagen koppelingen staan vooraf ingevuld. Onbekende namen vragen een bewuste keuze; met **Negeren** laat je niet-gewenste meetpunten weg.
-- **Deze koppelingen onthouden voor volgende imports** staat standaard aan. De koppelingen blijven beschikbaar na herstart en bij andere projecten. Je kunt onthouden uitschakelen voor alleen de huidige import.
-- De oorspronkelijke marXact-laagnamen krijgen de juiste voorstellen, onder andere laag-/middenspanning, gas met lage/hoge druk en beide riooltypen. Deze expliciete koppelingen voorkomen onjuiste herkenning door losse woorddelen.
-- **Annuleren**, sluiten en een projectwissel voegen niets toe. Wanneer opslaan van de koppelingen mislukt, blijven je keuzes beschikbaar.
-- Het koppelen of negeren verandert geen gemeten sleufgrens, meetas of XYZ-coördinaten van behouden objecten. De originele meetnamen en eigenschappen blijven bij de objecten bewaard.
+- Kabels en leidingen uit marXact gebruiken nu ook in **Proefsleuf bewerken** de kleuren uit de actieve objectregels.
+- Dit geldt voor de doorsnede, het bovenaanzicht, de kleurmarkeringen in de objectenlijst en de geselecteerde kabel of leiding. De oranje selectierand blijft herkenbaar.
+- Een expliciet opgeslagen objectkleur heeft voorrang op de typekleur.
+- Wanneer je instellingen of objectregels opslaat terwijl de editor openstaat, worden de effectieve editorinstellingen vernieuwd. Projectgebonden kleuren blijven leidend en de lopende conceptbewerking blijft behouden.
+- De correctie verandert de weergave; de oorspronkelijke meetcoördinaten en objecteigenschappen blijven behouden.
 
-### Juiste kabelkleuren in de DXF-sjabloonexport
+### Vrije tekst bij Variant in de DXF-sjabloonexport
 
-Kabels en leidingen zonder een eigen vastgelegde kleur gebruiken nu de kleuren uit de actieve objectregels in het detailraster, de kaart en het overzicht van de DXF-sjabloonexport. Dit herstelt de vaste blauwe weergave van marXact en oudere virtuele proefsleuven. Eigen objectkleuren en de echte pixels van TIFF-beelden, luchtfoto's en foto's blijven behouden.
+- **Variant** is nu een blijvend bewerkbaar tekstveld met een keuzepijl voor de bestaande standaardvarianten.
+- Je kunt bijvoorbeeld **B1**, **-2** of een eigen omschrijving invullen. Met **Nummer/variant toepassen** neem je de tekst over voor de geselecteerde proefsleuven.
+- Eigen varianttekst wordt als achtervoegsel verwerkt en niet meer door de oude metadataherkenning naar een automatische variant omgezet.
+- Een leeg veld betekent geen variant. De keuze **Automatisch (B/C/D...)** blijft beschikbaar via de keuzelijst.
+- De bestaande controle op geldige labels blijft actief. Een ongeldige combinatie geeft een melding voordat geselecteerde labels worden gewijzigd.
 
-### Dubbelklikken op overlays
+### Openen in de KickTheMap-browser
 
-Dubbelklik in **Overlays** op een jobobjectlaag of DXF/DWG-tekening om naar de grenzen van die laag te zoomen, met dezelfde camerabediening als bij Proefsleuven. Een enkele klik selecteert de laag; de ingestelde zichtbaarheid blijft behouden.
+- Een beschikbare aangemelde browser van hetzelfde account wordt hergebruikt en naar een apart venster verplaatst. De webpagina, browseropslag en aanmelding blijven daarbij in hetzelfde browserproces.
+- Een nieuw jobvenster start zonder een gelijktijdig aanmeldverzoek dat de overdracht van de bestaande sessie kan verstoren. Bij een browseraanmelding wordt dezelfde browseridentificatie gebruikt voor vervolgaanvragen.
+- Als opnieuw aanmelden nodig is, verschijnt het aanmeldscherm in het aparte browservenster. Na gecontroleerde aanmelding wordt de gekozen job hervat als die nog bij de huidige sessie en het huidige project hoort.
+- Een ontbrekende overdraagbare native sessie blokkeert het openen van het aanmeldvenster niet meer.
+- Annuleren, uitloggen en een projectwissel stoppen een oude aanvraag, zodat een vertraagd antwoord niet alsnog een eerdere job opent.
 
-### KickTheMap-jobbrowser en aanmelding
+### Zoomen in de jobskaart
 
-De bestaande aanmelding wordt overgedragen aan de cookieopslag van het concrete jobvenster en daar gecontroleerd vóór de jobpagina opent. Een hergebruikt venster dat terug op de aanmeldpagina staat kan eenmaal worden hersteld vanuit de actuele aanmelding van SleufBase. Een fout in het aparte venster wordt niet meer ten onrechte gemeld als een verlopen aanmelding van het gehele programma. Een nog geopende tekening wordt eerst hergebruikt om conceptinvoer te behouden.
+- Zoomen met het muiswiel houdt het kaartpunt onder de muis op dezelfde plek, ook bij een breed of hoog jobsvenster.
+- De minimale en maximale kaartschaal volgen dezelfde grenzen als de hoofdkaart.
 
-### Jobs-kaart blijft zichtbaar tijdens bewegen
+### Duidelijker menu Acties
 
-Beschikbare kaartdelen schuiven op hun juiste geografische positie mee tijdens verplaatsen en zoomen. Ontbrekende kaartdelen kunnen ook tijdens het slepen worden opgehaald. Aanvragen worden begrensd en bruikbare lopende downloads mogen afronden. Een kaartvernieuwing of mislukte download wist het beschikbare kaartbeeld niet.
+- **Zoom naar alles** heet nu **Zoom naar extent**.
+- De groepen in **Acties** zijn van elkaar gescheiden door zichtbare horizontale lijnen.
 
-### Controle
+### Verder inzoomen op percelen
 
-De meegeleverde marXact-DXF is lokaal met de Rust-importeur ingelezen: **26 proefsleuven, 211 toegewezen meetobjecten en 15 verschillende bronnamen**. De controle omvat naamkoppelingen, behoud van meetgeometrie en eigenschappen en opslaan/opnieuw lezen van het project. De oorspronkelijke tekening is niet in de repository opgenomen.
+- De percelenachtergrond blijft zichtbaar wanneer je verder inzoomt dan de kleinste schaal waarop PDOK de perceellagen aanlevert.
+- SleufBase gebruikt daarvoor de fijnste beschikbare bronweergave en vergroot die naar de gevraagde kaartuitsnede. Verder inzoomen voegt geen nieuwe brongegevens toe.
+- Dit geldt ook voor **luchtfoto met percelen** en **OpenStreetMap met percelen**, inclusief perceelgrenzen, labels en bijpijlingen. De onderliggende kaart behoudt zijn eigen detail.
+- De RD-uitlijning en de aangevraagde kaartuitsnede blijven behouden; transparante perceellagen worden met behoud van hun transparantie over de basiskaart gelegd.
 
-Gerichte regressies dekken de koppeldialoog en opslag, semantische exportkleuren, overlayzoom, browseroverdracht en het behouden van het kaartbeeld tijdens bewegen. De Windows-build en publicatieworkflow controleren de installer, portable ZIP, versie, bronrevisie en SHA-256-controlesommen. De KickTheMap-overdracht is gecontroleerd met synthetische browserantwoorden; hiervoor is geen echte accountaanmelding uitgevoerd.
+### Vensters zonder sprong bij het resizen
+
+- **Proefsleuf bewerken** vult vanaf het openen de beschikbare vensterhoogte. De onderste knoppen en meldingen krijgen hun werkelijke ruimte, zodat een eerste resize niet langer uitgaat van een andere hoogte dan het zichtbare venster.
+- De editor blijft verplaatsbaar en behoudt zijn onthouden vensterpositie. Alleen bij de eerste opening wordt een beginpositie binnen de schermmarge gekozen.
+- Ook de twee DXF-sjabloonexportvensters vullen hun beschikbare hoogte, zodat daar dezelfde afwijking tussen zichtbare en opgeslagen venstermaten wordt voorkomen.
+
+### Publicatie zonder tests
+
+Op verzoek zijn voor deze release geen tests uitgevoerd. De releaseworkflow bouwt de Windows-toepassing, maakt de installer en portable ZIP en controleert de pakketinhoud, versie, bronrevisie en SHA-256-controlesommen. De teststappen en Clippy worden overgeslagen.
 
 ### Downloaden en bijwerken
 

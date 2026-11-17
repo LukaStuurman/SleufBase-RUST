@@ -184,17 +184,37 @@ fn job_matches_filters(job:&Job,filters:&[String;7])->bool{
             .to_lowercase().contains(&filter.trim().to_lowercase())
     })
 }
+enum OpenedJob {Ready(String),SigninRequired}
 struct OpeningJob {
-    events: Receiver<Result<(Browser, Result<String, String>), String>>,
+    events: Receiver<Result<(Browser, Result<OpenedJob, String>), String>>,
     job: Job,
     owner: sleufbase_rust::jobs_cache::SnapshotOwner,
     cancel: Arc<AtomicBool>,
     preserve_editor: bool,
     reused_browser: bool,
+    allow_recovery:bool,
+    project_generation:u64,
+    expected_url:Option<String>,
     capture_generation: Option<u64>,
 }
 impl Drop for OpeningJob {
     fn drop(&mut self) { self.cancel.store(true, Ordering::Release); }
+}
+#[derive(Clone)]
+struct PendingJobResume {
+    job_id:u64,
+    owner:sleufbase_rust::jobs_cache::SnapshotOwner,
+    project_generation:u64,
+    expected_url:Option<String>,
+    capture_generation:Option<u64>,
+}
+struct JobLogin {
+    events:Receiver<(Browser,Result<(KickTheMapLiveClient,Vec<Job>),String>)>,
+    cancel:Arc<AtomicBool>,
+    pending:PendingJobResume,
+}
+impl Drop for JobLogin {
+    fn drop(&mut self){self.cancel.store(true,Ordering::Release);}
 }
 
 enum RepairSource{
@@ -230,6 +250,7 @@ pub(super) struct BrowserUi {
     map_loading:Option<Receiver<Result<OsmRaster,String>>>,
     map_status:String,
     opening_job:Option<OpeningJob>,
+    job_login:Option<JobLogin>,
     editor_owner:Option<sleufbase_rust::jobs_cache::SnapshotOwner>,
     pub(super) tools:kick_browser_tools::State,
     pub(super) reloading:Option<kick_browser_reload_ui::JobReload>,
@@ -250,8 +271,9 @@ pub(super) struct BrowserUi {
 impl BrowserUi {
     pub(super) fn cancel_pending_job_open(&self) {
         if let Some(task)=&self.opening_job {task.cancel.store(true,Ordering::Release);}
+        if let Some(task)=&self.job_login {task.cancel.store(true,Ordering::Release);}
     }
-    pub(super) fn is_opening_job(&self)->bool {self.opening_job.is_some()}
+    pub(super) fn is_opening_job(&self)->bool {self.opening_job.is_some()||self.job_login.is_some()}
 
     fn select_row(&mut self, ordered:&[u64], position:usize, extend:bool) {
         let id=ordered[position];
@@ -296,7 +318,7 @@ impl Default for BrowserUi {
             only_downloadable:false,only_loaded:false,only_selected:false,
             sort_column:3,sort_descending:true,
             map_open:false,map_bounds:None,map_interaction:Default::default(),map_texture:None,map_loading:None,
-            map_status:String::new(),opening_job:None,editor_owner:None,
+            map_status:String::new(),opening_job:None,job_login:None,editor_owner:None,
             tools:Default::default(),reloading:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
@@ -311,6 +333,61 @@ pub(super) struct BrowserLogin {
     jobs:Vec<Job>,
     remember:bool,
     cookies:Option<serde_json::Value>,
+}
+
+#[cfg(not(test))]
+fn check_browser_cancel(cancel:&AtomicBool)->Result<(),String>{
+    if cancel.load(Ordering::Acquire){Err("Aanmelden geannuleerd.".into())}else{Ok(())}
+}
+
+#[cfg(not(test))]
+fn verify_browser_login(browser:&Browser,csrf:&str,known_nonempty:bool,cancel:&AtomicBool)
+    ->Result<(KickTheMapLiveClient,Vec<Job>),String>
+{
+    check_browser_cancel(cancel)?;
+    let cookies=browser.cookies()?;
+    let user_agent=browser.user_agent()?;
+    check_browser_cancel(cancel)?;
+    let mut session=KickTheMapLiveClient::from_authenticated_browser_with_user_agent(&cookies,csrf,&user_agent)?;
+    if known_nonempty{session.require_empty_confirmation();}
+    let jobs=session.fetch_jobs_from_browser(||{
+        check_browser_cancel(cancel)?;
+        browser.browser_job_payload()
+    })?;
+    check_browser_cancel(cancel)?;
+    Ok((session,jobs))
+}
+
+#[cfg(not(test))]
+fn wait_for_job_login(mut browser:Browser,known_nonempty:bool,cancel:&AtomicBool)
+    ->(Browser,Result<(KickTheMapLiveClient,Vec<Job>),String>)
+{
+    let result=(||{
+        let deadline=Instant::now()+Duration::from_secs(10*60);
+        let mut failures=0;
+        while Instant::now()<deadline {
+            check_browser_cancel(cancel)?;
+            if browser.is_closed(){return Err("Het KickTheMap-aanmeldvenster is gesloten.".into());}
+            if let Ok(csrf)=browser.csrf_token(){
+                match verify_browser_login(&browser,&csrf,known_nonempty,cancel) {
+                    Ok(session)=>return Ok(session),
+                    Err(error)=>{
+                        check_browser_cancel(cancel)?;
+                        failures+=1;
+                        if failures>=3{return Err(format!("De browseraanmelding kon de joblijst niet bevestigen: {error}"));}
+                    }
+                }
+            }else{failures=0;}
+            for _ in 0..10 {
+                check_browser_cancel(cancel)?;
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        }
+        Err("Aanmelden heeft te lang geduurd. Open de job opnieuw om verder te gaan.".into())
+    })();
+    // Return the owned WebView on every outcome. Only the UI can adopt its
+    // identity or discard a cancelled request; workers never show it again.
+    (browser,result)
 }
 
 #[cfg(not(test))]
@@ -349,14 +426,6 @@ fn connect_browser(
         // Navigate to the authenticated landing page to try that session.
         browser.open_account_home()?;
     }
-    let try_session=|browser:&Browser,csrf:&str| {
-
-        let cookies=browser.cookies()?;
-        let mut session=KickTheMapLiveClient::from_authenticated_browser(&cookies,csrf)?;
-        if known_nonempty{session.require_empty_confirmation();}
-        let jobs=session.fetch_jobs_from_browser(||browser.browser_job_payload())?;
-        Ok::<_,String>((session,jobs))
-    };
     if !restored && !restore_only{
         check_cancel()?;
         browser.set_visible(true)?;
@@ -369,7 +438,7 @@ fn connect_browser(
         check_cancel()?;
         if browser.is_closed(){return Err("Het inlogvenster is gesloten.".into());}
         if let Ok(csrf)=browser.csrf_token(){
-            match try_session(&browser,&csrf){
+            match verify_browser_login(&browser,&csrf,known_nonempty,cancel){
                 Ok((session,jobs))=>{
                     check_cancel()?;
                     browser.set_visible(false)?;
@@ -405,8 +474,11 @@ fn connect_browser(
 
 impl SleufBaseApp {
     fn finish_kickthemap_login(&mut self,login:BrowserLogin,automatic:bool){
+        self.adopt_kickthemap_login(login,automatic,true);
+    }
+    fn adopt_kickthemap_login(&mut self,login:BrowserLogin,automatic:bool,persist:bool){
         use sleufbase_rust::kickthemap_session as stored;
-        let storage=if login.remember{
+        let storage=if !persist{Ok(())}else if login.remember{
             stored::save(login.cookies.unwrap_or(serde_json::Value::Null))
         }else{stored::sign_out()};
         // Saved browser cookies never share identity with an editable email.
@@ -415,6 +487,7 @@ impl SleufBaseApp {
         self.shell.login_pending_account=None;
         if self.live_jobs_owner.as_ref()!=Some(login.session.snapshot_owner()){
             self.browser_ui.selected.clear();
+            self.browser_ui.selection_anchor=None;
             self.jobs_cache=None;
         }
         self.live_jobs_owner=Some(login.session.snapshot_owner().clone());
@@ -436,6 +509,73 @@ impl SleufBaseApp {
                 " De eerdere bewaarde aanmelding kon niet worden vervangen of uitgeschakeld."
             });
         }
+    }
+    fn start_kickthemap_job_login(&mut self,browser:Browser,pending:PendingJobResume){
+        let (tx,rx)=mpsc::channel();
+        let cancel=Arc::new(AtomicBool::new(false));
+        let known_nonempty=!self.live_jobs.is_empty();
+        self.browser_ui.tools.cancel();
+        self.browser_ui.tools=Default::default();
+        self.browser_ui.editor_owner=None;
+        self.browser_ui.browser=None;
+        self.browser_ui.job_login=Some(JobLogin{events:rx,cancel:cancel.clone(),pending});
+        self.browser_ui.job_window_open=true;
+        self.browser_ui.status="Meld je aan in het aparte KickTheMap-venster. De geselecteerde job opent daarna automatisch.".into();
+        self.message=self.browser_ui.status.clone();
+        #[cfg(not(test))]
+        std::thread::spawn(move||{
+            let _=tx.send(wait_for_job_login(browser,known_nonempty,&cancel));
+        });
+        #[cfg(test)]
+        {let _=(browser,known_nonempty,cancel,tx);}
+    }
+    fn poll_kickthemap_job_login(&mut self,ctx:&egui::Context){
+        let event=self.browser_ui.job_login.as_ref().map(|task|task.events.try_recv());
+        let result=match event {
+            Some(Ok(result))=>Ok(result),
+            Some(Err(TryRecvError::Disconnected))=>Err("Browseraanmelding onderbroken. Open de job opnieuw.".to_owned()),
+            Some(Err(TryRecvError::Empty))=>{ctx.request_repaint_after(Duration::from_millis(150));return;}
+            None=>return,
+        };
+        let Some(task)=self.browser_ui.job_login.take() else{return;};
+        let pending=&task.pending;
+        let same_owner=self.live_jobs_owner.as_ref()==Some(&pending.owner)
+            &&self.live_session.as_ref().is_some_and(|session|session.snapshot_owner()==&pending.owner);
+        let current_project=pending.project_generation==self.project_generation;
+        let cancelled=task.cancel.load(Ordering::Acquire);
+        match result {
+            Ok((browser,Ok((session,jobs)))) if same_owner&&current_project&&!cancelled&&!browser.close_requested()=>{
+                let same_job=pending.expected_url.as_deref().is_some_and(|expected|
+                    session.verified_job_url(pending.job_id)==Some(expected))
+                    &&jobs.iter().any(|job|job.job_id==pending.job_id);
+                // Only a fully verified browser account replaces the native
+                // client. Saved login choices remain unchanged by recovery.
+                self.adopt_kickthemap_login(BrowserLogin{browser,session,jobs,remember:false,cookies:None},true,false);
+                if same_job {
+                    self.open_kickthemap_job_attempt(pending.job_id,pending.capture_generation,false);
+                }else{
+                    self.browser_ui.open=true;
+                    self.browser_ui.status="Browseraanmelding bevestigd. De eerdere job hoort niet aantoonbaar bij deze sessie; selecteer de gewenste job opnieuw.".into();
+                }
+            }
+            result=>{
+                let error=match result {
+                    Ok((browser,result))=>{
+                        let _=browser.set_visible(false);
+                        // Never expose an unverified recovery profile as a
+                        // fallback for the old native client's SnapshotOwner.
+                        result.err().unwrap_or_else(||"Browseraanmelding geannuleerd.".into())
+                    }
+                    Err(error)=>error,
+                };
+                if same_owner {self.hide_kickthemap_job_window();}
+                self.browser_ui.status=if !same_owner {"Browseraanmelding niet overgenomen: de actieve aanmelding is gewijzigd.".into()}
+                    else if !current_project {"Project gewijzigd; de eerdere browseractie is geannuleerd.".into()}
+                    else if cancelled {"Browseraanmelding geannuleerd. Je eerdere KickTheMap-sessie blijft beschikbaar.".into()}
+                    else {format!("Browseraanmelding niet overgenomen: {error}")};
+            }
+        }
+        self.message=self.browser_ui.status.clone();
     }
     fn repair_kickthemap_download(&mut self,id:u64,path:PathBuf) {
         self.start_kickthemap_repair(id,RepairSource::File(path));
@@ -461,8 +601,11 @@ impl SleufBaseApp {
         let pending=self.browser_ui.opening_job.as_ref()
             .filter(|task|task.capture_generation.is_some());
         if let Some(task)=pending {task.cancel.store(true,Ordering::Release);}
+        let recovering=self.browser_ui.job_login.as_ref()
+            .filter(|task|task.pending.capture_generation.is_some());
+        if let Some(task)=recovering {task.cancel.store(true,Ordering::Release);}
         let active=self.manual_kickthemap_capture_active();
-        if pending.is_none()&&!active{return;}
+        if pending.is_none()&&recovering.is_none()&&!active{return;}
         if active{self.browser_ui.cancel.store(true,Ordering::Release);}
         self.browser_ui.status="Handmatige GeoTIFF-vastlegging annuleren…".into();
         self.message=self.browser_ui.status.clone();
@@ -510,7 +653,7 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.opening_job.is_some()
+        self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.is_opening_job()
             ||self.browser_ui.reloading.is_some()||self.browser_ui.tools.writing()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {
@@ -617,6 +760,7 @@ impl SleufBaseApp {
         self.shell.login_password.clear();
         self.browser_ui.show_password=false;
         self.browser_ui.login_cancel.store(true,Ordering::Relaxed);
+        self.hide_kickthemap_job_window();
         self.hide_kickthemap_pane();
         self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
@@ -634,9 +778,9 @@ impl SleufBaseApp {
             self.browser_ui.status=self.message.clone();
         }
         let changed_project=self.browser_ui.opening_job.as_ref().is_some_and(|task|
-            task.capture_generation.is_some_and(|generation|generation!=self.project_generation));
+            task.project_generation!=self.project_generation)
+            ||self.browser_ui.job_login.as_ref().is_some_and(|task|task.pending.project_generation!=self.project_generation);
         if changed_project {
-            if let Some(task)=&self.browser_ui.opening_job {task.cancel.store(true,Ordering::Release);}
             self.hide_kickthemap_job_window();
         }
         let opening=self.browser_ui.opening_job.as_ref().map(|task|task.events.try_recv());
@@ -651,19 +795,24 @@ impl SleufBaseApp {
             if let Some(task)=self.browser_ui.opening_job.take() {
                 let same_owner=self.live_jobs_owner.as_ref()==Some(&task.owner)
                     && self.live_session.as_ref().is_some_and(|session|session.snapshot_owner()==&task.owner);
-                let cancelled=task.cancel.load(Ordering::Acquire);
+                let cancelled=task.cancel.load(Ordering::Acquire)||task.project_generation!=self.project_generation;
                 if same_owner {
+                    let recovery_required=matches!(&result,Ok((_,Ok(OpenedJob::SigninRequired))));
                     // Only the owning UI may show/focus an accepted job. A
                     // cancelled worker must never undo a later hide/login.
                     let result=match result {
-                        Ok((browser,Ok(url))) if !cancelled=>{
-                            let visible=browser.set_visible(true).map(|()|url);
+                        Ok((browser,Ok(OpenedJob::Ready(url)))) if !cancelled=>{
+                            let visible=browser.set_visible(true).map(|()|OpenedJob::Ready(url));
+                            Ok((browser,visible))
+                        }
+                        Ok((browser,Ok(OpenedJob::SigninRequired))) if !cancelled&&task.allow_recovery=>{
+                            let visible=browser.set_visible(true).map(|()|OpenedJob::SigninRequired);
                             Ok((browser,visible))
                         }
                         result=>result,
                     };
                     match result {
-                        Ok((browser,Ok(url))) if !cancelled=>{
+                        Ok((browser,Ok(OpenedJob::Ready(url)))) if !cancelled=>{
                             let same_editor=task.preserve_editor && self.browser_ui.editor_owner.as_ref()==Some(&task.owner)
                                 && self.browser_ui.tools.job.as_ref().is_some_and(|job|job.job_id==task.job.job_id)
                                 && self.browser_ui.tools.expected_url==url;
@@ -676,24 +825,34 @@ impl SleufBaseApp {
                                 capture_after_open=Some(task.job.job_id);
                             }
                         }
+                        Ok((browser,Ok(OpenedJob::SigninRequired))) if !cancelled&&task.allow_recovery=>{
+                            self.start_kickthemap_job_login(browser,PendingJobResume{
+                                job_id:task.job.job_id,owner:task.owner.clone(),
+                                project_generation:task.project_generation,expected_url:task.expected_url.clone(),
+                                capture_generation:task.capture_generation,
+                            });
+                        }
                         result=>{
                             let error=match result {
                                 Ok((browser,result))=>{
                                     // A failed live verification must not destroy a
                                     // previously open drawing with unsaved geometry.
-                                    if task.reused_browser {self.browser_ui.browser=Some(browser);}
-                                    result.err().unwrap_or_else(||"Openen geannuleerd".into())
+                                    let signin=matches!(&result,Ok(OpenedJob::SigninRequired));
+                                    if task.reused_browser&&!recovery_required {self.browser_ui.browser=Some(browser);}
+                                    if signin&&!cancelled {"De browser is aangemeld, maar deze job verwijst opnieuw naar aanmelden. Controleer je toegang en open de job opnieuw.".into()}
+                                    else{result.err().unwrap_or_else(||"Openen geannuleerd".into())}
                                 }
                                 Err(error)=>error,
                             };
                             self.hide_kickthemap_job_window();
-                            self.browser_ui.status=if changed_project {"Project gewijzigd; handmatige GeoTIFF-vastlegging niet gestart.".into()}
+                            self.browser_ui.status=if changed_project {"Project gewijzigd; jobvenster of handmatige GeoTIFF-vastlegging niet gestart.".into()}
                                 else if cancelled {"Jobvenster openen geannuleerd.".into()}
                                 else {format!("Job openen mislukt: {error}")};
                         }
                     }
                 }else{
-                    self.hide_kickthemap_job_window();
+                    // This result belongs to the former account. Dropping its
+                    // owned browser must not hide a newer account's dock.
                     self.browser_ui.status="Jobvenster niet overgenomen: de aanmelding is gewijzigd.".into();
                 }
                 self.message=self.browser_ui.status.clone();
@@ -702,6 +861,7 @@ impl SleufBaseApp {
         // OpeningJob owns a different cancellation flag; dropping it must not
         // cancel the capture that starts after the browser is back in the UI.
         if let Some(id)=capture_after_open{self.begin_kickthemap_download_capture(id);}
+        self.poll_kickthemap_job_login(ctx);
         jobs_map::poll_background(ctx,&mut self.browser_ui);
         match self.browser_ui.capture_status.as_ref().map(|rx|rx.try_recv()){
             Some(Ok(status))=>{
@@ -819,16 +979,17 @@ impl SleufBaseApp {
     pub(super) fn reset_kickthemap_editor(&mut self) {
         self.hide_kickthemap_job_window();
         self.browser_ui.opening_job=None; // Drop cancels the worker and rejects late results.
+        self.browser_ui.job_login=None;
         self.browser_ui.tools.cancel();
         self.browser_ui.tools=Default::default();
         self.browser_ui.editor_owner=None;
     }
 
     pub(super) fn cancel_kickthemap_job_open(&mut self) {
-        if let Some(task)=&self.browser_ui.opening_job {
+        if self.browser_ui.is_opening_job() {
             // Keep the receiver until the worker returns an existing browser;
             // cancellation must not close an unsaved provider drawing.
-            task.cancel.store(true,Ordering::Release);
+            self.browser_ui.cancel_pending_job_open();
             self.browser_ui.status="Jobvenster openen annuleren…".into();
             self.message=self.browser_ui.status.clone();
         }
@@ -839,6 +1000,9 @@ impl SleufBaseApp {
         self.open_kickthemap_job(id,None);
     }
     fn open_kickthemap_job(&mut self,id:u64,capture_generation:Option<u64>){
+        self.open_kickthemap_job_attempt(id,capture_generation,true);
+    }
+    fn open_kickthemap_job_attempt(&mut self,id:u64,capture_generation:Option<u64>,allow_recovery:bool){
         if self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         let Some(session)=self.live_session.as_ref() else {
             self.browser_ui.status="Meld je eerst aan bij KickTheMap.".into();return;
@@ -851,24 +1015,29 @@ impl SleufBaseApp {
             self.browser_ui.status="Deze job staat niet in de huidige live joblijst.".into();return;
         };
         let same_owner=self.browser_ui.editor_owner.as_ref()==Some(&owner);
-        let reuse_browser=same_owner && self.browser_ui.browser.as_ref().is_some_and(Browser::is_detached)
-            && self.browser_ui.dock.as_ref().is_some_and(BrowserDock::is_detached);
-        // The native HTTP session may have refreshed its cookies while this
-        // separate window was hidden. Keep a current snapshot for a bounded
-        // recovery if the existing window is back on the sign-in page.
-        let cookies=match session.embedded_session_cookies() {
-            Ok(cookies)=>Some(cookies),
-            Err(_) if reuse_browser=>None,
-            Err(error)=>{self.browser_ui.status=error;return;}
-        };
+        let reuse_browser=same_owner && self.browser_ui.browser.is_some()&&self.browser_ui.dock.is_some();
+        let expected_url=session.verified_job_url(id).map(str::to_owned);
+        let user_agent=session.browser_user_agent().map(str::to_owned);
+        // Keep the complete authenticated WebView profile when it exists.
+        // Native-only clients may attempt a narrow transfer; an unavailable
+        // snapshot goes straight to visible browser sign-in instead of failing.
+        let cookies=if reuse_browser{None}else{session.embedded_session_cookies().ok()};
         #[cfg(not(test))]
-        let dock=match if reuse_browser {self.browser_ui.dock.clone().map(Ok).unwrap_or_else(BrowserDock::detached)}
+        let dock=match if reuse_browser {self.browser_ui.dock.as_ref().map(|dock|Ok(dock.detached_clone())).unwrap_or_else(BrowserDock::detached)}
             else {BrowserDock::detached()} {
             Ok(dock)=>dock,
             Err(error)=>{self.browser_ui.status=error.to_string();return;}
         };
         #[cfg(not(test))]
         {
+            if allow_recovery {
+                if let Err(error)=dock.begin_open(){self.browser_ui.status=error.to_string();return;}
+            }
+            if !reuse_browser {
+                if let Some(user_agent)=user_agent.as_deref(){
+                    if let Err(error)=dock.set_user_agent(user_agent){self.browser_ui.status=error;return;}
+                }
+            }
             let settings=self.project_settings.as_ref().unwrap_or(&self.migrated_settings);
             let prepared=sleufbase_rust::kickthemap_page_editor::PageConfig::from_settings(settings)
                 .initialization_script().and_then(|script|dock.set_page_editor(&script));
@@ -883,7 +1052,8 @@ impl SleufBaseApp {
         let browser=if reuse_browser {self.browser_ui.browser.take()} else {None};
         let (tx,rx)=mpsc::channel();
         let cancel=Arc::new(AtomicBool::new(false));
-        self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser,capture_generation});
+        self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser,
+            project_generation:self.project_generation,expected_url,capture_generation,allow_recovery});
         self.browser_ui.web_visible=false;
         self.browser_ui.job_window_open=true;
         self.shell.login_open=false;
@@ -895,14 +1065,25 @@ impl SleufBaseApp {
             self.browser_ui.dock=Some(dock.clone());
             let _=std::thread::Builder::new().name("kickthemap-open-job".into()).spawn(move||{
                 let result=(||{
-                    let browser=match browser {
+                    let mut browser=match browser {
                         Some(browser)=>browser,
                         None=>Browser::launch_embedded_with_cancel(dock,host,false,&cancel)?,
                     };
-                    let result=match cookies {
-                        Some(cookies) if reuse_browser=>browser.open_job_with_native_session_hidden(&cookies,id,&cancel),
-                        Some(cookies)=>browser.prepare_authenticated_job_hidden(&cookies,id,&cancel),
-                        None=>browser.open_job_hidden(id,&cancel),
+                    if reuse_browser {
+                        if let Err(error)=browser.promote_to_detached(&cancel){return Ok((browser,Err(error)));}
+                    }
+                    let result=if reuse_browser {
+                        browser.open_job_hidden(id,&cancel)
+                    }else if let Some(cookies)=cookies {
+                        browser.prepare_authenticated_job_hidden(&cookies,id,&cancel)
+                    }else{
+                        let result=browser.open_signin_hidden(&cancel).map(|()|OpenedJob::SigninRequired);
+                        return Ok((browser,result));
+                    };
+                    let result=match result {
+                        Ok(url)=>Ok(OpenedJob::Ready(url)),
+                        Err(error) if Browser::requires_signin(&error)=>Ok(OpenedJob::SigninRequired),
+                        Err(error)=>Err(error),
                     };
                     Ok((browser,result))
                 })();
@@ -911,7 +1092,7 @@ impl SleufBaseApp {
         }
         #[cfg(test)]
         {
-            let _=(browser,cookies,cancel);
+            let _=(browser,cookies,cancel,user_agent);
             self.browser_ui.launch_requests+=1;
             let _=tx.send(Err("Test: jobbrowser niet gestart".into()));
         }
@@ -931,7 +1112,7 @@ impl SleufBaseApp {
         let busy=self.live_operation_busy();
         let refreshing=self.live_refresh.is_some();
         let downloading=self.live_download_rx.is_some()||self.browser_ui.batch_mode;
-        let signing_in=self.browser_ui.capturing.is_some()||(self.live_rx.is_some()&&self.shell.login_is_native);
+        let signing_in=self.browser_ui.capturing.is_some()||self.browser_ui.job_login.is_some()||(self.live_rx.is_some()&&self.shell.login_is_native);
         let source=if live {jobs.as_slice()} else {cache};
         let browser=&mut self.browser_ui;
         let mut indices=(0..source.len()).filter(|&i|{
@@ -958,7 +1139,8 @@ impl SleufBaseApp {
         let active_filters=browser.filters.iter().filter(|value|!value.trim().is_empty()).count()
             +usize::from(browser.only_loaded)+usize::from(browser.only_selected)+usize::from(browser.only_downloadable);
         let capture_active=(browser.manual_capture_job.is_some()&&self.live_download_rx.is_some())
-            ||browser.opening_job.as_ref().is_some_and(|task|task.capture_generation.is_some());
+            ||browser.opening_job.as_ref().is_some_and(|task|task.capture_generation.is_some())
+            ||browser.job_login.as_ref().is_some_and(|task|task.pending.capture_generation.is_some());
         egui::Window::new("SleufBase Jobs")
             .open(&mut open).default_width((ctx.screen_rect().width()-48.).clamp(340.,1120.))
             .default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
@@ -1021,7 +1203,8 @@ impl SleufBaseApp {
                         ui.horizontal_wrapped(|ui|{
                             ui.spinner();
                             if capture_active {
-                                ui.label(if browser.opening_job.is_some(){"Job openen voor GeoTIFF…"}else{"Wachten op GeoTIFF in het jobvenster…"});
+                                ui.label(if browser.job_login.is_some(){"Aanmelden in het aparte venster voor GeoTIFF…"}
+                                    else if browser.opening_job.is_some(){"Job openen voor GeoTIFF…"}else{"Wachten op GeoTIFF in het jobvenster…"});
                                 if ui.button("Vastlegging annuleren").clicked(){action=Some("cancel-capture");}
                             }else if downloading {
                                 ui.label(if browser.batch_mode{format!("{} klaar · {} in wachtrij",browser.completed,browser.queue.len())}

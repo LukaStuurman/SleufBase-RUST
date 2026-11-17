@@ -124,13 +124,18 @@ mod native {
                 } else {
                     builder
                 };
+                let builder = if let Some(user_agent) = read_control_text(&self.profile.join("browser-user-agent"),4096)
+                    .filter(|value|!value.is_empty()&&value.bytes().all(|byte|byte==b' '||byte.is_ascii_graphic())) {
+                    builder.with_user_agent(user_agent)
+                } else {builder};
                 let builder = if self.fixture {
                     builder.with_html("<!doctype html><title>SleufBase local browser fixture</title><meta name='csrf-token' content='fixture-only'><p>Local fixture; no account or network.</p>")
                 } else {
+                    let detached=self.detached;
                     builder
-                        .with_url("https://www.my.kickthemap.com/signin")
-                        .with_navigation_handler(|url| {
-                            reqwest::Url::parse(&url).ok().is_some_and(|url| {
+                        .with_url(if detached {"about:blank"} else {"https://www.my.kickthemap.com/signin"})
+                        .with_navigation_handler(move |url| {
+                            (detached&&url=="about:blank")||reqwest::Url::parse(&url).ok().is_some_and(|url| {
                                 crate::kickthemap_browser::is_kickthemap_origin(&url)
                             })
                         })
@@ -159,6 +164,9 @@ mod native {
                 self.webview = Some(webview);
                 self.window = Some(window);
                 self.last_editor_script = editor_script;
+                if self.detached {
+                    let _=std::fs::write(self.profile.join("window-detached-ack"),b"1");
+                }
                 // The fixture lifetime starts after synchronous WebView creation:
                 // runtime initialization on a busy runner can itself take 20s.
                 self.deadline = self
@@ -171,7 +179,8 @@ mod native {
                 event_loop.exit();
             }
         }
-        fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+            if self.window.as_ref().is_none_or(|window|window.id()!=window_id) {return;}
             match event {
                 WindowEvent::CloseRequested if self.detached => {
                     // Closing this window preserves the page and any unsaved
@@ -179,6 +188,7 @@ mod native {
                     let _ = self.set_visible(false);
                     let _ = std::fs::write(self.profile.join("window-visible"), b"0");
                     let _ = std::fs::write(self.profile.join("window-closed"), b"1");
+                    let _ = std::fs::write(self.profile.join("window-close-notice"), b"1");
                     self.last_visibility = std::fs::write(
                         self.profile.join("window-visible-ack"), b"0",
                     )
@@ -210,6 +220,12 @@ mod native {
             {
                 event_loop.exit();
                 return;
+            }
+            if !self.detached && self.profile.join("window-detached").is_file()
+                && !self.profile.join("window-detached-error").exists() {
+                if self.promote_to_detached(event_loop).is_err() {
+                    let _=std::fs::write(self.profile.join("window-detached-error"),b"1");
+                }
             }
             let bounds = if self.detached {
                 None
@@ -298,6 +314,31 @@ mod native {
     }
 
     impl App {
+        fn promote_to_detached(&mut self,event_loop:&ActiveEventLoop)->Result<(),String>{
+            self.set_visible(false)?;
+            let window=event_loop.create_window(Window::default_attributes()
+                .with_title("SleufBase — KickTheMap")
+                .with_inner_size(winit::dpi::PhysicalSize::new(1000,720))
+                .with_decorations(true).with_resizable(true).with_active(false).with_visible(false)
+                .with_owner_window(self.parent.get() as _)).map_err(|error|error.to_string())?;
+            let RawWindowHandle::Win32(handle)=window.window_handle().map_err(|error|error.to_string())?.as_raw()
+                else{return Err("Browservenster heeft geen Windows-handle".into());};
+            let webview=self.webview.as_ref().ok_or("Browser is nog niet gereed")?;
+            webview.reparent(handle.hwnd.get()).map_err(|error|error.to_string())?;
+            // Keep the new parent alive even if resizing fails after reparent.
+            // Old-host events are ignored by the WindowId guard above.
+            self.window=Some(window);
+            self.detached=true;
+            self.last_bounds=None;
+            self.last_visibility=None;
+            self.last_window_title=None;
+            if let (Some(webview),Some(window))=(&self.webview,&self.window) {
+                webview.set_bounds(webview_bounds(window.inner_size())).map_err(|error|error.to_string())?;
+            }
+            std::fs::write(self.profile.join("window-visible"),b"0").map_err(|error|error.to_string())?;
+            std::fs::write(self.profile.join("window-detached-ack"),b"1").map_err(|error|error.to_string())?;
+            Ok(())
+        }
         fn set_visible(&mut self, visible: bool) -> Result<(), String> {
             let (Some(window), Some(webview)) = (self.window.as_ref(), self.webview.as_ref()) else {
                 return Err("Het browservenster is nog niet gereed".into());

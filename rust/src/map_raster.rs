@@ -136,7 +136,7 @@ pub fn resize(
     }
     Ok(output)
 }
-fn bilinear(source: &RgbaImage, x: f64, y: f64) -> [u8; 4] {
+pub(crate) fn bilinear(source: &RgbaImage, x: f64, y: f64) -> [u8; 4] {
     if x < 0. || y < 0. || x >= f64::from(source.width()) || y >= f64::from(source.height()) {
         return [0; 4];
     }

@@ -6,6 +6,9 @@ type JobPoint = (u64, [f64; 2]);
 const JOBS_RASTER_SCALE: f32 = 2.;
 const JOBS_RASTER_MAX_SIDE: u32 = 4096;
 const JOBS_RASTER_MAX_PIXELS: u64 = 8_388_608;
+// The main canvas uses the same absolute limits, in metres per logical point.
+const JOBS_MIN_METERS_PER_POINT: f64 = 0.001;
+const JOBS_MAX_METERS_PER_POINT: f64 = 10_000.;
 const BACKGROUND_REQUEST_INTERVAL: f64 = 0.25;
 const BACKGROUND_RETRY_DELAY: f64 = 3.;
 
@@ -126,6 +129,29 @@ fn zoom_bounds(base: Bounds, factor: f64) -> Bounds {
     let hx = (base.max_x - base.min_x) * factor * 0.5;
     let hy = (base.max_y - base.min_y) * factor * 0.5;
     Bounds { min_x: cx - hx, max_x: cx + hx, min_y: cy - hy, max_y: cy + hy }
+}
+
+fn zoom_bounds_at(base: Bounds, rect: egui::Rect, anchor: Pos2, factor: f64) -> Bounds {
+    let width = f64::from(rect.width());
+    let height = f64::from(rect.height());
+    let span_x = base.max_x - base.min_x;
+    let span_y = base.max_y - base.min_y;
+    if width < 1. || height < 1. || span_x <= 0. || span_y <= 0. || factor <= 0.
+        || ![width, height, span_x, span_y, factor, f64::from(anchor.x), f64::from(anchor.y)]
+            .iter().all(|value| value.is_finite()) { return base; }
+    // Use the fitted viewport scale, including padding caused by its aspect
+    // ratio. Scale the stored base extent so resizing cannot accumulate padding.
+    let old_scale = (span_x / width).max(span_y / height);
+    let new_scale = (old_scale * factor).clamp(JOBS_MIN_METERS_PER_POINT, JOBS_MAX_METERS_PER_POINT);
+    if new_scale == old_scale { return base; }
+    let scaled = zoom_bounds(base, new_scale / old_scale);
+    let offset = anchor - rect.center();
+    let dx = f64::from(offset.x) * (old_scale - new_scale);
+    let dy = -f64::from(offset.y) * (old_scale - new_scale);
+    let next = Bounds { min_x: scaled.min_x + dx, max_x: scaled.max_x + dx,
+        min_y: scaled.min_y + dy, max_y: scaled.max_y + dy };
+    if [next.min_x, next.max_x, next.min_y, next.max_y].iter().all(|value| value.is_finite())
+        && next.min_x < next.max_x && next.min_y < next.max_y { next } else { base }
 }
 
 fn overlap(a: Bounds, b: Bounds) -> Option<Bounds> {
@@ -362,7 +388,8 @@ fn canvas(ui: &mut egui::Ui, points: &[JobPoint], browser: &mut BrowserUi,
         base = pan_bounds(base, bounds, rect, ui.input(|input| input.pointer.delta()));
     }
     if scroll.abs() > 0.1 {
-        base = zoom_bounds(base, if scroll > 0. { 0.85 } else { 1.15 });
+        base = zoom_bounds_at(base, rect, response.hover_pos().unwrap_or(rect.center()),
+            if scroll > 0. { 0.85 } else { 1.15 });
     }
     let selection_consumed = if panning || scroll.abs() > 0.1 {
         browser.map_interaction.selection = None;

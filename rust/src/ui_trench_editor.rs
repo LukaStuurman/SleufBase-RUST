@@ -66,6 +66,16 @@ fn object_diameter(object:&TrenchPoint)->f64{
         attributes:object.attributes.clone(),
     }).filter(|d|d.is_finite()&&*d>=0.).unwrap_or(0.)
 }
+// Use the active type palette for imported objects without a fixed color.
+// A per-object color keeps precedence; ACI 7 follows the entry form's dark
+// contrast color so it remains visible on the light editor background.
+fn utility_color(source:&str,rgb:Option<[u8;3]>,rules:&[sleufbase_rust::Rule])->Color32 {
+    let [r,g,b]=rgb.or_else(||sleufbase_rust::matching_rule(source,rules).map(|rule| {
+        if rule.color_aci==7 {[17,24,39]}
+        else {sleufbase_rust::cad::aci_rgb(i32::from(rule.color_aci))}
+    })).unwrap_or([37,99,235]);
+    Color32::from_rgb(r,g,b)
+}
 impl ObjectForm {
     fn from_object(trench:&VirtualTrench,object:&TrenchPoint)->Self {
         let (chainage,offset)=edit::coordinates(trench,object.position);
@@ -303,7 +313,7 @@ impl Editor {
         self.object.offset=0.;self.object.from_end=false;self.entry_started=true;self.picking_object=false;self.jump_to_objects=Some(true);
         self.notice="Positie gekozen. Kies type, diameter en aantal en klik op Kabel/leiding toevoegen.".into();Ok(())
     }
-    fn draw_preview(&self,ui:&mut egui::Ui) {
+    fn draw_preview(&self,ui:&mut egui::Ui,rules:&[sleufbase_rust::Rule]) {
         // Never clone/validate thousands of measured objects per animation
         // frame. The project stays untouched until the Save action.
         let t=&self.draft;
@@ -373,8 +383,8 @@ impl Editor {
         for obj in sampled {
             if obj.is_measurement_helper(){continue;}
             if let Some((a,b))=sleufbase_rust::cross_section::object_segment_on_boundary(t,obj,&outline){
-                let rgb=sleufbase_rust::virtual_raster::display_rgb(&obj.metadata).unwrap_or([37,99,235]);
-                painter.line_segment([point(a.0,a.1),point(b.0,b.1)],Stroke::new(2_f32,Color32::from_rgb(rgb[0],rgb[1],rgb[2])));
+                let color=utility_color(&obj.source_name,sleufbase_rust::virtual_raster::display_rgb(&obj.metadata),rules);
+                painter.line_segment([point(a.0,a.1),point(b.0,b.1)],Stroke::new(2_f32,color));
             }
             painter.circle_filled(point(obj.position.x,obj.position.y),3.,INK);
         }
@@ -393,6 +403,18 @@ impl SleufBaseApp {
     pub(super) fn clear_virtual_editor_metadata(&mut self,key:&str,index:Option<usize>){
         if let Some(editor)=self.trench_editor.as_mut().filter(|e|index.is_none_or(|i|i==e.index)){
             for t in [&mut editor.original,&mut editor.draft]{if let Some(m)=t.metadata.as_object_mut(){m.remove(key);}}
+        }
+    }
+    pub(super) fn refresh_virtual_editor_settings(&mut self) {
+        if self.trench_editor.is_none() {return;}
+        // Refresh only after an actual settings save. Keep the staged geometry
+        // and object form intact, and preserve project/legacy rule precedence.
+        let settings=self.project_export_settings();
+        if let Some(editor)=self.trench_editor.as_mut() {
+            match settings {
+                Ok(settings)=>editor.entry_settings=Some(std::sync::Arc::new(settings)),
+                Err(error)=>editor.error=format!("Controleer de projectinstellingen: {error}"),
+            }
         }
     }
     pub(super) fn open_virtual_editor(&mut self,index:usize) {
@@ -433,14 +455,53 @@ impl SleufBaseApp {
         let mut close_requested=false;
         let mut open=true;
         let mut action=None;
+        let viewport=ctx.screen_rect();
         egui::Window::new("Proefsleuf bewerken").id(egui::Id::new("virtual-trench-editor"))
-            .open(&mut open).collapsible(false).default_width((ctx.screen_rect().width()-64.).clamp(320.,1020.))
-            .default_height((ctx.screen_rect().height()-100.).clamp(240.,650.))
-            .constrain_to(ctx.screen_rect().shrink(12.))
+            .open(&mut open).collapsible(false)
+            // Only seed the first position; remembered moves and screen constraints remain active.
+            .default_pos(viewport.min+egui::vec2(24.,24.))
+            .default_width((viewport.width()-64.).clamp(320.,1020.))
+            .default_height((viewport.height()-100.).clamp(240.,650.))
+            .constrain_to(viewport.shrink(12.))
             .resizable(true).show(ctx,|ui|{
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                // Keep the visible rect equal to egui's Resize budget from the first
+                // frame. An estimated footer left unused height, so the first edge
+                // drag recalculated the size from a smaller visible window.
+                ui.set_min_height(ui.available_height());
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT),|ui|{
+                    // Lay out the real footer first; wrapping, notices and delete
+                    // confirmation now reserve their actual height in this frame.
+                    ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
+                        if editor.confirm_delete {
+                            ui.horizontal(|ui|{
+                                if ui.button("Ja, verwijderen").clicked(){action=Some(Action::Remove);}
+                                if ui.button("Annuleren").clicked(){editor.confirm_delete=false;}
+                            });
+                            ui.colored_label(DARK,"Alleen deze proefsleuf verwijderen? Alle meetobjecten ervan worden ook verwijderd.");
+                        }
+                        ui.horizontal_wrapped(|ui|{
+                            if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
+                            if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
+                        });
+                        if editor.objects_tab{editor.show_entry_actions(ui);}
+                    });
+                    if !editor.error.is_empty()||!editor.notice.is_empty() {
+                        let feedback_height=44_f32.min(ui.available_height().max(0.));
+                        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(),feedback_height),
+                            egui::Layout::top_down(egui::Align::LEFT),|ui|{
+                            egui::ScrollArea::vertical().id_salt("virtual-editor-feedback")
+                                .max_height(feedback_height).min_scrolled_height(0.).auto_shrink([false,false])
+                                .show(ui,|ui|{
+                                    if !editor.error.is_empty(){ui.colored_label(DARK,&editor.error);}
+                                    else{ui.small(&editor.notice);}
+                                });
+                        });
+                    }
+                    ui.separator();
+                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT),|ui|{
                 theme::card(10,12,8).show(ui,|ui|{
                     ui.set_min_width(ui.available_width());
                     ui.horizontal_wrapped(|ui|{
@@ -466,7 +527,7 @@ impl SleufBaseApp {
                     ui.weak("Plaatsen en bewerken · wijzigingen blijven in concept tot je opslaat");
                 });
                 let scroll=egui::ScrollArea::vertical().id_salt("virtual-editor-body").animated(false)
-                    .max_height((ui.available_height()-if editor.objects_tab{160.}else{124.}).max(40.)).auto_shrink([false,false]);
+                    .max_height(ui.available_height().max(0.)).min_scrolled_height(0.).auto_shrink([false,false]);
                 let scroll=if reset_scroll{scroll.vertical_scroll_offset(0.)}else{scroll};
                 scroll.show(ui,|ui|{
                     if !editor.objects_tab||editor.ahn_job.is_some(){editor.ahn_controls(ui,ctx);}
@@ -552,7 +613,7 @@ impl SleufBaseApp {
                         });
                     });
                     });
-                    editor.draw_preview(ui);
+                    editor.draw_preview(ui,&settings.object_rules);
                     ui.separator();
                     ui.collapsing(format!("Dekbandsegmenten ({})",editor.draft.dekband_rows.len()),|ui|{
                         ui.small("De dekband volgt de meetas tussen twee kettingmaten en verschijnt als gekleurde langsstreep in het gegenereerde virtuele raster.");
@@ -646,27 +707,8 @@ impl SleufBaseApp {
                     });
                     });
                 });
-                    ui.separator();
-                    if !editor.error.is_empty()||!editor.notice.is_empty() {
-                        egui::ScrollArea::vertical().id_salt("virtual-editor-feedback").max_height(44.).show(ui,|ui|{
-                            if !editor.error.is_empty(){ui.colored_label(DARK,&editor.error);}
-                            else{ui.small(&editor.notice);}
-                        });
-                    }
-                    ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
-                    if editor.objects_tab{editor.show_entry_actions(ui);}
-                    ui.horizontal_wrapped(|ui|{
-                        if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
-                        if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
-                    });
-                    if editor.confirm_delete {
-                        ui.colored_label(DARK,"Alleen deze proefsleuf verwijderen? Alle meetobjecten ervan worden ook verwijderd.");
-                        ui.horizontal(|ui|{
-                            if ui.button("Ja, verwijderen").clicked(){action=Some(Action::Remove);}
-                            if ui.button("Annuleren").clicked(){editor.confirm_delete=false;}
-                        });
-                    }
-                    });
+                });
+                });
             });
         if close_requested{open=false;}
         if let Some(cmd)=action {

@@ -40,6 +40,62 @@ impl Source {
 }
 const MAX_RESPONSE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_OUTPUT_PIXELS: u64 = 2_048 * 2_048;
+// The official v5 WMS capabilities give parcel boundaries, labels, leader
+// lines and buildings MinScaleDenominator=50 (OGC pixel size: 0.28 mm).
+// Below this scale the service returns an empty layer, not extra detail.
+// Keep a tiny margin above the limit for floating-point BBOX arithmetic.
+// https://service.pdok.nl/kadaster/brk-kadastrale-kaart/wms/v5_0?SERVICE=WMS&REQUEST=GetCapabilities
+const CADASTRAL_NATIVE_METERS_PER_PIXEL: f64 = 50. * 0.00028 * 1.000001;
+
+fn cadastral_source_grid(source: Source, bounds: Bounds, size: [u32; 2])
+    -> Option<(Bounds, [u32; 2])>
+{
+    if !matches!(source, Source::Cadastral | Source::CadastralOverlay) { return None; }
+    let span_x = bounds.max_x - bounds.min_x;
+    let span_y = bounds.max_y - bounds.min_y;
+    if span_x / f64::from(size[0]) >= CADASTRAL_NATIVE_METERS_PER_PIXEL
+        && span_y / f64::from(size[1]) >= CADASTRAL_NATIVE_METERS_PER_PIXEL
+    { return None; }
+    // Sample a reusable RD grid at the finest supported source scale. A pixel
+    // of padding supports bilinear sampling even for sub-pixel edge tiles.
+    // Reserve four pixels for grid rounding/padding within the WMS 2048 limit.
+    let resolution = CADASTRAL_NATIVE_METERS_PER_PIXEL
+        .max(span_x / 2044.).max(span_y / 2044.);
+    let left = (bounds.min_x / resolution).floor() - 1.;
+    let right = (bounds.max_x / resolution).ceil() + 1.;
+    let bottom = (bounds.min_y / resolution).floor() - 1.;
+    let top = (bounds.max_y / resolution).ceil() + 1.;
+    Some((Bounds {
+        min_x: left * resolution, max_x: right * resolution,
+        min_y: bottom * resolution, max_y: top * resolution,
+    }, [(right - left) as u32, (top - bottom) as u32]))
+}
+
+fn resample_cadastral(
+    source: &SharedRaster, bounds: Bounds, size: [u32; 2], cancel: &AtomicBool,
+) -> Result<image::RgbaImage, String> {
+    let pixels = image::RgbaImage::from_raw(source.width, source.height, source.rgba.to_vec())
+        .ok_or("PDOK-cache bevat ongeldige pixels")?;
+    let mut output = crate::raster_rotation::allocate(size[0], size[1])?;
+    let sx = f64::from(source.width) / (source.bounds.max_x - source.bounds.min_x);
+    let sy = f64::from(source.height) / (source.bounds.max_y - source.bounds.min_y);
+    let x0 = (bounds.min_x - source.bounds.min_x) * sx;
+    let y0 = (source.bounds.max_y - bounds.max_y) * sy;
+    let dx = (bounds.max_x - bounds.min_x) / f64::from(size[0]) * sx;
+    let dy = (bounds.max_y - bounds.min_y) / f64::from(size[1]) * sy;
+    for y in 0..size[1] {
+        crate::input::check(cancel)?;
+        for x in 0..size[0] {
+            // Preserve the exact requested RD extent, pixel centres and alpha;
+            // never stretch the padded source extent across the output image.
+            output.put_pixel(x, y, image::Rgba(crate::map_raster::bilinear(
+                &pixels, x0 + (f64::from(x) + 0.5) * dx,
+                y0 + (f64::from(y) + 0.5) * dy,
+            )));
+        }
+    }
+    Ok(output)
+}
 
 #[derive(Clone, Debug)]
 pub struct PdokRaster {
@@ -272,6 +328,22 @@ impl WmsClient {
                 .ok_or("PDOK-cache bevat ongeldige pixels")?;
             composite_rgba(&mut image, &overlay, cancel)?;
             let rgba: std::sync::Arc<[u8]> = image.into_raw().into();
+            self.remember(cache_key(source, bounds, width, height), rgba.clone())?;
+            return Ok(SharedRaster { bounds, width, height, rgba });
+        }
+        validate(bounds, width, height)?;
+        crate::input::check(cancel)?;
+        if let Some((source_bounds, source_size)) = cadastral_source_grid(source, bounds, [width, height]) {
+            if let Some(raster) = self.lookup_shared(source, bounds, width, height)? {
+                crate::input::check(cancel)?;
+                return Ok(raster);
+            }
+            let [sw, sh] = source_size;
+            let url = build_wms_url_for(source, source_bounds, sw, sh)?;
+            let native = self.request_url(source, source_bounds, sw, sh, url, cancel)?;
+            let rgba: std::sync::Arc<[u8]> = resample_cadastral(&native, bounds, [width, height], cancel)?
+                .into_raw().into();
+            crate::input::check(cancel)?;
             self.remember(cache_key(source, bounds, width, height), rgba.clone())?;
             return Ok(SharedRaster { bounds, width, height, rgba });
         }

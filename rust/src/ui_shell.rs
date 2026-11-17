@@ -88,7 +88,7 @@ const ACTIONS: &[(&str, &str)] = &[
     ("", ""),
     ("Laad GeoTIFF(s)", "tiff"),
     ("Laad KLIC DXF", "dxf"),
-    ("Zoom naar alles", "zoom"),
+    ("Zoom naar extent", "zoom"),
     ("Toon TIFF-adressen", "addresses"),
     ("", ""),
     ("Export kaarten", "maps"),
@@ -122,9 +122,12 @@ fn menu(ui: &mut egui::Ui, label: &str, items: &[(&str, &'static str)]) -> Optio
         ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 224, 199);
         for &(label, id) in items {
             if label.is_empty() {
-                ui.add_space(4.);
-                ui.separator();
-                ui.add_space(4.);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 9.), egui::Sense::hover());
+                // Menu separators need their own visible stroke: the light
+                // theme deliberately removes several default widget borders.
+                ui.painter().hline(rect.x_range(), rect.center().y,
+                    Stroke::new(1.0_f32, Color32::from_rgb(176, 190, 208)));
             } else if ui
                 .add_sized(
                     [ui.available_width(), 30.],

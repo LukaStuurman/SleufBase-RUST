@@ -50,29 +50,29 @@ impl Editor {
         let mut pick = false;
         if ui.available_width() >= 820. {
             ui.columns(2, |columns| {
-                self.show_object_overview(&mut columns[0], true);
+                self.show_object_overview(&mut columns[0], true, rules);
                 pick = self.show_entry_panel(&mut columns[1], rules, materials, extras);
             });
         } else {
-            self.show_object_overview(ui, false);
+            self.show_object_overview(ui, false, rules);
             ui.add_space(6.);
             pick = self.show_entry_panel(ui, rules, materials, extras);
             if !self.draft.objects.is_empty() {
                 ui.add_space(6.);
                 theme::card(10, 10, 10).show(ui, |ui| {
                     ui.strong(format!("Kabels en leidingen ({})", self.draft.objects.len()));
-                    self.show_object_list(ui);
+                    self.show_object_list(ui, rules);
                 });
             }
         }
         pick
     }
 
-    fn show_object_overview(&mut self, ui: &mut egui::Ui, show_list: bool) {
+    fn show_object_overview(&mut self, ui: &mut egui::Ui, show_list: bool, rules: &[sleufbase_rust::Rule]) {
         theme::card(10, 10, 10).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.strong("1. Plaats in de doorsnede");
-            self.show_section(ui);
+            self.show_section(ui, rules);
             if !show_list { return; }
             ui.add_space(6.);
             ui.horizontal_wrapped(|ui| {
@@ -82,7 +82,7 @@ impl Editor {
             if self.draft.objects.is_empty() {
                 ui.weak("Nog leeg. Klik een plek in de doorsnede en kies de eigenschappen van de eerste kabel of leiding.");
             } else {
-                self.show_object_list(ui);
+                self.show_object_list(ui, rules);
             }
         });
     }
@@ -131,7 +131,7 @@ impl Editor {
         }).inner
     }
 
-    fn show_object_list(&mut self, ui: &mut egui::Ui) {
+    fn show_object_list(&mut self, ui: &mut egui::Ui, rules: &[sleufbase_rust::Rule]) {
         let mut remove = None;
         let mut select = None;
         egui::ScrollArea::vertical()
@@ -151,10 +151,10 @@ impl Editor {
                     let detail = format!("{along:.2} m vanaf begin · diepte {}", depth.map(|d| format!("{d:.2} m")).unwrap_or_else(|| "onbekend".into())).replace('.', ",");
                     ui.push_id(index, |ui| {
                         ui.horizontal(|ui| {
-                            let rgb = sleufbase_rust::virtual_raster::display_rgb(&object.metadata)
-                                .unwrap_or([37, 99, 235]);
+                            let color = utility_color(&object.source_name,
+                                sleufbase_rust::virtual_raster::display_rgb(&object.metadata), rules);
                             let (rect, _) = ui.allocate_exact_size(egui::vec2(10., 20.), egui::Sense::hover());
-                            ui.painter().circle_filled(rect.center(), 4., Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                            ui.painter().circle_filled(rect.center(), 4., color);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.small_button("×").on_hover_text("Verwijder deze kabel/leiding uit het concept").clicked() {
                                     remove = Some(index);

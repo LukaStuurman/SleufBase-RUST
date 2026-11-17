@@ -1775,6 +1775,7 @@ impl SleufBaseApp {
                 Ok(())=>{
                     self.migrated_settings=config;
                     self.rule_editor=None;
+                    self.refresh_virtual_editor_settings();
                     self.message="Objectregels opgeslagen en toegepast op kaart, tellingen en exports".into();
                 },
                 Err(error)=>{if let Some(editor)=self.rule_editor.as_mut(){editor.error=error;}}

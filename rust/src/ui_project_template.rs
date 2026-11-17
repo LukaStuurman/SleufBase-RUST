@@ -443,16 +443,25 @@ fn project_order_panel(ui:&mut egui::Ui,dialog:&mut Dialog,rasters:&[GeoTiffInfo
                 ui.add(egui::TextEdit::singleline(&mut dialog.editor.number)
                     .desired_width(ui.available_width()));
                 ui.label("Variant");
-                egui::ComboBox::from_id_salt("mixed-template-variant")
-                    .width(ui.available_width()).truncate()
-                    .selected_text(if dialog.editor.variant.is_empty(){"Geen variant"}else{&dialog.editor.variant})
-                    .show_ui(ui,|ui| {
-                        ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");
-                        ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");
-                        for code in 'B'..='Z' {
-                            ui.selectable_value(&mut dialog.editor.variant,code.to_string(),format!("Variant {code}"));
-                        }
-                    });
+                ui.horizontal(|ui| {
+                    let field_width=(ui.available_width()-32.-ui.spacing().item_spacing.x).max(24.);
+                    if ui.add(egui::TextEdit::singleline(&mut dialog.editor.variant)
+                        .id(egui::Id::new("mixed-template-variant-text"))
+                        .desired_width(field_width).char_limit(256)
+                        .hint_text("Bijv. B1, -2 of eigen tekst"))
+                        .on_hover_text("Typ zelf een variant of kies een voorbeeld met de pijl. Leeg betekent geen variant; AUTO maakt automatisch B/C/D...").changed() {
+                        dialog.editor.mark_variant_edited();
+                    }
+                    egui::ComboBox::from_id_salt("mixed-template-variant")
+                        .width(24.).selected_text("")
+                        .show_ui(ui,|ui| {
+                            ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");
+                            ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");
+                            for code in 'B'..='Z' {
+                                ui.selectable_value(&mut dialog.editor.variant,code.to_string(),format!("Variant {code}"));
+                            }
+                        }).response.on_hover_text("Kies een standaardvariant");
+                });
                 if order_tool_button(ui,"Nummer/variant toepassen",true).clicked() {
                     match dialog.editor.apply_label(&mut dialog.options.choices) {
                         Ok(())=>{
@@ -585,6 +594,8 @@ impl SleufBaseApp {
                 .show(ctx, |ui| {
                     settings_ui::control_style(ui);
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                    // Match Resize's requested height even when the footer uses less space.
+                    ui.set_min_height(ui.available_height());
                     let footer_height = if dialog.error.is_empty(){118.}else{142.}
                         + if ui.available_width()<440.{34.}else{0.};
                     let body_height=(ui.available_height()-footer_height).max(64.);

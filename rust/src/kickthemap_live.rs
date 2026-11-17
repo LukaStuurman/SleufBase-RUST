@@ -222,17 +222,25 @@ pub struct KickTheMapLiveClient {
     client: Client,
     cookie_jar: Arc<Jar>,
     csrf: String,
+    browser_user_agent: Option<String>,
     api_origin:String,
     account_email:String,
     download_strategy:Option<strategy::Strategy>,
     repair_in_progress:bool,
     snapshot_owner:crate::jobs_cache::SnapshotOwner,
     download_prefixes:HashMap<u64,crate::kickthemap_s3::Identity>,
+    browser_job_urls:HashMap<u64,String>,
     storage_config:Option<crate::kickthemap_s3::Credentials>,
     known_jobs_nonempty:bool,
 }
 
 impl KickTheMapLiveClient {
+    /// Only an actual, verified WebView user agent may override a new WebView.
+    /// Native-only clients keep the browser's normal login/captcha identity.
+    pub fn browser_user_agent(&self)->Option<&str>{self.browser_user_agent.as_deref()}
+    /// Only a URL derived from a successful, current jobs response may resume
+    /// a pending action after interactive browser authentication.
+    pub fn verified_job_url(&self,id:u64)->Option<&str>{self.browser_job_urls.get(&id).map(String::as_str)}
     /// Copy only cookies that would be sent to the canonical account home.
     /// The browser receives host-only, Secure, HttpOnly session cookies: no
     /// persistent expiry, foreign domain/path, credentials or cached identity.
@@ -273,21 +281,23 @@ impl KickTheMapLiveClient {
     pub fn require_empty_confirmation(&mut self){self.known_jobs_nonempty=true;}
     pub fn fetch_jobs_from_browser(&mut self,mut fetch:impl FnMut()->Result<String,String>)->Result<Vec<Job>,String>{
         let previous=self.download_prefixes.clone();
+        let previous_urls=self.browser_job_urls.clone();
         let result=(||{
             let payload=fetch()?;let mut jobs=parse_live_jobs(&payload)?;let mut accepted=payload;
             if jobs.is_empty()&&self.known_jobs_nonempty{accepted=fetch().map_err(|e|format!("Lege browser-projectlijst kon niet worden bevestigd; vorige lijst behouden: {e}"))?;jobs=parse_live_jobs(&accepted)?;}
             self.remember_download_identities(&accepted);Ok::<_,String>(jobs)
         })();
-        match result{Ok(jobs)=>{self.known_jobs_nonempty=!jobs.is_empty();Ok(jobs)},Err(e)=>{self.download_prefixes=previous;Err(e)}}
+        match result{Ok(jobs)=>{self.known_jobs_nonempty=!jobs.is_empty();Ok(jobs)},Err(e)=>{self.download_prefixes=previous;self.browser_job_urls=previous_urls;Err(e)}}
     }
     fn remote_file_name(&self,job:&Job,kind:RemoteFileKind)->Result<String,String>{
         if kind==RemoteFileKind::GeoTiff&&job.prefix.trim().is_empty(){self.download_prefixes.get(&job.job_id).map(|identity|format!("{}.tiff",identity.prefix)).ok_or_else(||"KickTheMap-job mist zowel prefix als volledige downloadidentiteit".into())}else{kind.remote_name(job)}
     }
     fn remember_download_identities(&mut self,payload:&str){
         let Ok(raw)=serde_json::from_str::<Value>(payload)else{return};let Some(entries)=jobs_list(&raw)else{return};
-        let mut prefixes=HashMap::new();
+        let mut prefixes=HashMap::new();let mut browser_urls=HashMap::new();let mut seen_urls=HashSet::new();
         for obj in entries{
             let Some(id)=parse_positive_id(obj.get("Id").or_else(||obj.get("id")))else{continue};
+            if seen_urls.insert(id){if let Ok(url)=crate::kickthemap_browser::job_view_url_for_entry(obj){browser_urls.insert(id,url.to_string());}}
             let raw_prefix=crate::kickthemap_identity::prefix(obj);
             let(owner,date)=crate::kickthemap_identity::project(obj,&self.account_email);
             let prefix=if !raw_prefix.is_empty(){raw_prefix}else if !owner.is_empty()&&!date.is_empty(){format!("{owner}_{date}")}else{continue};
@@ -295,6 +305,7 @@ impl KickTheMapLiveClient {
 
         }
         self.download_prefixes=prefixes;
+        self.browser_job_urls=browser_urls;
     }
     fn request_download_url(&mut self,fields:&[(&str,String)],cancel:&std::sync::atomic::AtomicBool)->Result<Option<reqwest::Url>,String>{self.request_download_url_with_title(fields,cancel,"")}
     fn request_download_url_with_title(&mut self,fields:&[(&str,String)],cancel:&std::sync::atomic::AtomicBool,title:&str)->Result<Option<reqwest::Url>,String>{
@@ -455,7 +466,7 @@ impl KickTheMapLiveClient {
         }
         let csrf = html_token(&homepage,"meta","csrf-token")
             .ok_or("KickTheMap sessie bevat geen CSRF-token")?;
-        Ok(Self{client,cookie_jar,csrf,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,browser_user_agent:None,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
 
     /// Adopt cookies only from the Edge profile launched by this Rust process.
@@ -464,17 +475,27 @@ impl KickTheMapLiveClient {
     pub fn from_browser_cookies(cookies:&[crate::kickthemap_browser::BrowserCookie])
         ->Result<Self,String>
     {
-        Self::browser_session(cookies,None)
+        Self::browser_session(cookies,None,None)
     }
     /// The CSRF token must come from our owned, authenticated browser tab.
     /// The caller verifies the jobs response in that same tab before adopting.
     pub fn from_authenticated_browser(cookies:&[crate::kickthemap_browser::BrowserCookie],csrf:&str)->Result<Self,String>{
+        Self::authenticated_browser_session(cookies,csrf,None)
+    }
+    pub fn from_authenticated_browser_with_user_agent(cookies:&[crate::kickthemap_browser::BrowserCookie],csrf:&str,user_agent:&str)->Result<Self,String>{
+        Self::authenticated_browser_session(cookies,csrf,Some(user_agent))
+    }
+    fn authenticated_browser_session(cookies:&[crate::kickthemap_browser::BrowserCookie],csrf:&str,user_agent:Option<&str>)->Result<Self,String>{
         if csrf.is_empty()||csrf.len()>8192||!csrf.bytes().all(|c|c.is_ascii_graphic()) {
             return Err("KickTheMap-browser heeft geen geldig CSRF-token".into());
         }
-        Self::browser_session(cookies,Some(csrf))
+        Self::browser_session(cookies,Some(csrf),user_agent)
     }
-    fn browser_session(cookies:&[crate::kickthemap_browser::BrowserCookie],browser_csrf:Option<&str>)->Result<Self,String>{
+    fn browser_session(cookies:&[crate::kickthemap_browser::BrowserCookie],browser_csrf:Option<&str>,browser_user_agent:Option<&str>)->Result<Self,String>{
+        let user_agent=browser_user_agent.unwrap_or("SleufBase-Rust/0.1 (interactive WebView2 session)");
+        if user_agent.is_empty()||user_agent.len()>4096||!user_agent.bytes().all(|byte|byte==b' '||byte.is_ascii_graphic()){
+            return Err("KickTheMap-browser heeft geen geldige browseridentificatie".into());
+        }
         let base=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
         let cookie_jar=Arc::new(Jar::default());
         let mut accepted=0usize;
@@ -495,7 +516,7 @@ impl KickTheMapLiveClient {
             .cookie_provider(Arc::clone(&cookie_jar))
             .redirect(redirect::Policy::none())
             .timeout(Duration::from_secs(25))
-            .user_agent("SleufBase-Rust/0.1 (interactive WebView2 session)")
+            .user_agent(user_agent)
             .build().map_err(|e|e.to_string())?;
         let csrf=if let Some(token)=browser_csrf {token.to_owned()} else {
         let home=client.get(format!("{ORIGIN}/")).send()
@@ -508,7 +529,7 @@ impl KickTheMapLiveClient {
         html_token(&page,"meta","csrf-token")
             .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?
         };
-        Ok(Self{client,cookie_jar,csrf,api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,browser_user_agent:browser_user_agent.map(str::to_owned),api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
     }
     /// Compatibility entry point: the editable account hint is not identity proof.
     /// Browser sessions always receive an independent snapshot owner.
@@ -532,10 +553,11 @@ impl KickTheMapLiveClient {
     /// flight remains bounded by the established client timeout.
     pub fn fetch_jobs_with_cancel(&mut self,cancel:&std::sync::atomic::AtomicBool)->Result<Vec<Job>,String>{
         let previous_prefixes=self.download_prefixes.clone();
+        let previous_urls=self.browser_job_urls.clone();
         let result=(||{let mut jobs=self.fetch_jobs_once_with_cancel(cancel)?;
             if jobs.is_empty()&&self.known_jobs_nonempty{jobs=self.fetch_jobs_once_with_cancel(cancel).map_err(|error|format!("Lege KickTheMap-projectlijst kon niet worden bevestigd; vorige lijst behouden: {error}"))?;}Ok::<_,String>(jobs)
         })();
-        let jobs=match result{Ok(jobs)=>jobs,Err(error)=>{self.download_prefixes=previous_prefixes;return Err(error);}};
+        let jobs=match result{Ok(jobs)=>jobs,Err(error)=>{self.download_prefixes=previous_prefixes;self.browser_job_urls=previous_urls;return Err(error);}};
         self.known_jobs_nonempty=!jobs.is_empty();Ok(jobs)
     }
     fn fetch_jobs_once_with_cancel(&mut self,cancel:&std::sync::atomic::AtomicBool)->Result<Vec<Job>,String>{
@@ -657,7 +679,7 @@ mod tests {
         });
         let cookie_jar=Arc::new(Jar::default());
         let client=Client::builder().cookie_provider(Arc::clone(&cookie_jar)).redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
-        (KickTheMapLiveClient{client,cookie_jar,csrf:"old-token".into(),api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+        (KickTheMapLiveClient{client,cookie_jar,csrf:"old-token".into(),browser_user_agent:None,api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
     }
     #[test]
     fn embedded_handoff_only_copies_root_account_cookies_without_persistent_expiry() {

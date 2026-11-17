@@ -173,6 +173,19 @@ impl BrowserDock {
         Ok(dock)
     }
     pub fn is_detached(&self)->bool {self.detached}
+    /// Keep this control channel and profile when an authenticated embedded
+    /// WebView is promoted. The worker requests the actual host change.
+    pub fn detached_clone(&self)->Self {
+        Self {control:self.control.clone(),bounds:self.bounds.clone(),detached:true}
+    }
+    pub fn set_user_agent(&self,user_agent:&str)->Result<(),String>{
+        if user_agent.is_empty()||user_agent.len()>4096
+            || !user_agent.bytes().all(|byte|byte==b' '||byte.is_ascii_graphic()) {
+            return Err("Ongeldige browseridentificatie".into());
+        }
+        fs::write(self.control.path().join("browser-user-agent"),user_agent)
+            .map_err(|_|"Browseridentificatie kon niet worden ingesteld".into())
+    }
     pub fn set_page_editor(&self,script:&str)->Result<(),String>{
         use std::io::Write;
         if !self.detached||script.len()>256*1024{return Err("Ongeldige browserinrichting".into());}
@@ -184,13 +197,21 @@ impl BrowserDock {
     pub fn set_title(&self,title:&str)->std::io::Result<()>{
         fs::write(self.control.path().join("window-title"),title.chars().take(180).collect::<String>())
     }
+    /// Only a new explicit user action may clear a previous close request.
+    pub fn begin_open(&self)->std::io::Result<()>{
+        self.set_visible(false)?;
+        clear_window_close(self.control.path())
+    }
     pub fn set_visible(&self,visible:bool)->std::io::Result<()>{
-        if visible {let _=fs::remove_file(self.control.path().join("window-closed"));fs::write(self.control.path().join("window-focus"),b"1")?;}
+        if visible {
+            if self.control.path().join("window-closed").exists(){return Err(std::io::Error::other("Het KickTheMap-venster is gesloten"));}
+            fs::write(self.control.path().join("window-focus"),b"1")?;
+        }
         else {let _=fs::remove_file(self.control.path().join("window-focus"));}
         fs::write(self.control.path().join("window-visible"),if visible{b"1"}else{b"0"})
     }
     pub fn take_window_close(&self)->bool{
-        self.detached&&fs::remove_file(self.control.path().join("window-closed")).is_ok()
+        self.detached&&fs::remove_file(self.control.path().join("window-close-notice")).is_ok()
     }
     pub fn set_bounds(&self,bounds:Option<[i32;4]>)->std::io::Result<()>{
         use std::io::Write;
@@ -203,6 +224,14 @@ impl BrowserDock {
         }
         Ok(())
     }
+}
+fn clear_window_close(control:&Path)->std::io::Result<()>{
+    for marker in ["window-closed","window-close-notice"] {
+        match fs::remove_file(control.join(marker)) {
+            Ok(())=>{},Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{},Err(error)=>return Err(error),
+        }
+    }
+    Ok(())
 }
 /// Owns the only browser from which a KickTheMap session can be adopted.
 pub struct Browser {
@@ -283,11 +312,49 @@ impl Browser {
         self.command(method,params,None)
     }
     pub fn is_detached(&self)->bool {self.detached}
+    pub fn promote_to_detached(&mut self,cancel:&AtomicBool)->Result<(),String>{
+        crate::input::check(cancel)?;
+        self.set_visible(false)?;
+        if self.detached {return Ok(());}
+        fs::write(self._profile.path().join("window-detached"),b"1")
+            .map_err(|_|"Het aparte browservenster kon niet worden aangevraagd")?;
+        let deadline=Instant::now()+Duration::from_secs(10);
+        loop {
+            if fs::read(self._profile.path().join("window-detached-ack")).ok().as_deref()==Some(b"1") {
+                self.detached=true;
+                crate::input::check(cancel)?;
+                return Ok(());
+            }
+            crate::input::check(cancel)?;
+            if self._profile.path().join("window-detached-error").exists() {
+                return Err("De aangemelde browser kon niet naar een apart venster worden verplaatst".into());
+            }
+            if self.is_closed(){return Err("Het browservenster is gesloten".into());}
+            BrowserChannel::pause_until(cancel,deadline)?;
+        }
+    }
+    pub fn requires_signin(error:&str)->bool {error==BROWSER_SIGNIN_REQUIRED}
+    pub fn close_requested(&self)->bool {self._profile.path().join("window-closed").exists()}
+    pub fn user_agent(&self)->Result<String,String>{
+        let target=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
+        let reply=self.command("Runtime.evaluate",json!({"expression":"navigator.userAgent","returnByValue":true}),Some(&target))?;
+        reply["result"]["value"].as_str().filter(|value|!value.is_empty()&&value.len()<=4096
+            &&value.bytes().all(|byte|byte==b' '||byte.is_ascii_graphic()))
+            .map(str::to_owned).ok_or("Browseridentificatie ontbreekt".into())
+    }
     pub fn is_closed(&mut self)->bool {
         !matches!(self.process.try_wait(),Ok(None))
     }
+    fn owned_page_cookies(&self)->Result<Value,String>{
+        let (target,current)=self.channel().owned_target(&crate::input::NEVER_CANCEL,Instant::now()+Duration::from_secs(15))?;
+        // Read only the storage partition of this owned WebView, including
+        // path-scoped cookies used by its authenticated jobs request.
+        self.command("Network.getCookies",json!({"urls":[current.as_str(),
+            "https://www.my.kickthemap.com/","https://my.kickthemap.com/",
+            "https://www.my.kickthemap.com/jobs/get-user-jobs","https://my.kickthemap.com/jobs/get-user-jobs"]}),Some(&target))
+    }
     pub fn session_cookies(&self)->Result<Value,String>{
-        let data=self.cdp("Storage.getCookies",json!({}))?;
+        let data=self.owned_page_cookies()?;
         let cookies=session_cookie_params(&data["cookies"]);
         if cookies.is_empty(){return Err("Geen sessiecookies gevonden".into());}
         Ok(Value::Array(cookies))
@@ -303,24 +370,40 @@ impl Browser {
                 cookie["url"]=json!(url);
             }
         }
-        self.cdp("Storage.setCookies",json!({"cookies":cookies}))?;
-        self.navigate_account("/")
+        let target=self.channel().bootstrap_target(&crate::input::NEVER_CANCEL,Instant::now()+Duration::from_secs(15))?;
+        self.command("Page.stopLoading",json!({}),Some(&target))?;
+        self.command("Network.setCookies",json!({"cookies":cookies}),Some(&target))?;
+        self.navigate_account_at(&target,"/")
     }
     pub fn reset_signin(&self)->Result<(),String>{
-        self.cdp("Storage.clearCookies",json!({}))?;
-        self.navigate_account("/signin")
+        let target=self.channel().bootstrap_target(&crate::input::NEVER_CANCEL,Instant::now()+Duration::from_secs(15))?;
+        self.command("Page.stopLoading",json!({}),Some(&target))?;
+        self.command("Network.clearBrowserCookies",json!({}),Some(&target))?;
+        self.navigate_account_at(&target,"/signin")
     }
     pub fn open_account_home(&self)->Result<(),String>{
         self.navigate_account("/")
     }
+    /// A neutral, newly owned WebView can also recover when its native
+    /// session has no transferable cookies. Showing it remains the UI's job.
+    pub fn open_signin_hidden(&self,cancel:&AtomicBool)->Result<(),String>{
+        let channel=self.channel();let deadline=Instant::now()+Duration::from_secs(25);
+        let target=channel.bootstrap_target(cancel,deadline)?;
+        let reply=channel.command_until("Page.navigate",json!({"url":format!("{ORIGIN}/signin")}),Some(&target),cancel,deadline,64*1024)?;
+        if reply.get("errorText").is_some(){return Err("De KickTheMap-aanmeldpagina kon niet worden geopend".into());}
+        crate::input::check(cancel)
+    }
     fn navigate_account(&self,path:&str)->Result<(),String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
-        let result=self.command("Page.navigate",json!({"url":format!("{ORIGIN}{path}")}),Some(&ws))?;
+        self.navigate_account_at(&ws,path)
+    }
+    fn navigate_account_at(&self,target:&str,path:&str)->Result<(),String>{
+        let result=self.command("Page.navigate",json!({"url":format!("{ORIGIN}{path}")}),Some(target))?;
         if result.get("errorText").is_some(){return Err("KickTheMap-pagina kon niet worden geopend".into());}
         Ok(())
     }
     pub fn cookies(&self)->Result<Vec<BrowserCookie>,String>{
-        parse_browser_cookies(&self.cdp("Storage.getCookies",json!({}))?)
+        parse_browser_cookies(&self.owned_page_cookies()?)
     }
     pub fn csrf_token(&self)->Result<String,String>{
         let ws=self.channel().job_tab(&crate::input::NEVER_CANCEL)?;
@@ -339,7 +422,10 @@ impl Browser {
     /// Identity comes from a current, authenticated jobs response, never from a
     /// stale cache or a guessed job URL.
     pub fn set_visible(&self,visible:bool)->Result<(),String>{
-        if visible {let _=fs::remove_file(self._profile.path().join("window-closed"));fs::write(self._profile.path().join("window-focus"),b"1").map_err(|e|e.to_string())?;}
+        if visible {
+            if self.close_requested(){return Err("Het KickTheMap-venster is gesloten".into());}
+            fs::write(self._profile.path().join("window-focus"),b"1").map_err(|e|e.to_string())?;
+        }
         else {let _=fs::remove_file(self._profile.path().join("window-focus"));}
         fs::write(self._profile.path().join("window-visible"),if visible{b"1"}else{b"0"}).map_err(|_|"Het ingebouwde venster kon niet worden getoond of verborgen".into())
     }
@@ -347,6 +433,9 @@ impl Browser {
         self.open_job_with_cancel(job_id, &crate::input::NEVER_CANCEL).map(|_| ())
     }
     pub fn open_job_with_cancel(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        crate::input::check(cancel)?;
+        self.set_visible(false)?;
+        clear_window_close(self._profile.path()).map_err(|e|e.to_string())?;
         let url = self.open_job_hidden(job_id, cancel)?;
         self.set_visible(true)?;
         Ok(url)
@@ -368,6 +457,9 @@ impl Browser {
     /// Transfer the active native account into an owned temporary browser. The
     /// caller retains its existing SnapshotOwner; no browser identity is adopted.
     pub fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        crate::input::check(cancel)?;
+        self.set_visible(false)?;
+        clear_window_close(self._profile.path()).map_err(|e|e.to_string())?;
         let url = self.prepare_authenticated_job_hidden(cookies, job_id, cancel)?;
         self.set_visible(true)?;
         Ok(url)
@@ -387,6 +479,9 @@ fn job_view_url(payload:&str,job_id:u64)->Result<reqwest::Url,String>{
     let raw:Value=serde_json::from_str(payload).map_err(|_|"Ongeldige live joblijst".to_owned())?;
     let entries=crate::kickthemap_live::jobs_list(&raw).ok_or("Onbekend live joblijstformaat")?;
     let job=entries.iter().find(|j|crate::kickthemap_live::parse_positive_id(j.get("Id").or_else(||j.get("id")))==Some(job_id)).ok_or("Job niet gevonden in de huidige KickTheMap-sessie")?;
+    job_view_url_for_entry(job)
+}
+pub(crate) fn job_view_url_for_entry(job:&Value)->Result<reqwest::Url,String>{
     let(owner,date)=crate::kickthemap_identity::view_parts(job)?;
     let mut url=reqwest::Url::parse(ORIGIN).map_err(|e|e.to_string())?;
     url.path_segments_mut().map_err(|_|"KickTheMap-URL heeft geen pad")?
@@ -447,6 +542,27 @@ impl BrowserChannel {
             let targets = self.command_until("Target.getTargets", json!({}), None, cancel, deadline, 512 * 1024)?;
             if let Some(page) = page_target(&targets, self.port, false)? { return Ok(page); }
             Self::pause_until(cancel, deadline)?;
+        }
+    }
+    fn bootstrap_target(&self,cancel:&AtomicBool,deadline:Instant)->Result<String,String>{
+        loop {
+            let targets=self.command_until("Target.getTargets",json!({}),None,cancel,deadline,512*1024)?;
+            if let Some((target,_))=page_target(&targets,self.port,false)? {return Ok(target);}
+            // A new detached helper has one neutral page and makes no sign-in
+            // request before cookies and UA are installed. No other blank tab
+            // or external browser is considered by the ordinary target picker.
+            if let Some(pages)=targets["targetInfos"].as_array() {
+                let mut pages=pages.iter().filter(|page|page["type"]=="page");
+                if let Some(page)=pages.next().filter(|page|page["url"]=="about:blank") {
+                    if pages.next().is_none() {
+                        let id=page["targetId"].as_str().filter(|id|!id.is_empty()&&id.len()<=128
+                            &&id.bytes().all(|c|c.is_ascii_alphanumeric()||b"-_".contains(&c)))
+                            .ok_or("Ongeldige Browser-tabidentiteit")?;
+                        return validated_ws_url(&format!("ws://127.0.0.1:{}/devtools/page/{id}",self.port),self.port);
+                    }
+                }
+            }
+            Self::pause_until(cancel,deadline)?;
         }
     }
     fn wait_page(&self, target: &str, load: &PageLoad, cancel: &AtomicBool, deadline: Instant) -> Result<(), String> {
@@ -560,7 +676,7 @@ impl BrowserChannel {
             cookie.as_object_mut().unwrap().remove("domain");
             cookie["url"] = json!(format!("{ORIGIN}/"));
         }
-        let (target, _) = self.owned_target(cancel, deadline)?;
+        let target = self.bootstrap_target(cancel, deadline)?;
         self.command_until("Page.stopLoading", json!({}), Some(&target), cancel, deadline, 64 * 1024)?;
         // Storage.* on the browser socket addresses its default context, which
         // need not be the WebView's storage partition. Network.* on the owned
