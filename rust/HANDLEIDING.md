@@ -119,9 +119,17 @@ Klik nogmaals op **Lijst** om het rechterpaneel te sluiten. De compacte regels t
 2. Klik in de kaart op het beginpunt van de selectielijn.
 3. Klik op het eindpunt.
 4. Bekijk rechts de zichtbare lijnobjecten die de lijn raken of kruisen.
-5. Klik op een regel of gebruik de wisselknop om de bijbehorende informatie te lezen.
+5. Klap eventuele groepen open en klik op een kabelregel, of gebruik de wisselknop om de bijbehorende informatie te lezen.
 
 Tijdens het tekenen zie je een voorbeeldlijn. Escape, rechtsklikken of opnieuw op de lijnknop klikken annuleert de handeling; de vorige kandidatenlijst blijft dan behouden. De selectielijn dient om objecten te vinden en wordt geen nieuwe kabel in je project.
+
+### Groepen in Kabelobjecten
+
+Na een lijnselectie staan kabels die de selectielijn op vrijwel dezelfde plek raken of kruisen samen in een groep. Daarbij kunnen kabels van verschillende lagen in dezelfde groep staan. Elke groep begint ingeklapt; de groepskop toont per laagnaam hoeveel objecten erbij horen. Staat er maar één object op die plek, dan blijft het een losse regel.
+
+Klik op de groepskop om de losse kabelobjecten te tonen. Klik vervolgens op de gewenste kabelregel om die kabel op de kaart en onder **Kabelinformatie** te bekijken. De groepskop wordt oranje als de geselecteerde kabel in die groep zit, ook wanneer de groep is ingeklapt. Klik opnieuw op de kop om de losse regels weer te verbergen. De wisselknop blijft tussen de afzonderlijke gevonden kabels wisselen.
+
+In- of uitzoomen verandert de groepen niet. Een object dat de selectielijn meermaals raakt of kruist, staat één keer in de lijst, bij het eerste raak- of kruispunt vanaf het beginpunt.
 
 ## 6. Aanmelden bij KickTheMap
 
@@ -450,7 +458,7 @@ Met een rechtsklik op een proefsleuf krijg je de beschikbare acties voor die bro
 | --- | --- |
 | Een sleuf of overlay is niet in beeld | Zet het vinkje aan en dubbelklik op de regel. Gebruik daarna eventueel Zoom naar extent. |
 | Een naambordje ontbreekt | Controleer Proefsleufnaam. Zoom of verschuif om ruimte voor het bordje te maken. |
-| De verkeerde kabel is geselecteerd | Open Lijst, kies de juiste regel of gebruik de wisselknop. Een selectielijn kan meerdere kruisende kabels vinden. |
+| De verkeerde kabel is geselecteerd | Open Lijst, klap een eventuele groep open en kies de juiste kabelregel, of gebruik de wisselknop. Een selectielijn kan meerdere kruisende kabels vinden. |
 | De jobs zijn verdwenen uit de lijst | Wis de filters en controleer of Alleen geselecteerd, Geladen jobs of Downloadbaar aanstaat. Vernieuw zo nodig. |
 | Open browser is uitgeschakeld | Selecteer precies één job, controleer de aanmelding en wacht tot een lopende taak klaar is. Offline cache is geen actieve aanmelding. |
 | De joblijst werkt, maar de website vraagt opnieuw om aanmelden | De jobwebsite kan een eigen aanmelding vereisen. Rond de aanmelding in het aparte venster af en open de job opnieuw. |

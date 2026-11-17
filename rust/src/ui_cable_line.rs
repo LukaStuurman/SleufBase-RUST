@@ -191,9 +191,8 @@ impl SleufBaseApp {
                 return true;
             }
             if query.finished() {
-                let candidates = session.query.take().unwrap().into_results();
-                self.found_layers = candidates;
-                self.open_cable_candidate_list();
+                let (candidates, groups) = session.query.take().unwrap().into_grouped_results();
+                self.apply_cable_line_candidates(candidates, groups);
                 if let Some((overlay, feature)) = self.found_layers.first().copied() {
                     self.select_dxf(overlay, feature);
                 } else {

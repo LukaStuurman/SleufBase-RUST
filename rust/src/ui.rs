@@ -429,6 +429,7 @@ impl SleufBaseApp {
         // Click candidates belong to the old drawing, even when a later import
         // happens to reuse the same overlay and feature indices.
         self.found_layers.clear();
+        self.clear_cable_candidate_groups();
         if self.live_download_rx.is_some(){self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);}
         self.map_requests.invalidate();
         self.pdok_busy=false;self.osm_busy=false;
@@ -607,7 +608,10 @@ impl SleufBaseApp {
             self.message="Het gekozen kabelobject is niet meer beschikbaar.".into();
             return;
         };
-        if !self.found_layers.contains(&(overlay,feature)) { self.found_layers.clear(); }
+        if !self.found_layers.contains(&(overlay,feature)) {
+            self.found_layers.clear();
+            self.clear_cable_candidate_groups();
+        }
         if self.project_view.selected_dxf.as_ref()!=Some(&path) {
             self.project_view.selected_dxf=Some(path);
             self.dirty=true;

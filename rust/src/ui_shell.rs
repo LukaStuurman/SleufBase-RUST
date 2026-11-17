@@ -259,6 +259,16 @@ fn cable_line_button(ui: &mut egui::Ui, enabled: bool, active: bool, busy: bool)
 }
 
 impl SleufBaseApp {
+    pub(super) fn clear_cable_candidate_groups(&mut self) {
+        self.shell.cable_list.clear_groups();
+    }
+    pub(super) fn apply_cable_line_candidates(
+        &mut self, candidates: Vec<(usize, usize)>, groups: Vec<std::ops::Range<usize>>,
+    ) {
+        self.shell.cable_list.set_line_groups(self.project_generation, &self.overlays, &candidates, groups);
+        self.found_layers = candidates;
+        self.open_cable_candidate_list();
+    }
     pub(super) fn open_cable_candidate_list(&mut self) {
         self.shell.cable_list.open_and_reveal();
         self.shell.last_cable_selection = None;
@@ -722,6 +732,7 @@ impl SleufBaseApp {
         }
         self.dxf_selection = None;
         self.found_layers.clear();
+        self.clear_cable_candidate_groups();
         self.dirty |= old != self.project_view.selected_dxf;
     }
 
@@ -1020,6 +1031,7 @@ impl SleufBaseApp {
         self.project_view.selected_dxf = None;
         self.dxf_selection = None;
         self.found_layers.clear();
+        self.clear_cable_candidate_groups();
         self.shell.overlay_selection = Default::default();
         self.shell.focused_layer = None;
         self.close_maaiveld_mode();

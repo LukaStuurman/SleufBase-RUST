@@ -261,6 +261,7 @@ impl SleufBaseApp {
         let Some(pointer) = view.clicked else {
             return;
         };
+        self.clear_cable_candidate_groups();
         self.found_layers=pick_all(&self.overlays,view,pointer);
         view.painter.ctx().request_repaint();
         if let Some((overlay, feature)) = self.found_layers.first().copied() {

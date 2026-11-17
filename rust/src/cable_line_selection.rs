@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 
 const MAX_WORK_UNITS: usize = 8_192;
 const TIME_BUDGET: Duration = Duration::from_millis(3);
+// The work map uses metres. Merge coincident contacts despite tiny source
+// rounding differences, without making grouping depend on the current zoom.
+const GROUP_DISTANCE_METRES: f64 = 0.01;
 
 struct Budget {
     started: Instant,
@@ -158,6 +161,9 @@ pub struct Query {
     // provide deterministic ties without cloning layer names or other metadata.
     hits: BTreeSet<(u64, usize, usize)>,
     results: Vec<(usize, usize)>,
+    groups: Vec<std::ops::Range<usize>>,
+    group_anchor: Option<f64>,
+    group_tolerance: f64,
     draining: bool,
     finished: bool,
 }
@@ -173,9 +179,12 @@ impl Query {
         if start == end {
             return Err("Kies voor het einde van de lijn een ander punt.".into());
         }
+        let length = (end[0] - start[0]).hypot(end[1] - start[1]);
         Ok(Self {
             start, end, overlay: 0, overlay_count: None, traversal: None,
             feature: None, hits: BTreeSet::new(), results: Vec::new(),
+            groups: Vec::new(), group_anchor: None,
+            group_tolerance: if length.is_finite() { (GROUP_DISTANCE_METRES / length).min(1.) } else { 0. },
             draining: false, finished: false,
         })
     }
@@ -199,7 +208,17 @@ impl Query {
         let mut budget = Budget::new();
         while budget.take() {
             if self.draining {
-                if let Some((_, overlay, feature)) = self.hits.pop_first() {
+                if let Some((position, overlay, feature)) = self.hits.pop_first() {
+                    let position = f64::from_bits(position);
+                    let next = self.results.len();
+                    // Anchor every group to its first contact, not the previous
+                    // cable: a chain of nearby hits must not join distant lines.
+                    if self.group_anchor.is_some_and(|anchor| position - anchor <= self.group_tolerance) {
+                        if let Some(group) = self.groups.last_mut() { group.end = next + 1; }
+                    } else {
+                        self.groups.push(next..next + 1);
+                        self.group_anchor = Some(position);
+                    }
                     self.results.push((overlay, feature));
                 } else {
                     self.finished = true;
@@ -212,6 +231,7 @@ impl Query {
                 // Reserve once so incremental pushes cannot copy an ever larger
                 // result list in later frames. No geometry is copied here.
                 self.results.reserve(self.hits.len());
+                self.groups.reserve(self.hits.len());
                 continue;
             };
             if !overlay.visible {
@@ -261,6 +281,13 @@ impl Query {
     pub fn results(&self) -> &[(usize, usize)] { &self.results }
 
     pub fn into_results(self) -> Vec<(usize, usize)> { self.results }
+
+    /// Groups are contiguous ranges in the ordered result. They are collected
+    /// within the same per-frame budget, without another geometry scan. A source
+    /// object still occurs only once, at its first contact along the line.
+    pub fn into_grouped_results(self) -> (Vec<(usize, usize)>, Vec<std::ops::Range<usize>>) {
+        (self.results, self.groups)
+    }
 }
 
 fn changed_sources() -> String {

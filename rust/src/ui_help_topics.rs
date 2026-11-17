@@ -53,12 +53,13 @@ pub(super) const TOPICS: &[Topic] = &[
     Topic {
         title: "Kabelinformatie en lijnselectie",
         summary: "Een kabel herkennen en overlappende of gekruiste lijnen vergelijken.",
-        keywords: "kabelinformatie kabelobjecten xdata infracad laag kandidaten lijst aantal wisselen gloed oranje lijnselectie kruisen raken doorsnijden",
+        keywords: "kabelinformatie kabelobjecten xdata infracad laag kandidaten lijst aantal wisselen gloed oranje lijnselectie kruisen raken doorsnijden groep groeperen groepskop inklappen uitklappen",
         sections: &[
             ("Een kabel aanklikken", "Klik op een zichtbare kabel in de kaart. De geselecteerde lijn krijgt een gloed en Kabelinformatie toont onder meer XDATA InfraCAD, laag, bestand en handle. Klik naast de kabels om de selectie op te heffen."),
             ("Overlappende kabels vergelijken", "De wisselknop naast Kabelinformatie kiest telkens de volgende gevonden kabel. Lijst met het aantal kandidaten opent het paneel Kabelobjecten rechts van de kaart. Klik op een regel om die kabel te bekijken; de gekozen regel wordt oranje."),
             ("De lijst sluiten", "Klik nogmaals op Lijst om het rechterpaneel te sluiten. Het aantal kandidaten staat bij deze knop. Een nieuwe kaartklik of lijnselectie vervangt de kandidatenlijst. De compacte regels tonen de laagnaam en beschikbare objectinformatie."),
-            ("Kabels met een lijn verzamelen", "Klik op het lijnicoon rechts van Lijst. Klik in de kaart eerst het beginpunt en daarna het eindpunt van de selectielijn. Zichtbare kabels en lijnobjecten die dat lijnstuk raken of kruisen verschijnen in de lijst. Selecteer daar een regel of gebruik de wisselknop."),
+            ("Kabels met een lijn verzamelen", "Klik op het lijnicoon rechts van Lijst. Klik in de kaart eerst het beginpunt en daarna het eindpunt van de selectielijn. Zichtbare kabels en lijnobjecten die dat lijnstuk raken of kruisen verschijnen in de lijst. Klap eventuele groepen open en kies een kabelregel, of gebruik de wisselknop."),
+            ("Groepen in Kabelobjecten", "Kabels die de selectielijn op vrijwel dezelfde plek raken of kruisen, staan samen in een standaard ingeklapte groep, ook als ze op verschillende lagen staan. De groepskop toont het aantal objecten per laagnaam. Klik op de kop om de losse objecten te tonen en kies daarna de gewenste kabel. De groep wordt oranje als de geselecteerde kabel erin zit. Klik nogmaals op de kop om de groep in te klappen. Staat er maar één object op die plek, dan blijft het een losse regel. In- of uitzoomen verandert de groepen niet. Elk object staat één keer in de lijst, bij het eerste raak- of kruispunt vanaf het beginpunt."),
             ("Lijnselectie annuleren", "Tijdens tekenen zie je een lijnvoorbeeld. Escape, rechtsklik of nogmaals de lijnknop annuleert en behoudt de vorige kandidatenlijst. Bij een grote tekening kan het verzamelen even duren. Sla een open maaiveldtekst op of sluit het tekstvenster voordat je lijnselectie gebruikt."),
         ],
     },
