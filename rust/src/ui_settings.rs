@@ -660,14 +660,24 @@ pub(crate) fn show(
     let mut requested = false;
     let viewport = ctx.screen_rect();
     let title = if state.words { "KickTheMap – woordenlijst" } else { "Instellingen" };
+    let window_id = egui::Id::new("sleufbase-settings-dialog");
+    // Older releases allowed this window to collapse. Keep those saved states
+    // open as well, because the collapse control is no longer available.
+    if let Some(mut collapse) = egui::collapsing_header::CollapsingState::load(ctx, window_id.with("collapsing")) {
+        if !collapse.is_open() {
+            collapse.set_open(true);
+            collapse.store(ctx);
+        }
+    }
     egui::Window::new(title)
-        .id(egui::Id::new("sleufbase-settings-dialog"))
+        .id(window_id)
         .fixed_pos(viewport.min + egui::vec2(12.,12.))
         .fixed_size(egui::vec2((viewport.width()-56.).max(180.),(viewport.height()-100.).max(140.)))
         // Position and size already reserve the frame/title margins. Automatic
         // Area constraints otherwise shift the first measured frames on hover.
         .constrain(false)
         .open(&mut open)
+        .collapsible(false)
         .movable(false)
         .resizable(false)
         .show(ctx, |ui| {

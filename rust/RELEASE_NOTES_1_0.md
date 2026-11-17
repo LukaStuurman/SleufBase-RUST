@@ -14,6 +14,10 @@
 - Lange onderwerpnamen mogen over meerdere regels lopen. Bij een ander onderwerp of een aangepaste zoekterm begint de uitleg bovenaan.
 - Met **Uitleg kopiëren** kopieer je het huidige onderwerp als gewone tekst om te bewaren of te delen.
 
+### Instellingen zonder inklapknop
+
+- Het venster **Instellingen** heeft net als **Info** geen knop meer om het in te klappen. Dit geldt ook voor de woordenlijst die binnen hetzelfde instellingenvenster opent.
+
 ### Bijgewerkte gebruikersdocumentatie
 
 - De [Nederlandstalige gebruikershandleiding](https://github.com/LukaStuurman/SleufBase-RUST/blob/v1.0.22/rust/HANDLEIDING.md) bundelt de dagelijkse workflows in 21 hoofdstukken, met inhoudslinks en probleemoplossing.
