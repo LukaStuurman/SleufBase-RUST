@@ -115,22 +115,29 @@ fn menu(ui: &mut egui::Ui, label: &str, items: &[(&str, &'static str)]) -> Optio
     // Return an action after closing the popup; file dialogs never borrow its UI.
     let mut action = None;
     ui.menu_button(label, |ui| {
-        ui.set_min_width(190.);
         ui.style_mut().override_font_id = Some(egui::FontId::proportional(12.));
+        // A popup starts with egui's 400-point wrapping budget. Do not turn
+        // that available width into the minimum width of an exact separator.
+        let text_width = items.iter().filter(|(label, _)| !label.is_empty())
+            .map(|(label, _)| egui::WidgetText::from(*label).into_galley(ui,
+                Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button).size().x)
+            .fold(0_f32, f32::max);
+        let menu_width = (text_width + 2. * ui.spacing().button_padding.x).ceil().max(190.);
+        ui.set_width(menu_width);
         ui.spacing_mut().item_spacing.y = 3.;
         ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(255, 224, 199);
         ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 224, 199);
         for &(label, id) in items {
             if label.is_empty() {
                 let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 9.), egui::Sense::hover());
+                    egui::vec2(menu_width, 9.), egui::Sense::hover());
                 // Menu separators need their own visible stroke: the light
                 // theme deliberately removes several default widget borders.
                 ui.painter().hline(rect.x_range(), rect.center().y,
                     Stroke::new(1.0_f32, Color32::from_rgb(176, 190, 208)));
             } else if ui
                 .add_sized(
-                    [ui.available_width(), 30.],
+                    [menu_width, 30.],
                     egui::Button::new(label)
                         .frame(true)
                         .corner_radius(8)
@@ -1094,11 +1101,6 @@ impl SleufBaseApp {
                             }
                         }
                     });
-            });
-            ui.horizontal(|ui| {
-                ui.add_sized([32., 28.], egui::Label::new("TIFF").halign(egui::Align::Min));
-                ui.spacing_mut().slider_width = 130.;
-                ui.add(egui::Slider::new(&mut self.project_view.opacity_percent, 0. ..=100.).show_value(false));
             });
         });
         if previous != self.project_view {

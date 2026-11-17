@@ -127,6 +127,27 @@ pub(super) fn install(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Reserve the user's chosen content rectangle once, then lay out inside it.
+/// Child min_rect growth must not feed Window/Resize's next desired_size:
+/// nested frames, wrapping rows and scroll areas can otherwise grow it on
+/// every redraw. Keep normal scrolling, focus and resize interaction inside
+/// the reserved slot; overflowing child content cannot resize its parent.
+pub(crate) fn bounded_window_body<R>(
+    ui: &mut egui::Ui,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let rect = ui.available_rect_before_wrap();
+    let mut body = ui.new_child(egui::UiBuilder::new()
+        .id_salt("bounded-window-body")
+        .max_rect(rect)
+        .layout(egui::Layout::top_down(egui::Align::LEFT)));
+    body.set_clip_rect(ui.clip_rect().intersect(rect));
+    let result = contents(&mut body);
+    // Deliberately allocate rect, never body.min_rect() or a sizing scope.
+    ui.allocate_rect(rect, egui::Sense::hover());
+    result
+}
+
 pub(super) fn card(radius: u8, x: i8, y: i8) -> egui::Frame {
     egui::Frame::new()
         .fill(Color32::WHITE)

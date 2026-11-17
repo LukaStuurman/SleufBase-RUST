@@ -174,8 +174,16 @@
   }
   function dropdown(record, choices) {
     const select = control(record, 'select');
+    // Match the original SleufBase select padding. Provider-wide select rules
+    // otherwise leave a large empty strip before our compact choice text.
+    // These are owned nodes, removed with the replacement control on cleanup.
+    const alignText = element => {
+      for (const [name, value] of Object.entries({ 'padding-left': '2px', 'text-indent': '0px',
+        'text-align': 'left', 'text-align-last': 'left' })) element.style.setProperty(name, value, 'important');
+    };
+    alignText(select);
     const add = (value, label) => { const option = document.createElement('option'); option.value = value;
-      option.textContent = label; option.title = value; select.appendChild(option); return option; };
+      option.textContent = label; option.title = value; alignText(option); select.appendChild(option); return option; };
     add('', '');
     choices.forEach(option => add(option.code, option.label));
     let custom = null, last = null, selected = '';

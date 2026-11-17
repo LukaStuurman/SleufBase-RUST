@@ -185,6 +185,13 @@ impl SleufBaseApp {
                         prepared.markers,
                         ctx,
                     );
+                    if restore {
+                        // Return to the restored map only after successful adoption;
+                        // cancelling or failing a restore must keep the settings draft.
+                        self.settings_dialog = None;
+                        self.shell.settings_scan = None;
+                        self.shell.settings_generation = None;
+                    }
                     self.message = if imported {
                         "Python-project geïmporteerd. Sla op als Rust-project; bekijk de importmeldingen in de zijbalk.".into()
                     } else if restore {

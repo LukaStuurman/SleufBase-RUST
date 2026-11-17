@@ -1,51 +1,34 @@
-## SleufBase Rust 1.0.19 voor Windows
+## SleufBase Rust 1.0.20 voor Windows
 
-### Typekleuren in de virtuele proefsleufeditor
+### Stabiele afmetingen van bewerkvensters
 
-- Kabels en leidingen uit marXact gebruiken nu ook in **Proefsleuf bewerken** de kleuren uit de actieve objectregels.
-- Dit geldt voor de doorsnede, het bovenaanzicht, de kleurmarkeringen in de objectenlijst en de geselecteerde kabel of leiding. De oranje selectierand blijft herkenbaar.
-- Een expliciet opgeslagen objectkleur heeft voorrang op de typekleur.
-- Wanneer je instellingen of objectregels opslaat terwijl de editor openstaat, worden de effectieve editorinstellingen vernieuwd. Projectgebonden kleuren blijven leidend en de lopende conceptbewerking blijft behouden.
-- De correctie verandert de weergave; de oorspronkelijke meetcoördinaten en objecteigenschappen blijven behouden.
+- **Proefsleuf bewerken** gebruikt nu een begrensd inhoudsvak dat exact overeenkomt met de gekozen venstermaat. De binnenliggende formulieren, kaders en scrollvakken kunnen de gewenste venstergrootte niet meer bij elke tekenronde vergroten.
+- Het venster blijft met de muis te verplaatsen en te vergroten of verkleinen. De inhoud blijft scrollbaar en de actieknoppen blijven onderaan.
+- Dezelfde begrenzing is toegepast op beide DXF-sjabloonexportvensters, waar dezelfde maatberekening stond.
+- Een eerder te groot geworden editor wordt bij openen begrensd tot de beschikbare schermruimte.
 
-### Vrije tekst bij Variant in de DXF-sjabloonexport
+### Terug naar het hoofdscherm na backupherstel
 
-- **Variant** is nu een blijvend bewerkbaar tekstveld met een keuzepijl voor de bestaande standaardvarianten.
-- Je kunt bijvoorbeeld **B1**, **-2** of een eigen omschrijving invullen. Met **Nummer/variant toepassen** neem je de tekst over voor de geselecteerde proefsleuven.
-- Eigen varianttekst wordt als achtervoegsel verwerkt en niet meer door de oude metadataherkenning naar een automatische variant omgezet.
-- Een leeg veld betekent geen variant. De keuze **Automatisch (B/C/D...)** blijft beschikbaar via de keuzelijst.
-- De bestaande controle op geldige labels blijft actief. Een ongeldige combinatie geeft een melding voordat geselecteerde labels worden gewijzigd.
+- Na het succesvol laden en overnemen van een backup sluit **Instellingen** meteen.
+- Dit geldt zowel voor native SleufBase-backups als voor ondersteunde oudere Python-backups.
+- Bij annuleren, een laadfout of een afgewezen verouderd laadresultaat blijft Instellingen beschikbaar. De bestaande bevestiging voor niet-opgeslagen projectwijzigingen blijft actief.
 
-### Openen in de KickTheMap-browser
+### Uitlijning van KickTheMap-keuzelijsten
 
-- Een beschikbare aangemelde browser van hetzelfde account wordt hergebruikt en naar een apart venster verplaatst. De webpagina, browseropslag en aanmelding blijven daarbij in hetzelfde browserproces.
-- Een nieuw jobvenster start zonder een gelijktijdig aanmeldverzoek dat de overdracht van de bestaande sessie kan verstoren. Bij een browseraanmelding wordt dezelfde browseridentificatie gebruikt voor vervolgaanvragen.
-- Als opnieuw aanmelden nodig is, verschijnt het aanmeldscherm in het aparte browservenster. Na gecontroleerde aanmelding wordt de gekozen job hervat als die nog bij de huidige sessie en het huidige project hoort.
-- Een ontbrekende overdraagbare native sessie blokkeert het openen van het aanmeldvenster niet meer.
-- Annuleren, uitloggen en een projectwissel stoppen een oude aanvraag, zodat een vertraagd antwoord niet alsnog een eerdere job opent.
+- De eigen keuzelijsten voor kabel-/leidingtype en materiaal hebben compacte linkerpadding en links uitgelijnde tekst.
+- De lege strook links van de opties wordt verwijderd, ook bij onbekende bestaande waarden en de lege keuze.
+- De native keuzelijst, toetsenbordbediening en koppeling met de KickTheMap-velden blijven behouden.
 
-### Zoomen in de jobskaart
+### Compacte bovenmenu's
 
-- Zoomen met het muiswiel houdt het kaartpunt onder de muis op dezelfde plek, ook bij een breed of hoog jobsvenster.
-- De minimale en maximale kaartschaal volgen dezelfde grenzen als de hoofdkaart.
+- De breedte van de menu's bovenaan volgt de langste menutekst met een kleine marge, in plaats van de volledige standaardbreedte van het popupvenster.
+- De zichtbare scheidingslijnen tussen groepen en **Zoom naar extent** blijven behouden.
 
-### Duidelijker menu Acties
+### TIFF-zichtbaarheidsschuif verwijderd
 
-- **Zoom naar alles** heet nu **Zoom naar extent**.
-- De groepen in **Acties** zijn van elkaar gescheiden door zichtbare horizontale lijnen.
-
-### Verder inzoomen op percelen
-
-- De percelenachtergrond blijft zichtbaar wanneer je verder inzoomt dan de kleinste schaal waarop PDOK de perceellagen aanlevert.
-- SleufBase gebruikt daarvoor de fijnste beschikbare bronweergave en vergroot die naar de gevraagde kaartuitsnede. Verder inzoomen voegt geen nieuwe brongegevens toe.
-- Dit geldt ook voor **luchtfoto met percelen** en **OpenStreetMap met percelen**, inclusief perceelgrenzen, labels en bijpijlingen. De onderliggende kaart behoudt zijn eigen detail.
-- De RD-uitlijning en de aangevraagde kaartuitsnede blijven behouden; transparante perceellagen worden met behoud van hun transparantie over de basiskaart gelegd.
-
-### Vensters zonder sprong bij het resizen
-
-- **Proefsleuf bewerken** vult vanaf het openen de beschikbare vensterhoogte. De onderste knoppen en meldingen krijgen hun werkelijke ruimte, zodat een eerste resize niet langer uitgaat van een andere hoogte dan het zichtbare venster.
-- De editor blijft verplaatsbaar en behoudt zijn onthouden vensterpositie. Alleen bij de eerste opening wordt een beginpositie binnen de schermmarge gekozen.
-- Ook de twee DXF-sjabloonexportvensters vullen hun beschikbare hoogte, zodat daar dezelfde afwijking tussen zichtbare en opgeslagen venstermaten wordt voorkomen.
+- De globale TIFF-zichtbaarheidsschuif is verwijderd uit de kaartbalk en de oudere weergave-invoer.
+- Zichtbare TIFF-lagen worden op de interactieve kaart volledig dekkend getoond, zodat een oude schuifwaarde geen onbereikbare transparantie achterlaat.
+- De afzonderlijke zichtbaarheid van proefsleuven en lagen blijft bedienbaar. Exportinstellingen en bronrasters worden niet gewijzigd.
 
 ### Publicatie zonder tests
 

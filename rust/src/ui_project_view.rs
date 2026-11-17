@@ -116,7 +116,6 @@ impl SleufBaseApp {
                 }
                 if self.project_view.provider()==B::Unknown{ui.label(format!("Niet ondersteund: {}",self.project_view.background_source));}
             });
-            ui.add(egui::Slider::new(&mut self.project_view.opacity_percent,0. ..=100.).text("TIFF-dekking (%)"));
             if ui.add_enabled(self.project_view.use_background&&!self.pdok_busy&&!self.osm_busy,egui::Button::new("Achtergrond vernieuwen")).clicked(){self.request_selected_background();}
         });
         ui.horizontal_wrapped(|ui|{

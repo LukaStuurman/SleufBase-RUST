@@ -676,7 +676,9 @@ impl SleufBaseApp {
             || self.comment_tools.captures()
             || self.maaiveld_ui.captures()
             || self.raster_points.mode.is_some();
-        self.navigation.raster_opacity = Some((self.project_view.opacity_percent / 100.) as f32);
+        // Visibility is controlled by the individual layer checkboxes. Keep
+        // imported legacy opacity from hiding rasters after removing its slider.
+        self.navigation.raster_opacity = Some(1.);
         self.navigation.show_background = Some(self.project_view.use_background);
         self.navigation.show_trench_labels = Some(self.migrated_settings.viewer.show_trench_labels);
         let canvas_rect = ui.available_rect_before_wrap();

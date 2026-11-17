@@ -456,21 +456,19 @@ impl SleufBaseApp {
         let mut open=true;
         let mut action=None;
         let viewport=ctx.screen_rect();
+        let maximum=egui::vec2((viewport.width()-64.).max(280.),(viewport.height()-100.).max(200.));
         egui::Window::new("Proefsleuf bewerken").id(egui::Id::new("virtual-trench-editor"))
             .open(&mut open).collapsible(false)
             // Only seed the first position; remembered moves and screen constraints remain active.
             .default_pos(viewport.min+egui::vec2(24.,24.))
-            .default_width((viewport.width()-64.).clamp(320.,1020.))
-            .default_height((viewport.height()-100.).clamp(240.,650.))
+            .default_size(egui::vec2(1020.,650.).min(maximum))
+            .min_size(egui::vec2(320.,240.).min(maximum))
+            .max_size(maximum)
             .constrain_to(viewport.shrink(12.))
-            .resizable(true).show(ctx,|ui|{
+            .resizable(true).show(ctx,|ui|theme::bounded_window_body(ui,|ui|{
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                // Keep the visible rect equal to egui's Resize budget from the first
-                // frame. An estimated footer left unused height, so the first edge
-                // drag recalculated the size from a smaller visible window.
-                ui.set_min_height(ui.available_height());
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT),|ui|{
                     // Lay out the real footer first; wrapping, notices and delete
                     // confirmation now reserve their actual height in this frame.
@@ -709,7 +707,7 @@ impl SleufBaseApp {
                 });
                 });
                 });
-            });
+            }));
         if close_requested{open=false;}
         if let Some(cmd)=action {
             match cmd {

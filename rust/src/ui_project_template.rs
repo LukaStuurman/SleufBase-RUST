@@ -591,11 +591,9 @@ impl SleufBaseApp {
                 .constrain_to(screen.shrink(16.))
                 .collapsible(false)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ctx, |ui| theme::bounded_window_body(ui, |ui| {
                     settings_ui::control_style(ui);
                     ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                    // Match Resize's requested height even when the footer uses less space.
-                    ui.set_min_height(ui.available_height());
                     let footer_height = if dialog.error.is_empty(){118.}else{142.}
                         + if ui.available_width()<440.{34.}else{0.};
                     let body_height=(ui.available_height()-footer_height).max(64.);
@@ -852,7 +850,7 @@ impl SleufBaseApp {
                             }
                             if ui.button("Annuleren").clicked() { cancel = true; }
                         });
-                });
+                }));
 
         }
         if !open || cancel { self.project_template_dialog = None; return; }
