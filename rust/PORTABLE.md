@@ -24,10 +24,10 @@ codeondertekening zijn afzonderlijke, nog open releasevoorwaarden.
 
 ## Controle
 
-De CI levert naast de ZIP een SHA-256-controlebestand `SleufBase-Rust-portable-preview.sha256`. Controleer in PowerShell:
+Bij de release staat naast de ZIP een SHA-256-controlebestand `SleufBase-Rust-portable.sha256`. Controleer in PowerShell:
 
 ```powershell
-(Get-FileHash .\SleufBase-Rust-portable-preview.zip -Algorithm SHA256).Hash
+(Get-FileHash .\SleufBase-Rust-portable.zip -Algorithm SHA256).Hash
 ```
 
 Vergelijk de uitkomst met de SHA-256 in het bestand. Een controlehash bewijst de downloadintegriteit ten opzichte van dat bestand, maar vervangt geen codeondertekening.
