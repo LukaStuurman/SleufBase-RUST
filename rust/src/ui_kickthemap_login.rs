@@ -6,6 +6,7 @@ use sleufbase_rust::kickthemap_session as stored;
 
 impl SleufBaseApp {
     pub(super) fn open_kickthemap_login(&mut self) {
+        self.hide_kickthemap_job_window();
         self.hide_kickthemap_pane();
         let already_open = self.shell.login_open;
         if !already_open { self.browser_ui.show_password=false; }
@@ -206,26 +207,32 @@ impl SleufBaseApp {
 impl SleufBaseApp {
     /// Embedded website is an explicit fallback for mandatory KickTheMap checks.
     /// It uses the parent SleufBase window and never launches an external browser.
-    pub(super) fn hide_kickthemap_pane(&mut self) {
-        // A hidden page cannot supply the manual click we are waiting for.
-        // Cancel the bounded capture, while retaining the owned browser/draft.
+    pub(super) fn hide_kickthemap_job_window(&mut self) {
         self.cancel_kickthemap_download_capture();
-        self.browser_ui.tools.cancel();
-        self.browser_ui.web_visible = false;
-        if let Some(dock) = &self.browser_ui.dock {
-            let _ = dock.set_bounds(None);
+        self.browser_ui.cancel_pending_job_open();
+        self.browser_ui.job_window_open=false;
+        if let Some(dock)=self.browser_ui.dock.as_ref().filter(|dock|dock.is_detached()) {
+            let _=dock.set_visible(false);
         }
-        if let Some(browser) = &self.browser_ui.browser {
-            let _ = browser.set_visible(false);
+        if let Some(browser)=self.browser_ui.browser.as_ref().filter(|browser|browser.is_detached()) {
+            let _=browser.set_visible(false);
+        }
+    }
+
+    pub(super) fn hide_kickthemap_pane(&mut self) {
+        self.browser_ui.tools.cancel();
+        self.browser_ui.web_visible=false;
+        if let Some(dock)=self.browser_ui.dock.as_ref().filter(|dock|!dock.is_detached()) {
+            let _=dock.set_bounds(None);
+            let _=dock.set_visible(false);
+        }
+        if let Some(browser)=self.browser_ui.browser.as_ref().filter(|browser|!browser.is_detached()) {
+            let _=browser.set_visible(false);
         }
     }
 
     pub(super) fn show_kickthemap_website(&mut self, ctx: &egui::Context) {
         if !self.browser_ui.web_visible {
-            return;
-        }
-        if self.browser_ui.tools.job.is_some() && !self.browser_ui.is_opening_job() {
-            self.show_kickthemap_job_browser(ctx);
             return;
         }
         let busy = self.live_operation_busy();

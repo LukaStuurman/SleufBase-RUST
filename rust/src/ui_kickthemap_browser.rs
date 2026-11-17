@@ -24,9 +24,42 @@ fn workspace_cache_directory()->PathBuf {
 }
 
 const JOB_COLUMNS:[(&str,f32);7]=[
-    ("Jobnaam",205.),("Adres",290.),("Coordinaten",150.),
-    ("Aanmaak datum",140.),("Status",150.),("Gemeente",145.),("Job ID",90.),
+    ("Jobnaam",205.),("Adres",290.),("Coordinaten",140.),
+    ("Aanmaak datum",110.),("Status",108.),("Gemeente",118.),("Job ID",68.),
 ];
+const JOB_ROW_HEIGHT:f32=34.;
+const JOB_COLUMN_GAP:f32=6.;
+
+fn job_columns_for_width(width:f32)->Vec<(usize,f32)>{
+    let visible=|column|match column {
+        0|1|4=>true,3=>width>=600.,5=>width>=760.,2=>width>=1000.,6=>width>=1120.,_=>false,
+    };
+    let mut columns=(0..JOB_COLUMNS.len()).filter(|&column|visible(column))
+        .map(|column|(column,JOB_COLUMNS[column].1)).collect::<Vec<_>>();
+    let available=(width-44.-JOB_COLUMN_GAP*(columns.len()-1) as f32).max(1.);
+    let status=if width<480.{72.}else if width<600.{88.}else{108.};
+    let fixed=columns.iter().filter(|(column,_)|*column!=0&&*column!=1)
+        .map(|(column,w)|if *column==4{status}else{*w}).sum::<f32>();
+    let flexible=(available-fixed).max(1.);
+    for (column,w) in &mut columns {
+        *w=match *column {0=>flexible*0.43,1=>flexible*0.57,4=>status,_=>*w};
+    }
+    columns
+}
+
+fn job_details(job:&Job,loaded:bool)->String{
+    format!("{}\nAdres: {}\nGemeente: {}\nStatus: {}\nCoördinaten: {}\nAanmaakdatum: {}\nJob ID: {}\n{}",
+        job.title,job.address,job.municipality,job_status_text(job.status),job.coordinates,
+        job.client_date,job.job_id,if loaded{"Geladen in dit project"}else{"Nog niet geladen in dit project"})
+}
+
+fn job_action_button(ui:&mut egui::Ui,label:&str,enabled:bool,primary:bool)->egui::Response{
+    ui.add_enabled(enabled,egui::Button::new(egui::RichText::new(label).strong()
+        .color(if primary{Color32::WHITE}else{INK}))
+        .fill(if primary{ORANGE}else{Color32::WHITE})
+        .stroke(Stroke::new(1_f32,if primary{ORANGE}else{theme::BORDER}))
+        .corner_radius(8).min_size(egui::vec2(0.,30.)))
+}
 fn job_status_text(status:i32)->&'static str{
     match status{
         1=>"Aangemaakt",2=>"Wacht op verwerking",3|4=>"In wachtrij",
@@ -50,18 +83,19 @@ fn job_status_colors(status:i32)->(Color32,Color32) {
     }
 }
 fn show_job_card(ui:&mut egui::Ui,job:&Job,selected:bool,loaded:bool,
-    striped:bool,width:f32)->(egui::Response,Option<bool>)
+    striped:bool,width:f32,columns:&[(usize,f32)])->(egui::Response,Option<bool>)
 {
-    let (rect,response)=ui.allocate_exact_size(egui::vec2(width,48.),egui::Sense::click());
+    let (rect,_)=ui.allocate_exact_size(egui::vec2(width,JOB_ROW_HEIGHT),egui::Sense::hover());
+    let response=ui.interact(rect,ui.make_persistent_id(("job-card",job.job_id)),egui::Sense::click());
     let fill=if selected{Color32::from_rgb(255,239,226)}
         else if response.hovered(){Color32::from_rgb(242,245,250)}
         else if striped{theme::SURFACE_ALT}else{Color32::WHITE};
     let border=if selected{Color32::from_rgb(245,178,125)}else{theme::BORDER};
     let painter=ui.painter_at(rect);
-    painter.rect_filled(rect,10.,fill);
-    painter.rect_stroke(rect,10.,Stroke::new(1_f32,border),egui::StrokeKind::Inside);
+    painter.rect_filled(rect,6.,fill);
+    painter.rect_stroke(rect,6.,Stroke::new(1_f32,border),egui::StrokeKind::Inside);
     if selected {
-        painter.rect_filled(egui::Rect::from_min_size(rect.min+egui::vec2(3.,10.),egui::vec2(3.,28.)),2.,ORANGE);
+        painter.rect_filled(egui::Rect::from_min_size(rect.min+egui::vec2(2.,7.),egui::vec2(3.,20.)),2.,ORANGE);
     }
     // Only the outer allocation advances the virtualized list. Absolute
     // cell placement stays inside this row and keeps IDs stable while scrolling.
@@ -69,33 +103,71 @@ fn show_job_card(ui:&mut egui::Ui,job:&Job,selected:bool,loaded:bool,
         .id_salt(("job-card",job.job_id)).layout(egui::Layout::left_to_right(egui::Align::Center)));
     let ui=&mut row_ui;
     let mut checked=selected;
-    let check=ui.put(egui::Rect::from_min_size(rect.min+egui::vec2(8.,12.),egui::vec2(26.,24.)),
+    let check=ui.put(egui::Rect::from_min_size(rect.min+egui::vec2(8.,6.),egui::vec2(22.,22.)),
         egui::Checkbox::without_text(&mut checked));
-    let gap=ui.spacing().item_spacing.x;
-    let mut x=rect.left()+8.+26.+gap;
-    for (column,(_,column_width)) in JOB_COLUMNS.iter().enumerate() {
-        let cell=egui::Rect::from_min_size(egui::pos2(x,rect.top()+4.),egui::vec2(*column_width,40.));
+    let mut x=rect.left()+36.;
+    for &(column,column_width) in columns {
+        let cell=egui::Rect::from_min_size(egui::pos2(x,rect.top()+4.),egui::vec2(column_width,26.));
         let value=job_column_value(job,column);
         if column==0 {
-            ui.put(egui::Rect::from_min_size(cell.min,egui::vec2(cell.width(),22.)),
-                egui::Label::new(egui::RichText::new(&value).strong().size(14.)).truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
-            let (label,color)=if loaded{("Geladen in project",Color32::from_rgb(35,114,74))}
-                else{("Nog niet geladen",theme::MUTED)};
-            ui.put(egui::Rect::from_min_size(cell.min+egui::vec2(0.,22.),egui::vec2(cell.width(),16.)),
-                egui::Label::new(egui::RichText::new(label).size(11.).color(color)).truncate().halign(egui::Align::Min).selectable(false));
+            let text_rect=if loaded {
+                painter.circle_filled(egui::pos2(cell.left()+4.,cell.center().y),3.,Color32::from_rgb(35,114,74));
+                egui::Rect::from_min_max(cell.min+egui::vec2(12.,0.),cell.max)
+            }else{cell};
+            ui.put(text_rect,egui::Label::new(egui::RichText::new(&value).strong().size(13.))
+                .truncate().halign(egui::Align::Min).selectable(false));
         } else if column==4 {
             let (background,foreground)=job_status_colors(job.status);
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(cell).layout(egui::Layout::left_to_right(egui::Align::Center)),|ui|{
-                job_badge(ui,&value,background,foreground);
-            });
+            painter.rect_filled(cell.shrink2(egui::vec2(0.,2.)),5.,background);
+            ui.put(cell.shrink2(egui::vec2(6.,0.)),egui::Label::new(egui::RichText::new(&value).size(12.).color(foreground))
+                .truncate().halign(egui::Align::Min).selectable(false));
         } else {
             let text=egui::RichText::new(if value.is_empty(){"—"}else{&value})
                 .color(if column==1{INK}else{theme::MUTED});
             ui.put(cell,egui::Label::new(text).truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
         }
-        x+=column_width+gap;
+        x+=column_width+JOB_COLUMN_GAP;
     }
-    (response,check.changed().then_some(checked))
+    (response.on_hover_text(job_details(job,loaded)),check.changed().then_some(checked))
+}
+
+fn show_job_header(ui:&mut egui::Ui,width:f32,columns:&[(usize,f32)],
+    browser:&mut BrowserUi,filtered_ids:&[u64],inline_filters:bool){
+    let height=if inline_filters{56.}else{28.};
+    let (rect,_)=ui.allocate_exact_size(egui::vec2(width,height),egui::Sense::hover());
+    ui.painter_at(rect).rect_filled(rect,6.,Color32::WHITE);
+    let mut child=ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("job-column-headings"));
+    let mut all=!filtered_ids.is_empty()&&filtered_ids.iter().all(|id|browser.selected.contains(id));
+    if child.put(egui::Rect::from_min_size(rect.min+egui::vec2(8.,3.),egui::vec2(22.,22.)),
+        egui::Checkbox::without_text(&mut all)).on_hover_text("Alle zichtbare jobs selecteren of deselecteren").changed(){
+        if all {
+            browser.selected.extend(filtered_ids.iter().copied());
+            browser.selection_anchor=filtered_ids.last().copied();
+        }else{
+            for id in filtered_ids{browser.selected.remove(id);}
+            if browser.selection_anchor.is_some_and(|id|!browser.selected.contains(&id)){browser.selection_anchor=None;}
+        }
+    }
+    let mut x=rect.left()+36.;
+    for &(column,column_width) in columns {
+        let name=match column{2=>"Coördinaten",3=>"Datum",6=>"ID",_=>JOB_COLUMNS[column].0};
+        let arrow=if browser.sort_column==column{if browser.sort_descending{" ▼"}else{" ▲"}}else{""};
+        let cell=egui::Rect::from_min_size(egui::pos2(x,rect.top()),egui::vec2(column_width,27.));
+        let text=egui::RichText::new(format!("{name}{arrow}")).strong().size(12.)
+            .color(if browser.sort_column==column{ORANGE}else{INK});
+        if child.put(cell,egui::Button::new(text).frame(false).wrap_mode(egui::TextWrapMode::Truncate))
+            .on_hover_text(format!("Sorteren op {}",JOB_COLUMNS[column].0)).clicked(){
+            if browser.sort_column==column{browser.sort_descending=!browser.sort_descending;}
+            else{browser.sort_column=column;browser.sort_descending=column==3;}
+        }
+        if inline_filters {
+            let filter=egui::Rect::from_min_size(egui::pos2(x,rect.top()+29.),egui::vec2(column_width,24.));
+            child.put(filter,egui::TextEdit::singleline(&mut browser.filters[column])
+                .id(egui::Id::new(("kickthemap-job-filter",column)))
+                .desired_width(column_width).hint_text("Filter…").margin(egui::vec2(5.,3.)));
+        }
+        x+=column_width+JOB_COLUMN_GAP;
+    }
 }
 
 fn job_column_value(job:&Job,column:usize)->String{
@@ -135,6 +207,7 @@ pub(super) struct BrowserUi {
     pub(super) dock:Option<BrowserDock>,
     pub(super) host:isize,
     pub(super) web_visible:bool,
+    pub(super) job_window_open:bool,
     #[cfg(test)] pub(super) launch_requests:usize,
     pub(super) capturing:Option<Receiver<Result<BrowserLogin,String>>>,
     login_status:Option<Receiver<&'static str>>,
@@ -175,6 +248,9 @@ pub(super) struct BrowserUi {
     pub(super) status:String,
 }
 impl BrowserUi {
+    pub(super) fn cancel_pending_job_open(&self) {
+        if let Some(task)=&self.opening_job {task.cancel.store(true,Ordering::Release);}
+    }
     pub(super) fn is_opening_job(&self)->bool {self.opening_job.is_some()}
 
     fn select_row(&mut self, ordered:&[u64], position:usize, extend:bool) {
@@ -211,7 +287,7 @@ fn ctrl_click_selects_the_inclusive_range_in_current_list_order(){
 }
 impl Default for BrowserUi {
     fn default()->Self {
-        Self {open:false,browser:None,dock:None,host:0,web_visible:false,capturing:None,login_status:None,login_cancel:Arc::default(),
+        Self {open:false,browser:None,dock:None,host:0,web_visible:false,job_window_open:false,capturing:None,login_status:None,login_cancel:Arc::default(),
             startup_login_checked:false,
             restoring_login:false,
             show_password:false,
@@ -370,7 +446,7 @@ impl SleufBaseApp {
         self.open_kickthemap_job(id,Some(self.project_generation));
     }
     fn begin_kickthemap_download_capture(&mut self,id:u64){
-        if !self.browser_ui.web_visible||self.live_operation_busy()||self.browser_ui.batch_mode{return;}
+        if !self.browser_ui.job_window_open||self.live_operation_busy()||self.browser_ui.batch_mode{return;}
         if self.browser_ui.tools.job.as_ref().is_none_or(|job|job.job_id!=id)
             ||self.browser_ui.tools.expected_url.is_empty(){return;}
         let Some(browser)=self.browser_ui.browser.as_ref() else{return;};
@@ -545,6 +621,13 @@ impl SleufBaseApp {
         self.browser_ui.status="Aanmelden geannuleerd.".into();
     }
     pub(super) fn poll_kickthemap_browser(&mut self,ctx:&egui::Context) {
+        let window_closed=self.browser_ui.dock.as_ref().is_some_and(BrowserDock::take_window_close);
+        let process_closed=self.browser_ui.browser.as_mut().is_some_and(|browser|browser.is_detached()&&browser.is_closed());
+        if window_closed||process_closed {
+            self.hide_kickthemap_job_window();
+            if process_closed {self.browser_ui.browser=None;self.browser_ui.dock=None;}
+            self.browser_ui.status="KickTheMap-venster gesloten. Open dezelfde job om verder te gaan.".into();
+        }
         if self.browser_ui.manual_capture_job.is_some()&&self.live_download_rx.is_none(){
             self.browser_ui.manual_capture_job=None;
             self.browser_ui.capture_status=None;
@@ -554,7 +637,7 @@ impl SleufBaseApp {
             task.capture_generation.is_some_and(|generation|generation!=self.project_generation));
         if changed_project {
             if let Some(task)=&self.browser_ui.opening_job {task.cancel.store(true,Ordering::Release);}
-            self.hide_kickthemap_pane();
+            self.hide_kickthemap_job_window();
         }
         let opening=self.browser_ui.opening_job.as_ref().map(|task|task.events.try_recv());
         let result=match opening {
@@ -570,6 +653,15 @@ impl SleufBaseApp {
                     && self.live_session.as_ref().is_some_and(|session|session.snapshot_owner()==&task.owner);
                 let cancelled=task.cancel.load(Ordering::Acquire);
                 if same_owner {
+                    // Only the owning UI may show/focus an accepted job. A
+                    // cancelled worker must never undo a later hide/login.
+                    let result=match result {
+                        Ok((browser,Ok(url))) if !cancelled=>{
+                            let visible=browser.set_visible(true).map(|()|url);
+                            Ok((browser,visible))
+                        }
+                        result=>result,
+                    };
                     match result {
                         Ok((browser,Ok(url))) if !cancelled=>{
                             let same_editor=task.preserve_editor && self.browser_ui.editor_owner.as_ref()==Some(&task.owner)
@@ -578,6 +670,7 @@ impl SleufBaseApp {
                             if !same_editor {self.browser_ui.tools.set_job(task.job.clone(),url);}
                             self.browser_ui.editor_owner=Some(task.owner.clone());
                             self.browser_ui.browser=Some(browser);
+                            self.browser_ui.job_window_open=true;
                             self.browser_ui.status=format!("{} geopend in de KickTheMap-browser",task.job.title);
                             if task.capture_generation==Some(self.project_generation){
                                 capture_after_open=Some(task.job.job_id);
@@ -593,14 +686,14 @@ impl SleufBaseApp {
                                 }
                                 Err(error)=>error,
                             };
-                            self.hide_kickthemap_pane();
+                            self.hide_kickthemap_job_window();
                             self.browser_ui.status=if changed_project {"Project gewijzigd; handmatige GeoTIFF-vastlegging niet gestart.".into()}
                                 else if cancelled {"Jobvenster openen geannuleerd.".into()}
                                 else {format!("Job openen mislukt: {error}")};
                         }
                     }
                 }else{
-                    self.hide_kickthemap_pane();
+                    self.hide_kickthemap_job_window();
                     self.browser_ui.status="Jobvenster niet overgenomen: de aanmelding is gewijzigd.".into();
                 }
                 self.message=self.browser_ui.status.clone();
@@ -745,6 +838,7 @@ impl SleufBaseApp {
         );
     }
     pub(super) fn reset_kickthemap_editor(&mut self) {
+        self.hide_kickthemap_job_window();
         self.browser_ui.opening_job=None; // Drop cancels the worker and rejects late results.
         self.browser_ui.tools.cancel();
         self.browser_ui.tools=Default::default();
@@ -759,7 +853,7 @@ impl SleufBaseApp {
             self.browser_ui.status="Jobvenster openen annuleren…".into();
             self.message=self.browser_ui.status.clone();
         }
-        self.hide_kickthemap_pane();
+        self.hide_kickthemap_job_window();
     }
 
     fn open_selected_kickthemap_job(&mut self,id:u64){
@@ -778,7 +872,8 @@ impl SleufBaseApp {
             self.browser_ui.status="Deze job staat niet in de huidige live joblijst.".into();return;
         };
         let same_owner=self.browser_ui.editor_owner.as_ref()==Some(&owner);
-        let reuse_browser=self.browser_ui.browser.is_some() && same_owner;
+        let reuse_browser=same_owner && self.browser_ui.browser.as_ref().is_some_and(Browser::is_detached)
+            && self.browser_ui.dock.as_ref().is_some_and(BrowserDock::is_detached);
         let cookies=if !reuse_browser {
             match session.embedded_session_cookies() {
                 Ok(cookies)=>Some(cookies),
@@ -786,21 +881,30 @@ impl SleufBaseApp {
             }
         }else{None};
         #[cfg(not(test))]
-        let dock=match if reuse_browser {self.browser_ui.dock.clone().map(Ok).unwrap_or_else(BrowserDock::new)}
-            else {BrowserDock::new()} {
+        let dock=match if reuse_browser {self.browser_ui.dock.clone().map(Ok).unwrap_or_else(BrowserDock::detached)}
+            else {BrowserDock::detached()} {
             Ok(dock)=>dock,
             Err(error)=>{self.browser_ui.status=error.to_string();return;}
         };
+        #[cfg(not(test))]
+        {
+            let settings=self.project_settings.as_ref().unwrap_or(&self.migrated_settings);
+            let prepared=sleufbase_rust::kickthemap_page_editor::PageConfig::from_settings(settings)
+                .initialization_script().and_then(|script|dock.set_page_editor(&script));
+            if let Err(error)=prepared {self.browser_ui.status=error;return;}
+            let _=dock.set_title(&format!("{} — KickTheMap — SleufBase",job.title));
+        }
         self.browser_ui.tools.cancel();
         let preserve_editor=reuse_browser && self.browser_ui.tools.job.as_ref().is_some_and(|job|job.job_id==id);
         if !preserve_editor {
             self.browser_ui.tools=Default::default();
         }
-        let browser=self.browser_ui.browser.take().filter(|_|same_owner);
+        let browser=if reuse_browser {self.browser_ui.browser.take()} else {None};
         let (tx,rx)=mpsc::channel();
         let cancel=Arc::new(AtomicBool::new(false));
         self.browser_ui.opening_job=Some(OpeningJob {events:rx,job,owner,cancel:cancel.clone(),preserve_editor,reused_browser:reuse_browser,capture_generation});
-        self.browser_ui.web_visible=true;
+        self.browser_ui.web_visible=false;
+        self.browser_ui.job_window_open=true;
         self.shell.login_open=false;
         self.browser_ui.status=if capture_generation.is_some(){format!("Job {id} openen voor handmatige GeoTIFF-vastlegging…")}
             else{format!("Job {id} openen in de KickTheMap-browser…")};
@@ -815,8 +919,8 @@ impl SleufBaseApp {
                         None=>Browser::launch_embedded_with_cancel(dock,host,false,&cancel)?,
                     };
                     let result=match cookies {
-                        Some(cookies)=>browser.prepare_authenticated_job(&cookies,id,&cancel),
-                        None=>browser.open_job_with_cancel(id,&cancel),
+                        Some(cookies)=>browser.prepare_authenticated_job_hidden(&cookies,id,&cancel),
+                        None=>browser.open_job_hidden(id,&cancel),
                     };
                     Ok((browser,result))
                 })();
@@ -869,182 +973,202 @@ impl SleufBaseApp {
         });
         let filtered_ids=indices.iter().map(|&i|source[i].job_id).collect::<Vec<_>>();
         let selected_single=if browser.selected.len()==1{browser.selected.iter().next().copied()}else{None};
+        let active_filters=browser.filters.iter().filter(|value|!value.trim().is_empty()).count()
+            +usize::from(browser.only_loaded)+usize::from(browser.only_selected)+usize::from(browser.only_downloadable);
+        let capture_active=(browser.manual_capture_job.is_some()&&self.live_download_rx.is_some())
+            ||browser.opening_job.as_ref().is_some_and(|task|task.capture_generation.is_some());
         egui::Window::new("SleufBase Jobs")
-            .open(&mut open).default_width(1180.).default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
+            .open(&mut open).default_width((ctx.screen_rect().width()-48.).clamp(340.,1120.))
+            .default_height((ctx.screen_rect().height()-50.).clamp(260.,760.))
             .constrain_to(ctx.screen_rect().shrink(12.))
             .min_width(340.).min_height(240.)
+            .movable(!browser.map_open || jobs_map::window_movable(ctx,&browser.map_interaction))
             .resizable(true).show(ctx,|ui|{
                 settings_ui::control_style(ui);
-                ui.set_max_width(ui.available_width());ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                ui.horizontal_wrapped(|ui|{
-                    ui.label(egui::RichText::new("KickTheMap jobs").strong().size(23.));
-                    if live {
-                        job_badge(ui,"Verbonden",Color32::from_rgb(232,246,238),Color32::from_rgb(35,114,74));
-                    } else {
-                        job_badge(ui,"Offline cache",Color32::from_rgb(255,245,225),Color32::from_rgb(149,94,24));
+                ui.set_max_width(ui.available_width());
+                ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                ui.spacing_mut().item_spacing=egui::vec2(6.,4.);
+                ui.spacing_mut().button_padding=egui::vec2(9.,5.);
+                let visuals=ui.visuals_mut();
+                for widget in [&mut visuals.widgets.inactive,&mut visuals.widgets.hovered,&mut visuals.widgets.active]{
+                    widget.corner_radius=8.into();
+                }
+
+                // Reserve one compact action group; the list/map owns all of
+                // the remaining height instead of a fixed-height content area.
+                egui::TopBottomPanel::bottom("kickthemap-download-actions")
+                    .frame(theme::card(10,8,6)).show_inside(ui,|ui|{
+                    let width=ui.available_width();
+                    let narrow=width<480.;
+                    let can=live&&!busy&&!browser.batch_mode
+                        &&!browser.selected.is_empty()&&browser.capturing.is_none();
+                    let one=can&&browser.selected.len()==1;
+                    ui.horizontal_wrapped(|ui|{
+                        ui.label(egui::RichText::new(format!("{} geselecteerd · {} / {} jobs",
+                            browser.selected.len(),indices.len(),source.len())).small().color(theme::MUTED));
+                        if width>=520. {
+                            if live{job_badge(ui,"Verbonden",Color32::from_rgb(232,246,238),Color32::from_rgb(35,114,74));}
+                            else{job_badge(ui,"Offline cache",Color32::from_rgb(255,245,225),Color32::from_rgb(149,94,24));}
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui|{
+                        if job_action_button(ui,if narrow{"Laad selectie"}else{"Laad geselecteerde jobs"},can,true)
+                            .on_hover_text("Download objectpunten en GeoTIFF en laad ze in dit project.").clicked(){
+                            action=Some("both");
+                        }
+                        if job_action_button(ui,if narrow{"Open browser"}else{"Open in KickTheMap-browser"},one,false)
+                            .on_hover_text("Open één geselecteerde job in het aparte KickTheMap-venster.").clicked(){
+                            action=Some("open-job");
+                        }
+                        if width>=800.&&job_action_button(ui,"Objecten opnieuw laden",one,false)
+                            .on_hover_text("Werk de objecten van de geselecteerde job bij vanuit KickTheMap.").clicked(){
+                            action=Some("reload-job");
+                        }
+                        ui.menu_button("Meer",|ui|{
+                            if ui.add_enabled(can,egui::Button::new("Alleen objectpunten laden")).clicked(){action=Some("objects");ui.close_menu();}
+                            if ui.add_enabled(can,egui::Button::new("Alleen GeoTIFF laden")).clicked(){action=Some("tiffs");ui.close_menu();}
+                            if width<800.&&ui.add_enabled(one,egui::Button::new("Objecten opnieuw laden")).clicked(){action=Some("reload-job");ui.close_menu();}
+                            ui.separator();
+                            if ui.add_enabled(one,egui::Button::new("Handmatige GeoTIFF vastleggen")).clicked(){action=Some("repair-browser");ui.close_menu();}
+                            if ui.add_enabled(one,egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");ui.close_menu();}
+                            ui.separator();
+                            ui.small("Kies één job voor de browser, opnieuw laden of handmatige vastlegging.");
+                        });
+                    });
+                    if busy||browser.batch_mode||capture_active {
+                        ui.horizontal_wrapped(|ui|{
+                            ui.spinner();
+                            if capture_active {
+                                ui.label(if browser.opening_job.is_some(){"Job openen voor GeoTIFF…"}else{"Wachten op GeoTIFF in het jobvenster…"});
+                                if ui.button("Vastlegging annuleren").clicked(){action=Some("cancel-capture");}
+                            }else if downloading {
+                                ui.label(if browser.batch_mode{format!("{} klaar · {} in wachtrij",browser.completed,browser.queue.len())}
+                                    else{"Bestand downloaden…".into()});
+                                if ui.button("Download annuleren").clicked(){action=Some("cancel");}
+                            }else if refreshing{ui.label("Jobs vernieuwen…");}
+                            else if signing_in {
+                                ui.label("Aanmelden bij KickTheMap…");
+                                if ui.button("Aanmelden annuleren").clicked(){action=Some("cancel-login");}
+                            }else if browser.opening_job.is_some(){
+                                ui.label("Jobvenster openen…");
+                                if ui.button("Openen annuleren").clicked(){action=Some("cancel-open");}
+                            }else if browser.reloading.is_some(){
+                                ui.label("Objecten ophalen…");
+                                if ui.button("Ophalen annuleren").clicked(){action=Some("cancel-reload");}
+                            }
+                            else{ui.label("KickTheMap-taak afronden…");}
+                        });
                     }
-                });
-                ui.colored_label(theme::MUTED,"Selecteer jobs om objectpunten en GeoTIFF-beelden in je project te laden.");
-                ui.add_space(8.);
-                egui::TopBottomPanel::bottom("kickthemap-download-actions").frame(theme::card(14,12,10)).show_inside(ui,|ui|{
-                    ui.horizontal_wrapped(|ui|{
-                        ui.strong(format!("{} geselecteerd",browser.selected.len()));
-                        ui.colored_label(theme::MUTED,format!("{} van {} jobs zichtbaar",indices.len(),source.len()));
-                    });
-                    ui.add_space(4.);
-                    ui.horizontal_wrapped(|ui|{
-                        let can=live&&!busy&&!browser.batch_mode&&
-                            !browser.selected.is_empty()&&browser.capturing.is_none();
-                        if ui.add_enabled(can,egui::Button::new(egui::RichText::new("Laad geselecteerde jobs").strong().color(Color32::WHITE)).fill(ORANGE).corner_radius(9).min_size(egui::vec2(200.,34.))).clicked(){action=Some("both");}
-                        if ui.add_enabled(can,egui::Button::new("Objectpunten downloaden + laden")).clicked(){
-                            action=Some("objects");
-                        }
-                        if ui.add_enabled(can,egui::Button::new("GeoTIFF downloaden + laden")).clicked(){
-                            action=Some("tiffs");
-                        }
-                    });
-                    ui.horizontal_wrapped(|ui|{
-                        if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
-                            egui::Button::new("Open in KickTheMap-browser").corner_radius(9))
-                            .on_hover_text("Open één geselecteerde job om kabels en leidingen te tekenen en hun gegevens in te vullen.").clicked(){action=Some("open-job");}
-                    });
-                    ui.menu_button("Meer opties en probleemoplossing",|ui|{
-                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
-                        egui::Button::new("Download herstellen met opgeslagen verzoek…")).clicked(){action=Some("repair");}
-                    if ui.add_enabled(live&&!busy&&!browser.batch_mode&&browser.selected.len()==1,
-                        egui::Button::new("Handmatige GeoTIFF-download vastleggen in het ingebouwde venster")).clicked(){
-                            action=Some("repair-browser");ui.close_menu();
-                        }
-                    ui.small("Selecteer één job om een opgeslagen downloadverzoek te controleren. Een werkende downloadwijze wordt voor deze sessie onthouden.");
-                    });
-                    if busy||browser.batch_mode{ui.horizontal_wrapped(|ui|{
-                        ui.spinner();
-                        if downloading {
-                            if browser.batch_mode{ui.label(format!("{} klaar, {} in wachtrij",browser.completed,browser.queue.len()));}
-                            else{ui.label("Bestand downloaden…");}
-                            if ui.button("Download annuleren").clicked(){action=Some("cancel");}
-                        }else if refreshing{ui.label("Jobs vernieuwen…");}
-                        else if signing_in{ui.label("Aanmelden bij KickTheMap…");}
-                        else if browser.opening_job.is_some(){ui.label("Jobvenster openen…");}
-                        else{ui.label("Lopende KickTheMap-taak afronden…");}
-                    });}
                     if !browser.failures.is_empty(){
                         ui.menu_button(format!("Downloadfouten: {}",browser.failures.len()),|ui|{
-                            egui::ScrollArea::vertical().max_height(180.).show(ui,|ui|{for message in browser.failures.iter().rev().take(20){ui.label(message);}});
+                            egui::ScrollArea::vertical().max_height(180.).show(ui,|ui|{
+                                for message in browser.failures.iter().rev().take(20){ui.label(message);}
+                            });
                         });
                     }
-                    if ctx.screen_rect().height()>=500.{ui.small("Objectpunten laden maakt ze zichtbaar onder KLIC Overlays. Ctrl+klik selecteert een reeks. Dubbelklik laadt objectpunten en GeoTIFF.");}
-                    if !browser.status.is_empty(){egui::ScrollArea::vertical().id_salt("jobs-status").max_height(64.).show(ui,|ui|{ui.label(&browser.status);});}
+                    if !browser.status.is_empty(){
+                        ui.add(egui::Label::new(egui::RichText::new(&browser.status).small()).truncate())
+                            .on_hover_text(&browser.status);
+                    }
                 });
-                ui.scope(|ui|{
-                    let compact=ctx.screen_rect().height()<550.;
-                    ui.horizontal_wrapped(|ui|{
-                        if ui.selectable_label(!browser.map_open,"Lijst").clicked(){browser.map_open=false;browser.map_interaction=Default::default();}
-                        if ui.selectable_label(browser.map_open,"Kaart").clicked(){
-                            if !browser.map_open{browser.map_bounds=None;}browser.map_open=true;
-                        }
-                        ui.separator();
-                        if ui.add_enabled(!busy,egui::Button::new(if live{"Account"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
-                        if browser.capturing.is_some()&&ui.small_button("Aanmelden annuleren").clicked(){action=Some("cancel-login");}
-                        if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
-                        ui.menu_button("Filter / selectie",|ui|{
-                            ui.set_max_width((ctx.screen_rect().width()-50.).min(320.));
-                            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-100.).max(100.)).show(ui,|ui|{
-                            ui.checkbox(&mut browser.only_loaded,"Geladen jobs");ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
+
+                ui.horizontal_wrapped(|ui|{
+                    if ui.selectable_label(!browser.map_open,"Lijst").clicked(){browser.map_open=false;browser.map_interaction=Default::default();}
+                    if ui.selectable_label(browser.map_open,"Kaart").clicked(){
+                        if !browser.map_open{browser.map_bounds=None;}browser.map_open=true;
+                    }
+                    ui.separator();
+                    let filter_label=if active_filters==0{"Filter / selectie".into()}else{format!("Filters ({active_filters}) / selectie")};
+                    ui.menu_button(filter_label,|ui|{
+                        ui.set_max_width((ctx.screen_rect().width()-50.).min(320.));
+                        egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-100.).max(100.)).show(ui,|ui|{
+                            ui.checkbox(&mut browser.only_loaded,"Geladen jobs");
+                            ui.checkbox(&mut browser.only_selected,"Alleen geselecteerd");
+                            ui.checkbox(&mut browser.only_downloadable,"Downloadbaar");
                             ui.horizontal_wrapped(|ui|{
-                                if ui.button("Selecteer zichtbare").clicked(){browser.selected.extend(filtered_ids.iter().copied());}
-                                if ui.button("Deselecteer zichtbare").clicked(){for id in &filtered_ids{browser.selected.remove(id);}}
-                                if ui.button("Wis selectie").clicked(){browser.selected.clear();}
+                                if ui.button("Alles selecteren").clicked(){
+                                    browser.selected.extend(filtered_ids.iter().copied());
+                                    browser.selection_anchor=filtered_ids.last().copied();
+                                }
+                                if ui.button("Selectie wissen").clicked(){browser.selected.clear();browser.selection_anchor=None;}
                             });
                             ui.separator();
-                            for (column,(name,_)) in JOB_COLUMNS.iter().enumerate(){ui.label(*name);ui.add(egui::TextEdit::singleline(&mut browser.filters[column]).desired_width(230.).hint_text("Filter..."));}
-                            });
-                        });
-                    });
-                    if browser.map_open {
-                        show_jobs_map(ui,source,&indices,browser,&mut action);
-                    } else {
-                    // Keep column headings, filters and cards on one shared horizontal offset.
-                    ui.add_space(6.);
-                    egui::ScrollArea::horizontal().id_salt("jobs-horizontal").show(ui,|ui|{
-                        let content_width=26.+JOB_COLUMNS.iter().map(|(_,width)|width).sum::<f32>()
-                            +ui.spacing().item_spacing.x*JOB_COLUMNS.len() as f32;
-                        let card_width=content_width+16.;
-                        egui::Frame::new().fill(Color32::WHITE).corner_radius(10)
-                            .inner_margin(egui::Margin::symmetric(8,6)).show(ui,|ui|{
-                            ui.set_min_width(content_width);
-                            ui.horizontal(|ui|{
-                                ui.add_sized([26.,27.],egui::Label::new(""));
-                                for (column,(name,width)) in JOB_COLUMNS.iter().enumerate(){
-                                    let arrow=if browser.sort_column==column{
-                                        if browser.sort_descending{" ▼"}else{" ▲"}
-                                    }else{""};
-                                    let text=egui::RichText::new(format!("{name}{arrow}")).strong()
-                                        .color(if browser.sort_column==column{ORANGE}else{INK});
-                                    if ui.add_sized([*width,27.],egui::Button::new(text).frame(false)).clicked(){
-                                        if browser.sort_column==column {
-                                            browser.sort_descending=!browser.sort_descending;
-                                        }else{
-                                            browser.sort_column=column;
-                                            browser.sort_descending=column==3;
+                            egui::ComboBox::from_id_salt("jobs-sort-column").selected_text(JOB_COLUMNS[browser.sort_column].0)
+                                .show_ui(ui,|ui|{
+                                    for (column,(name,_)) in JOB_COLUMNS.iter().enumerate(){
+                                        if ui.selectable_label(browser.sort_column==column,*name).clicked(){
+                                            browser.sort_column=column;browser.sort_descending=column==3;
                                         }
                                     }
-                                }
-                            });
-                            if !compact{
-                                ui.horizontal(|ui|{
-                                    ui.add_sized([26.,27.],egui::Label::new(""));
-                                    for (column,(_,width)) in JOB_COLUMNS.iter().enumerate(){
-                                        ui.add_sized([*width,27.],egui::TextEdit::singleline(&mut browser.filters[column])
-                                            .hint_text("Filter...").margin(egui::vec2(8.,5.)));
-                                    }
                                 });
+                            ui.checkbox(&mut browser.sort_descending,"Aflopend sorteren");
+                            ui.separator();
+                            for (column,(name,_)) in JOB_COLUMNS.iter().enumerate(){
+                                ui.label(*name);
+                                ui.add(egui::TextEdit::singleline(&mut browser.filters[column])
+                                    .desired_width(230.).hint_text("Filter…"));
+                            }
+                            if ui.button("Alle filters wissen").clicked(){
+                                browser.filters=Default::default();browser.only_loaded=false;
+                                browser.only_selected=false;browser.only_downloadable=false;
                             }
                         });
-                        if indices.is_empty() {
-                            ui.allocate_ui_with_layout(egui::vec2(card_width,150.),egui::Layout::top_down(egui::Align::Center),|ui|{
-                                ui.add_space(22.);
-                                ui.label(egui::RichText::new("Geen jobs gevonden").strong().size(17.));
-                                ui.colored_label(theme::MUTED,if source.is_empty(){
-                                    "Meld je aan of vernieuw de joblijst om jobs op te halen."
-                                }else{"Pas de filters aan om meer jobs te tonen."});
-                                if !source.is_empty()&&ui.button("Filters wissen").clicked(){
-                                    browser.filters=Default::default();
-                                    browser.only_loaded=false;browser.only_selected=false;browser.only_downloadable=false;
-                                }
-                            });
-                        } else {
-                            egui::ScrollArea::vertical().id_salt("jobs-vertical").max_height(ui.available_height().max(48.)).auto_shrink([false,false])
-                                .show_rows(ui,48.,indices.len(),|ui,rows|{
-                                    for position in rows{
-                                        let job=&source[indices[position]];
-                                        let extend=ui.input(|i|i.modifiers.ctrl||i.modifiers.command||i.modifiers.shift);
-                                        let (response,checked)=show_job_card(ui,job,browser.selected.contains(&job.job_id),
-                                            loaded.contains(&job.job_id),position%2!=0,card_width);
-                                        if let Some(selected)=checked {
-                                            if extend {
-                                                browser.select_row(&filtered_ids,position,true);
-                                            }else if selected{
-                                                browser.selected.insert(job.job_id);
-                                                browser.selection_anchor=Some(job.job_id);
-                                            }else{
-                                                browser.selected.remove(&job.job_id);
-                                            }
-                                        } else {
-                                            if response.clicked(){browser.select_row(&filtered_ids,position,extend);}
-                                            if response.double_clicked()&&!extend&&live&&!busy&&!browser.batch_mode{
-                                                browser.select_row(&filtered_ids,position,false);
-                                                action=Some("both");
-                                            }
+                    });
+                    if ui.add_enabled(live&&!busy,egui::Button::new("Vernieuwen")).clicked(){action=Some("refresh");}
+                    if ui.add_enabled(!busy,egui::Button::new(if live{"Account"}else{"Aanmelden"})).clicked(){action=Some("login-dialog");}
+                });
+                ui.add_space(4.);
+                if browser.map_open {
+                    show_jobs_map(ui,source,&indices,browser,&mut action);
+                }else{
+                    // The scrollbar always reserves the same space, keeping
+                    // headings and virtualized rows aligned during resizing.
+                    let width=(ui.available_width()-ui.spacing().scroll.allocated_width()).max(1.);
+                    let columns=job_columns_for_width(width);
+                    let inline_filters=width>=600.&&ui.available_height()>=240.;
+                    show_job_header(ui,width,&columns,browser,&filtered_ids,inline_filters);
+                    ui.spacing_mut().item_spacing.y=2.;
+                    if indices.is_empty(){
+                        ui.add_space(8.);
+                        ui.strong("Geen jobs gevonden");
+                        ui.colored_label(theme::MUTED,if source.is_empty(){
+                            "Meld je aan of vernieuw de joblijst."
+                        }else{"Pas de filters aan om meer jobs te tonen."});
+                        if !source.is_empty()&&ui.button("Filters wissen").clicked(){
+                            browser.filters=Default::default();browser.only_loaded=false;
+                            browser.only_selected=false;browser.only_downloadable=false;
+                        }
+                    }else{
+                        egui::ScrollArea::vertical().id_salt("jobs-vertical")
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                            .max_height(ui.available_height().max(1.)).auto_shrink([false,false])
+                            .show_rows(ui,JOB_ROW_HEIGHT,indices.len(),|ui,rows|{
+                                for position in rows{
+                                    let job=&source[indices[position]];
+                                    let extend=ui.input(|i|i.modifiers.ctrl||i.modifiers.command||i.modifiers.shift);
+                                    let (response,checked)=show_job_card(ui,job,browser.selected.contains(&job.job_id),
+                                        loaded.contains(&job.job_id),position%2!=0,width,&columns);
+                                    if let Some(selected)=checked {
+                                        if extend{browser.select_row(&filtered_ids,position,true);}
+                                        else if selected{browser.selected.insert(job.job_id);browser.selection_anchor=Some(job.job_id);}
+                                        else{
+                                            browser.selected.remove(&job.job_id);
+                                            if browser.selection_anchor==Some(job.job_id){browser.selection_anchor=None;}
+                                        }
+                                    }else{
+                                        if response.clicked(){browser.select_row(&filtered_ids,position,extend);}
+                                        if response.double_clicked()&&!extend&&live&&!busy&&!browser.batch_mode{
+                                            browser.select_row(&filtered_ids,position,false);
+                                            action=Some("both");
                                         }
                                     }
-                                });
-                        }
-                    });
+                                }
+                            });
                     }
-                });
+                }
             });
         self.browser_ui.open=open;
+        if !open{self.browser_ui.map_interaction=Default::default();}
         match action {
             Some("login-dialog")=>self.open_kickthemap_login(),
             Some("cancel-login")=>self.cancel_kickthemap_login(),
@@ -1052,6 +1176,15 @@ impl SleufBaseApp {
                 if let Some(id)=self.browser_ui.open_target.take().or(selected_single){
                     self.open_selected_kickthemap_job(id);
                 }
+            },
+            Some("reload-job")=>{
+                if let Some(id)=self.browser_ui.selected.first().copied(){self.start_kickthemap_object_reload(id);}
+            },
+            Some("cancel-capture")=>self.cancel_kickthemap_download_capture(),
+            Some("cancel-open")=>self.cancel_kickthemap_job_open(),
+            Some("cancel-reload")=>{
+                if let Some(reload)=&self.browser_ui.reloading{reload.cancel();}
+                self.browser_ui.status="Objecten ophalen annuleren…".into();
             },
             Some("refresh")=>self.refresh_live_jobs(),
             Some("repair")=>{
@@ -1152,7 +1285,7 @@ mod tests {
         }).unwrap_or_else(||panic!("visible action missing: {label}"));
         let mut output=render(&mut app,vec![]);
         for _ in 0..4 {output=render(&mut app,vec![]);}
-        for label in ["Meer opties en probleemoplossing","Handmatige GeoTIFF-download vastleggen in het ingebouwde venster"] {
+        for label in ["Meer","Handmatige GeoTIFF vastleggen"] {
             let point=position(&output,label);
             render(&mut app,vec![egui::Event::PointerMoved(point)]);
             for pressed in [true,false] {
@@ -1166,11 +1299,12 @@ mod tests {
         let task=app.browser_ui.opening_job.as_ref().expect("the manual action first opens the selected job");
         assert_eq!(task.job.job_id,42);
         assert_eq!(task.capture_generation,Some(app.project_generation));
-        assert!(app.browser_ui.web_visible);
-        assert!(!ctx.memory(|memory|memory.any_popup_open()),"the menu cannot cover the embedded page");
+        assert!(app.browser_ui.job_window_open);
+        assert!(!app.browser_ui.web_visible);
+        assert!(!ctx.memory(|memory|memory.any_popup_open()),"the menu closes before the separate browser opens");
         assert!(app.live_download_rx.is_none()&&!app.manual_kickthemap_capture_active(),"never arm before the job document is ready");
         app.poll_kickthemap_browser(&ctx); // No real browser is launched by UI tests.
-        assert!(!app.browser_ui.web_visible&&app.live_download_rx.is_none());
+        assert!(!app.browser_ui.job_window_open&&app.live_download_rx.is_none());
         assert_eq!(app.live_jobs_owner,owner);
         assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
     }
@@ -1186,18 +1320,18 @@ mod tests {
             match change {
                 "project"=>app.execute_project_action(ProjectAction::New,&egui::Context::default()),
                 "cancel"=>app.cancel_kickthemap_job_open(),
-                "hide"=>app.hide_kickthemap_pane(),
+                "hide"=>app.hide_kickthemap_job_window(),
                 "login"=>app.open_kickthemap_login(),
                 _=>app.live_jobs_owner=None,
             }
             if matches!(change,"cancel"|"hide"|"login") {
-                assert!(cancel.load(Ordering::Acquire),"leaving the pane cancels the pending intent before its reply");
+                assert!(cancel.load(Ordering::Acquire),"hiding the job window cancels the pending intent before its reply");
                 assert!(app.browser_ui.opening_job.is_some(),"retain the receiver so an existing browser can return");
             }
             app.poll_kickthemap_browser(&egui::Context::default());
             assert!(cancel.load(Ordering::Acquire));
             assert!(app.browser_ui.opening_job.is_none()&&app.live_download_rx.is_none());
-            assert!(!app.manual_kickthemap_capture_active()&&!app.browser_ui.web_visible);
+            assert!(!app.manual_kickthemap_capture_active()&&!app.browser_ui.job_window_open);
             assert!(app.live_session.is_some(),"an aborted browser opening does not borrow the native login");
             if change=="project" {
                 assert_ne!(generation,app.project_generation);
@@ -1217,14 +1351,14 @@ mod tests {
         app.live_download_rx=Some(download_rx);app.live_busy=true;
         app.live_download_generation=app.project_generation;
         app.browser_ui.manual_capture_job=Some(42);
-        app.browser_ui.web_visible=true;
+        app.browser_ui.job_window_open=true;
         let expected_url="https://www.my.kickthemap.com/viewJob/fixture_2026-11-16";
         app.browser_ui.tools.set_job(app.live_jobs[0].clone(),expected_url.into());
         let ctx=egui::Context::default();theme::install(&ctx);
         let render=|app:&mut SleufBaseApp,events|ctx.run(egui::RawInput {
             screen_rect:Some(egui::Rect::from_min_size(Pos2::ZERO,egui::vec2(1200.,760.))),
             events,..Default::default()
-        },|ctx|app.show_kickthemap_website(ctx));
+        },|ctx|app.show_kickthemap_workspace(ctx));
         let mut output=render(&mut app,vec![]);
         for _ in 0..3 {output=render(&mut app,vec![]);}
         let point=output.shapes.iter().find_map(|shape|match &shape.shape {
@@ -1232,22 +1366,22 @@ mod tests {
                 let point=text.pos+text.galley.rect.center().to_vec2();
                 shape.clip_rect.contains(point).then_some(point)
             },_=>None,
-        }).expect("capture cancellation must be accessible while the job page is shown");
+        }).expect("capture cancellation stays accessible in Jobs while the separate job page is shown");
         render(&mut app,vec![egui::Event::PointerMoved(point)]);
         for pressed in [true,false] {render(&mut app,vec![egui::Event::PointerButton {
             pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),
         }]);}
         assert!(app.browser_ui.cancel.load(Ordering::Acquire));
-        assert!(app.browser_ui.web_visible,"cancelling capture does not close the job browser");
+        assert!(app.browser_ui.job_window_open,"cancelling capture does not close the job browser");
         let (status_tx,status_rx)=mpsc::channel();app.browser_ui.capture_status=Some(status_rx);
         status_tx.send("Klaar na annuleren".into()).unwrap();
         let cancelled_status=app.browser_ui.status.clone();
         app.poll_kickthemap_browser(&ctx);
         assert_eq!(app.browser_ui.status,cancelled_status,"ignore a late armed notice after cancellation");
         app.browser_ui.cancel.store(false,Ordering::Release);
-        app.hide_kickthemap_pane();
+        app.hide_kickthemap_job_window();
         assert!(app.browser_ui.cancel.load(Ordering::Acquire),"leaving the visible page also cancels its capture");
-        assert!(!app.browser_ui.web_visible);
+        assert!(!app.browser_ui.job_window_open);
         assert_eq!(app.browser_ui.tools.job.as_ref().unwrap().job_id,42);
         assert_eq!(app.browser_ui.tools.expected_url,expected_url);
         download_tx.send((session,Err("Vastlegging geannuleerd".into()))).ok().unwrap();
@@ -1279,9 +1413,9 @@ mod tests {
             render(&mut app,vec![egui::Event::PointerButton {pos:position,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}]);
         }
         assert_eq!(app.browser_ui.launch_requests,1);
-        assert!(app.browser_ui.is_opening_job() && app.browser_ui.web_visible);
+        assert!(app.browser_ui.is_opening_job() && app.browser_ui.job_window_open);
         app.poll_kickthemap_browser(&ctx); // deterministic test worker failure
-        assert!(!app.browser_ui.is_opening_job() && !app.browser_ui.web_visible);
+        assert!(!app.browser_ui.is_opening_job() && !app.browser_ui.job_window_open);
         assert_eq!(app.live_jobs_owner,owner);
         assert_eq!(app.live_session.as_ref().map(|session|session.snapshot_owner()),owner.as_ref());
         assert!(app.browser_ui.status.contains("Job openen mislukt"));
@@ -1294,7 +1428,7 @@ mod tests {
         let cancel=app.browser_ui.opening_job.as_ref().unwrap().cancel.clone();
         app.cancel_kickthemap_job_open();
         assert!(cancel.load(Ordering::Acquire));
-        assert!(!app.browser_ui.web_visible);
+        assert!(!app.browser_ui.job_window_open);
         assert!(app.browser_ui.is_opening_job(),"keep receiver until an existing browser can be returned");
         app.poll_kickthemap_browser(&egui::Context::default());
         assert!(!app.browser_ui.is_opening_job());
@@ -1310,7 +1444,7 @@ mod tests {
         app.live_jobs_owner=None;
         app.open_selected_kickthemap_job(42);
         assert_eq!(app.browser_ui.launch_requests,0);
-        assert!(!app.browser_ui.web_visible);
+        assert!(!app.browser_ui.job_window_open);
     }
     #[test]
     fn dragging_jobs_window_taller_reveals_more_rows(){
@@ -1341,8 +1475,7 @@ mod tests {
         let before=visible(&output);
         let rect=ctx.memory(|memory|memory.area_rect(egui::Id::new("SleufBase Jobs"))).unwrap();
         let start=rect.center_bottom();
-        // Three card rows plus spacing fit in this resize, including the
-        // two-line job title and its project-loaded state.
+        // Additional compact rows must use the newly available list height.
         let end=start+egui::vec2(0.,180.);
         let button=|pos,pressed|egui::Event::PointerButton{
             pos,button:egui::PointerButton::Primary,pressed,modifiers:Default::default(),

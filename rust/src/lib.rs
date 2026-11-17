@@ -123,6 +123,7 @@ pub mod jobs_cache;
 pub mod kickthemap_live;
 pub mod kickthemap_browser;
 pub mod kickthemap_form;
+pub mod kickthemap_page_editor;
 pub mod kickthemap_session;
 pub mod kickthemap_webview;
 pub mod bgt;

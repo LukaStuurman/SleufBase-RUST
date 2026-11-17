@@ -142,11 +142,38 @@ fn read_port(profile:&Path)->Result<(u16,String),String>{
 pub struct BrowserDock {
     control:std::sync::Arc<tempfile::TempDir>,
     bounds:std::sync::Arc<std::sync::Mutex<Option<[i32;4]>>>,
+    detached:bool,
 }
 impl BrowserDock {
     pub fn new()->std::io::Result<Self>{
         Ok(Self{control:std::sync::Arc::new(tempfile::Builder::new().prefix("sleufbase-kickthemap-").tempdir()?),
-            bounds:Default::default()})
+            bounds:Default::default(),detached:false})
+    }
+    pub fn detached()->std::io::Result<Self>{
+        let mut dock=Self::new()?;
+        fs::write(dock.control.path().join("window-detached"),b"1")?;
+        dock.detached=true;
+        Ok(dock)
+    }
+    pub fn is_detached(&self)->bool {self.detached}
+    pub fn set_page_editor(&self,script:&str)->Result<(),String>{
+        use std::io::Write;
+        if !self.detached||script.len()>256*1024{return Err("Ongeldige browserinrichting".into());}
+        let mut file=tempfile::NamedTempFile::new_in(self.control.path()).map_err(|e|e.to_string())?;
+        file.write_all(script.as_bytes()).map_err(|e|e.to_string())?;
+        file.persist(self.control.path().join("page-editor.js")).map_err(|e|e.to_string())?;
+        Ok(())
+    }
+    pub fn set_title(&self,title:&str)->std::io::Result<()>{
+        fs::write(self.control.path().join("window-title"),title.chars().take(180).collect::<String>())
+    }
+    pub fn set_visible(&self,visible:bool)->std::io::Result<()>{
+        if visible {let _=fs::remove_file(self.control.path().join("window-closed"));fs::write(self.control.path().join("window-focus"),b"1")?;}
+        else {let _=fs::remove_file(self.control.path().join("window-focus"));}
+        fs::write(self.control.path().join("window-visible"),if visible{b"1"}else{b"0"})
+    }
+    pub fn take_window_close(&self)->bool{
+        self.detached&&fs::remove_file(self.control.path().join("window-closed")).is_ok()
     }
     pub fn set_bounds(&self,bounds:Option<[i32;4]>)->std::io::Result<()>{
         use std::io::Write;
@@ -167,6 +194,7 @@ pub struct Browser {
     _remember_lock:Option<fs::File>,
     port:u16,
     websocket:String,
+    detached:bool,
 }
 impl Browser {
     pub fn launch_embedded(dock:BrowserDock,host:isize,remember:bool)->Result<Self,String>{
@@ -205,7 +233,8 @@ impl Browser {
         crate::input::check(cancel)?;
         let log=fs::File::create(control.path().join("startup.log")).map_err(|e|e.to_string())?;
         let process=BrowserProcess::spawn(&command,&log).map_err(|e|format!("Inloggen starten: {e}"))?;
-        let mut owned=Self{process,_profile:control,_remember_lock:lock,port:0,websocket:String::new()};
+        let detached=control.path().join("window-detached").is_file();
+        let mut owned=Self{process,_profile:control,_remember_lock:lock,port:0,websocket:String::new(),detached};
         let deadline=Instant::now()+Duration::from_secs(45);
         while Instant::now()<deadline {
             crate::input::check(cancel)?;
@@ -236,6 +265,7 @@ impl Browser {
     fn cdp(&self,method:&str,params:Value)->Result<Value,String>{
         self.command(method,params,None)
     }
+    pub fn is_detached(&self)->bool {self.detached}
     pub fn is_closed(&mut self)->bool {
         !matches!(self.process.try_wait(),Ok(None))
     }
@@ -292,23 +322,35 @@ impl Browser {
     /// Identity comes from a current, authenticated jobs response, never from a
     /// stale cache or a guessed job URL.
     pub fn set_visible(&self,visible:bool)->Result<(),String>{
+        if visible {let _=fs::remove_file(self._profile.path().join("window-closed"));fs::write(self._profile.path().join("window-focus"),b"1").map_err(|e|e.to_string())?;}
+        else {let _=fs::remove_file(self._profile.path().join("window-focus"));}
         fs::write(self._profile.path().join("window-visible"),if visible{b"1"}else{b"0"}).map_err(|_|"Het ingebouwde venster kon niet worden getoond of verborgen".into())
     }
     pub fn open_job(&self,job_id:u64)->Result<(),String>{
         self.open_job_with_cancel(job_id, &crate::input::NEVER_CANCEL).map(|_| ())
     }
     pub fn open_job_with_cancel(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        let url = self.open_job_hidden(job_id, cancel)?;
+        self.set_visible(true)?;
+        Ok(url)
+    }
+    /// Prepare navigation without showing or focusing a window. The owning UI
+    /// must accept the result for its current account before making it visible.
+    pub fn open_job_hidden(&self, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
         let url = self.channel().open_verified_job(job_id, cancel)?;
         crate::input::check(cancel)?;
-        self.set_visible(true)?;
         Ok(url)
     }
     /// Transfer the active native account into an owned temporary browser. The
     /// caller retains its existing SnapshotOwner; no browser identity is adopted.
     pub fn prepare_authenticated_job(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
+        let url = self.prepare_authenticated_job_hidden(cookies, job_id, cancel)?;
+        self.set_visible(true)?;
+        Ok(url)
+    }
+    pub fn prepare_authenticated_job_hidden(&self, cookies: &Value, job_id: u64, cancel: &AtomicBool) -> Result<String, String> {
         let url = self.channel().prepare_authenticated_job(cookies, job_id, cancel)?;
         crate::input::check(cancel)?;
-        self.set_visible(true)?;
         Ok(url)
     }
     pub fn browser_job_payload(&self)->Result<String,String>{

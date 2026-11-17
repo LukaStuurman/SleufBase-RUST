@@ -1,35 +1,35 @@
-## SleufBase Rust 1.0.16 voor Windows
+## SleufBase Rust 1.0.17 voor Windows
 
-### KickTheMap-browser en kabelgegevens
+### Invoervelden direct gebruiken
 
-- Open de ingebouwde KickTheMap-browser vanuit **KickTheMap → Jobs → Open in KickTheMap-browser** voor de geselecteerde job.
-- Vul kabels en leidingen eenvoudiger in met het nieuwe Rust-invoerpaneel voor type/naam, materiaal, aantal, diameter en dekband. Gebruik projectkeuzes, eigen waarden of gegevens uit de vorige invoer.
-- **Vul gegevens in** zet de gegevens in het bijbehorende KickTheMap-formulier. Controleer de invoer en bevestig met **Opslaan** in KickTheMap.
-- Bij het opnieuw openen van dezelfde job blijven het browservenster en de conceptinvoer beschikbaar. Afbreken of een fout bij het openen verwijdert een bestaand browservenster niet.
-- Met **Objecten opnieuw laden** haal je de actuele jobobjecten op; de bijbehorende kaartoverlay, TIFF- en proefsleufkoppelingen worden samen bijgewerkt.
+De verborgen KickTheMap-aanmelding neemt bij het starten geen toetsenbordfocus meer over. Een klik in het SleufBase-hoofdvenster herstelt de focus gericht naar dat venster, zodat je in invoervelden kunt typen zonder eerst naar een andere app en terug te schakelen.
 
-### Correcties in Jobs
+### Een apart KickTheMap-jobvenster
 
-- **Handmatige GeoTIFF-download vastleggen** opent eerst de geselecteerde proefsleufpagina, ook wanneer er na het aanmelden nog geen browservenster bestaat. De vastlegging start pas wanneer die pagina gereed is; daarna kun je op de GeoTIFF-download klikken.
-- Je kunt de vastlegging annuleren vanuit het browserpaneel. Teruggaan, een andere aanmelding of een projectwissel kan geen late vastlegging voor de verkeerde job starten.
-- De Jobs-kaart behoudt de juiste verhoudingen bij het vergroten of verkleinen van het venster.
-- Sleep met de **linkermuisknop** een rechthoek om meerdere jobpunten te selecteren. Met **Ctrl** of **Shift** voeg je punten toe aan de bestaande selectie. De middelste of rechter muisknop verplaatst de kaart; het muiswiel zoomt.
+- **Open in KickTheMap-browser** opent de geselecteerde job in een eigen, verplaatsbaar en schaalbaar venster. Het hoofdvenster en de Jobs-lijst blijven beschikbaar.
+- De kabel- en leidingvelden staan op de KickTheMap-webpagina zelf, met de bediening uit de oorspronkelijke SleufBase: **Kabel/Leiding afkorting**, **Materiaal**, **Diameter**, **Bundel (aantal)** en **Dekband**.
+- De keuzelijsten gebruiken de effectieve projectinstellingen, inclusief extra profielkeuzes en materialen. Bestaande afwijkende waarden blijven behouden. Je tekent en slaat het object op met de eigen bediening van KickTheMap.
+- Sluiten met het kruisje verbergt het jobvenster. Dezelfde job opnieuw openen brengt het venster terug en behoudt de nog niet opgeslagen invoer.
+- **Handmatige GeoTIFF-vastlegging** opent eerst de juiste proefsleufpagina in dit aparte venster. De vastlegging start nadat de pagina gereed is. Via het Jobs-venster kun je de vastlegging annuleren.
+- Na opslaan op de website kun je vanuit Jobs de geselecteerde **objecten opnieuw laden** om de lokale joblaag bij te werken.
 
-### Kaart laden tijdens slepen
+### Compactere en flexibelere Jobs
 
-De hoofdkaart haalt ontbrekende kaartdelen al tijdens het slepen op. Nieuwe aanvragen worden begrensd en bruikbare lopende downloads kunnen afronden, zodat de kaart blijft reageren zonder een wachtrij per muisbeweging. De bestaande kaart blijft zichtbaar terwijl nieuwe delen binnenkomen.
+- De belangrijkste acties staan bij elkaar, met een duidelijke hoofdknop voor laden en aparte acties voor openen en vernieuwen.
+- De jobregels zijn compacter en hebben minder witruimte. Kolommen gebruiken de beschikbare vensterbreedte; aanvullende gegevens blijven via de aanwijzer beschikbaar wanneer een smal venster minder kolommen toont.
+- Zoeken, sorteren, meervoudige selectie en het scrollen door grote joblijsten blijven beschikbaar. De indeling past mee bij het vergroten en verkleinen van het venster.
 
-### Meer ruimte en een rustigere kaartindeling
+### Selectie en scherpere Jobs-kaart
 
-- **Kabelinformatie** staat links uitgelijnd met de andere titels in de zijbalk. De knoppen staan direct naast de titel en zijn naar links verplaatst.
-- Het venster **Kabelobjecten** toont geen afzonderlijke tekst met het aantal gevonden objecten en geen sluitkruisje meer. Klik opnieuw op **Lijst** om het te sluiten.
-- De kabelkaarten zijn lager en tonen alleen de laagnaam en inhoudelijke kabelinformatie. De tekst **Actief** en de lichtgrijze metadataregels zijn verwijderd; de oranje markering geeft de selectie aan. De hoogte past zich aan de tekst aan en de selectie blijft behouden bij scrollen en het wijzigen van de venstergrootte.
-- De bediening uit **Weergave** staat nu in de witte strook onder **Kaart**, boven de kaart zelf. Daar kies je de kaartachtergrond en stel je de TIFF-weergave in.
+- De kaart reserveert een sleepbeweging binnen de kaart, zodat het verplaatsbare Jobs-venster de selectie niet meer overneemt.
+- Sleep met de **linkermuisknop** een selectievak om meerdere jobpunten te kiezen. **Ctrl** of **Shift** voegt toe aan de selectie; **Esc** annuleert het vak. Midden/rechts slepen verplaatst de kaart en het muiswiel zoomt.
+- De kaart haalt bronkaarten met meer detail op, met tweemaal de logische beeldresolutie binnen een begrensd geheugen- en tegelbudget. Verouderde aanvragen worden geannuleerd bij een andere zoomstand of venstergrootte.
+- De kaart behoudt de juiste verhoudingen bij het wijzigen van het vensterformaat.
 
-### Build en controle
+### Build zonder tests
 
-Deze release wordt alleen gepubliceerd na een geslaagde volledige Windows-run met Rust-tests, Clippy, browser- en formuliercontroles, de releasebuild en pakketcontrole. De installer wordt gecontroleerd op installeren, opnieuw installeren/bijwerken, bestandsintegriteit, starten en verwijderen. Versie, bronrevisie en SHA-256-controlesommen worden vóór publicatie gecontroleerd.
+Op uitdrukkelijk verzoek zijn voor deze release **geen tests uitgevoerd**: geen Rust-tests, browser- of formuliercontracttests, Clippy of installatie-/starttests. De broncode is beoordeeld en de Windows-releasebuild, het samenstellen van de installer en portable ZIP en de controles van pakketinhoud, versie, bronrevisie en SHA-256 blijven onderdeel van de publicatie. Deze controles zijn geen bevestiging van de werking op een echte gebruikerscomputer.
 
 ### Downloaden en bijwerken
 
-Gebruik **SleufBase-Rust-Setup.exe** om de Windows-app bij te werken, of download **SleufBase-Rust-portable.zip** voor gebruik zonder installatie. Sluit SleufBase voor het bijwerken en pak de portable ZIP volledig uit voordat je het programma start. Bij beide downloads staat een SHA-256-controlebestand.
+Gebruik **SleufBase-Rust-Setup.exe** om de Windows-app bij te werken, of **SleufBase-Rust-portable.zip** voor gebruik zonder installatie. Sluit SleufBase voor het bijwerken en pak de portable ZIP volledig uit voordat je het programma start. Bij beide downloads staat een SHA-256-controlebestand.

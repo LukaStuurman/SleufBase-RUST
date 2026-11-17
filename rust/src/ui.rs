@@ -110,6 +110,9 @@ mod help_ui;
 mod shell_ui;
 #[path="ui_extended.rs"]
 mod extended_ui;
+#[cfg(windows)]
+#[path="ui_windows_focus.rs"]
+mod windows_focus;
 
 #[cfg(test)]
 #[path="ui_navigation_tests.rs"]
@@ -1583,6 +1586,7 @@ impl eframe::App for SleufBaseApp {
             if let Ok(handle)=frame.window_handle(){
                 if let RawWindowHandle::Win32(handle)=handle.as_raw(){self.browser_ui.host=handle.hwnd.get();}
             }
+            windows_focus::repair_on_pointer_press(self.browser_ui.host, ctx);
         }
         #[cfg(not(windows))]
         let _=frame;

@@ -44,3 +44,9 @@ De Rust-migratie is niet 100% functieparitair met SleufBase Python v0.3.62. Beve
 ## Ingebouwd KickTheMap-inlogvenster
 
 Kies **KickTheMap → Inloggen** en vul e-mailadres en wachtwoord in het eigen SleufBase-venster in. De optie **Inloggegevens onthouden en automatisch aanmelden** staat standaard aan: de gegevens worden met Windows DPAPI versleuteld en na een succesvolle login bewaard. Bij opnieuw starten en bij een verlopen sessie probeert SleufBase zich vanzelf aan te melden. Er opent **geen externe browser** voor normaal inloggen. Indien KickTheMap een verplichte reCAPTCHA vraagt, kun je handmatig de **Beveiligde website-aanmelding** openen als paneel in SleufBase; die controle moet je zelf doorlopen. **Uitloggen** verwijdert het versleutelde account en het lokale webprofiel. De installer kan WebView2 installeren voor de ingebouwde fallback; de portable ZIP bevat deze runtime niet.
+
+## Apart KickTheMap-jobvenster
+
+Selecteer in **KickTheMap → Jobs** één job en kies **Open in KickTheMap-browser**. De job opent in een eigen venster; het hoofdvenster en de joblijst blijven bruikbaar. De webpagina bevat de SleufBase-keuzes voor kabel/leiding, materiaal, diameter, bundelaantal en dekband. Sla wijzigingen op met **Opslaan** op de KickTheMap-pagina. Met **Objecten opnieuw laden** in Jobs werk je daarna de lokale joblaag bij.
+
+Het kruisje verbergt het jobvenster en bewaart de pagina. Open dezelfde job opnieuw om verder te gaan. Sluiten van SleufBase sluit ook dit venster. **Handmatige GeoTIFF-vastlegging** opent eerst de geselecteerde jobpagina; klik op de download zodra de vastlegging klaarstaat. Annuleren kan in het Jobs-venster.

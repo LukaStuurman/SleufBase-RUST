@@ -101,8 +101,8 @@ fn jobs_map_raster_follows_actual_viewport_and_stays_within_tile_preview_budget(
     assert_eq!(raster_size(egui::vec2(600., 350.), 2.), [1200, 700]);
     for size in [egui::vec2(4000., 3000.), egui::vec2(300., 900.), egui::vec2(10_000., 200.)] {
         let [width, height] = raster_size(size, 2.);
-        assert!(width > 0 && height > 0 && width <= 2048 && height <= 2048);
-        assert!(u64::from(width) * u64::from(height) <= 2_000_000);
+        assert!(width > 0 && height > 0 && width <= JOBS_RASTER_MAX_SIDE && height <= JOBS_RASTER_MAX_SIDE);
+        assert!(u64::from(width) * u64::from(height) <= JOBS_RASTER_MAX_PIXELS);
         assert!((f64::from(width) / f64::from(height) - f64::from(size.x / size.y)).abs()
             <= f64::from(size.x / size.y) * 0.03);
     }
