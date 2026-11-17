@@ -1,34 +1,16 @@
-## SleufBase Rust 1.0.20 voor Windows
+## SleufBase Rust 1.0.21 voor Windows
 
-### Stabiele afmetingen van bewerkvensters
+### Variant-keuzepijl binnen het invoervak
 
-- **Proefsleuf bewerken** gebruikt nu een begrensd inhoudsvak dat exact overeenkomt met de gekozen venstermaat. De binnenliggende formulieren, kaders en scrollvakken kunnen de gewenste venstergrootte niet meer bij elke tekenronde vergroten.
-- Het venster blijft met de muis te verplaatsen en te vergroten of verkleinen. De inhoud blijft scrollbaar en de actieknoppen blijven onderaan.
-- Dezelfde begrenzing is toegepast op beide DXF-sjabloonexportvensters, waar dezelfde maatberekening stond.
-- Een eerder te groot geworden editor wordt bij openen begrensd tot de beschikbare schermruimte.
+- In het gecombineerde DXF-sjabloonexportvenster krijgt de keuzepijl voor **Variant** eerst de ruimte die de knop werkelijk nodig heeft. Het tekstveld gebruikt de resterende breedte van dezelfde rij.
+- Daardoor overlapt de pijl de verticale scrollbar van het instellingenpaneel niet meer, ook wanneer het venster smaller wordt gemaakt.
+- Eigen varianttekst, de standaardvarianten en de optie **Automatisch (B/C/D...)** blijven beschikbaar.
 
-### Terug naar het hoofdscherm na backupherstel
+### DXF-sjabloonvensters verplaatsen
 
-- Na het succesvol laden en overnemen van een backup sluit **Instellingen** meteen.
-- Dit geldt zowel voor native SleufBase-backups als voor ondersteunde oudere Python-backups.
-- Bij annuleren, een laadfout of een afgewezen verouderd laadresultaat blijft Instellingen beschikbaar. De bestaande bevestiging voor niet-opgeslagen projectwijzigingen blijft actief.
-
-### Uitlijning van KickTheMap-keuzelijsten
-
-- De eigen keuzelijsten voor kabel-/leidingtype en materiaal hebben compacte linkerpadding en links uitgelijnde tekst.
-- De lege strook links van de opties wordt verwijderd, ook bij onbekende bestaande waarden en de lege keuze.
-- De native keuzelijst, toetsenbordbediening en koppeling met de KickTheMap-velden blijven behouden.
-
-### Compacte bovenmenu's
-
-- De breedte van de menu's bovenaan volgt de langste menutekst met een kleine marge, in plaats van de volledige standaardbreedte van het popupvenster.
-- De zichtbare scheidingslijnen tussen groepen en **Zoom naar extent** blijven behouden.
-
-### TIFF-zichtbaarheidsschuif verwijderd
-
-- De globale TIFF-zichtbaarheidsschuif is verwijderd uit de kaartbalk en de oudere weergave-invoer.
-- Zichtbare TIFF-lagen worden op de interactieve kaart volledig dekkend getoond, zodat een oude schuifwaarde geen onbereikbare transparantie achterlaat.
-- De afzonderlijke zichtbaarheid van proefsleuven en lagen blijft bedienbaar. Exportinstellingen en bronrasters worden niet gewijzigd.
+- Beide DXF-sjabloonexportvensters zijn weer aan de titelbalk te verslepen.
+- Het vaste middenanker is vervangen door een eenmalige beginpositie. Daarna blijft de gekozen positie bruikbaar tijdens verplaatsen en vergroten of verkleinen.
+- De begrensde inhoudsindeling uit versie 1.0.20 blijft behouden, zodat overlopende inhoud het venster niet steeds groter maakt. De vensters blijven begrensd tot het scherm.
 
 ### Publicatie zonder tests
 

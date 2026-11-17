@@ -443,17 +443,14 @@ fn project_order_panel(ui:&mut egui::Ui,dialog:&mut Dialog,rasters:&[GeoTiffInfo
                 ui.add(egui::TextEdit::singleline(&mut dialog.editor.number)
                     .desired_width(ui.available_width()));
                 ui.label("Variant");
-                ui.horizontal(|ui| {
-                    let field_width=(ui.available_width()-32.-ui.spacing().item_spacing.x).max(24.);
-                    if ui.add(egui::TextEdit::singleline(&mut dialog.editor.variant)
-                        .id(egui::Id::new("mixed-template-variant-text"))
-                        .desired_width(field_width).char_limit(256)
-                        .hint_text("Bijv. B1, -2 of eigen tekst"))
-                        .on_hover_text("Typ zelf een variant of kies een voorbeeld met de pijl. Leeg betekent geen variant; AUTO maakt automatisch B/C/D...").changed() {
-                        dialog.editor.mark_variant_edited();
-                    }
+                // Allocate the arrow at its actual styled width, then give the
+                // text field the remaining outer width inside the scroll pane.
+                // ComboBox::width is a minimum; TextEdit::desired_width excludes margins.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(),ui.spacing().interact_size.y),
+                    egui::Layout::right_to_left(egui::Align::Center),|ui| {
                     egui::ComboBox::from_id_salt("mixed-template-variant")
-                        .width(24.).selected_text("")
+                        .width(0.).selected_text("")
                         .show_ui(ui,|ui| {
                             ui.selectable_value(&mut dialog.editor.variant,String::new(),"Geen variant");
                             ui.selectable_value(&mut dialog.editor.variant,"AUTO".into(),"Automatisch (B/C/D...)");
@@ -461,6 +458,13 @@ fn project_order_panel(ui:&mut egui::Ui,dialog:&mut Dialog,rasters:&[GeoTiffInfo
                                 ui.selectable_value(&mut dialog.editor.variant,code.to_string(),format!("Variant {code}"));
                             }
                         }).response.on_hover_text("Kies een standaardvariant");
+                    if ui.add_sized([ui.available_width(),ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut dialog.editor.variant)
+                            .id(egui::Id::new("mixed-template-variant-text"))
+                            .char_limit(256).hint_text("Bijv. B1, -2 of eigen tekst"))
+                        .on_hover_text("Typ zelf een variant of kies een voorbeeld met de pijl. Leeg betekent geen variant; AUTO maakt automatisch B/C/D...").changed() {
+                        dialog.editor.mark_variant_edited();
+                    }
                 });
                 if order_tool_button(ui,"Nummer/variant toepassen",true).clicked() {
                     match dialog.editor.apply_label(&mut dialog.options.choices) {
@@ -579,13 +583,15 @@ impl SleufBaseApp {
             let mut clicked_row=None;let mut sync_editor=false;let mut edited_label=None;
             let screen = ctx.screen_rect();
             let maximum = egui::vec2((screen.width()-64.).max(280.), (screen.height()-88.).max(200.));
+            let default_size = egui::vec2(940.,560.).min(maximum);
             egui::Window::new("DXF-sjabloon exporteren")
                 // Reserve readable space for the permanent tool panel, including
                 // when an older release saved a much narrower window size.
                 .id(egui::Id::new("project-template-tools-v2"))
                 .open(&mut open)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .default_size(egui::vec2(940.,560.).min(maximum))
+                .default_pos(screen.center()-default_size*0.5)
+                .movable(true)
+                .default_size(default_size)
                 .min_size(egui::vec2(680.,320.).min(maximum))
                 .max_size(maximum)
                 .constrain_to(screen.shrink(16.))

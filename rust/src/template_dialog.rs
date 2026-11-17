@@ -776,11 +776,13 @@ pub(crate) fn show(
     };
     let screen=ctx.screen_rect();
     let maximum=egui::vec2((screen.width()-64.).max(280.),(screen.height()-88.).max(200.));
+    let default_size=egui::vec2(940.,560.).min(maximum);
     egui::Window::new("DXF-sjabloon exporteren")
         .id(egui::Id::new("raster-template-compact-v3"))
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO)
-        .default_size(egui::vec2(940.,560.).min(maximum))
+        .default_pos(screen.center()-default_size*0.5)
+        .movable(true)
+        .default_size(default_size)
         .min_size(egui::vec2(680.,320.).min(maximum))
         .max_size(maximum)
         .constrain_to(screen.shrink(16.))
