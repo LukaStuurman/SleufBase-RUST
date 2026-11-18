@@ -81,7 +81,17 @@ function itemColor(item) {
 function updateMeasureColors() {
   for (const [id, measure] of state.measures) {
     const item = state.items.get(id);
-    if (item) measure.color.setHex(id === state.selected ? SELECTED_COLOR : itemColor(item));
+    if (!item) continue;
+    // The selected orange was masking the chosen cable/pipe color until the
+    // editor reopened. Always paint the real type color, including when selected.
+    const color = itemColor(item);
+    measure.color.setHex(color);
+    // Potree's marker MeshLambertMaterials and edge LineMaterials are created
+    // when the marker is inserted; update them directly on every type change.
+    for (const sphere of measure.spheres) sphere.material?.color?.setHex(color);
+    for (const edge of measure.edges) edge.material?.color?.setHex(color);
+    // The object list keeps the orange selection state without overriding
+    // physical type colors in the cloud.
   }
 }
 function typeValue(item) { return item.object_type || item.type_key ? JSON.stringify([item.object_type, item.type_key]) : ""; }
@@ -415,7 +425,7 @@ function createMeasure(item) {
   measure.showCoordinates = false;
   measure.showEdges = item.kind === "polyline";
   measure.maxMarkers = item.kind === "point" ? 1 : Infinity;
-  measure.color.setHex(item.id === state.selected ? SELECTED_COLOR : itemColor(item));
+  measure.color.setHex(itemColor(item));
   for (const point of item.vertices) measure.addMarker(new THREE.Vector3(point.x, point.y, point.z));
   state.viewer.scene.addMeasurement(measure);
   bindMeasure(measure, item.id);
@@ -615,7 +625,7 @@ function startDrawing(kind, purpose = "object") {
     showCoordinates: false, showDistances: false, showArea: false,
     showEdges: kind === "polyline", closed: false,
   });
-  measure.color.setHex(SELECTED_COLOR);
+  measure.color.setHex(itemColor(template));
   state.drawing = { kind, purpose, measure, confirmed: 0, before, template };
   state.viewer.renderer.domElement.focus({ preventScroll: true });
   updateButtons();

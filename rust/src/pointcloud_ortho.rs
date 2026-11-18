@@ -2,7 +2,8 @@
 //! DEFAULT octree. No WebView screenshot, survey markers or third-party tools:
  //! only decoded native XYZ/RGB/intensity are used.
 use crate::{pointcloud::{self,CloudCrs,PointCloudSource},input};
-use serde::Deserialize;
+use serde::{Deserialize,Serialize};
+use crate::geo::GeoTransform;
 use std::{collections::{HashSet,VecDeque},fs::{self,File},io::{Read,Seek,SeekFrom},path::{Path,PathBuf},sync::atomic::AtomicBool};
 use tiff::{encoder::{TiffEncoder,colortype::RGBA8},tags::Tag};
 
@@ -28,10 +29,52 @@ struct Attribute { name:String, size:usize }
 struct Channel { offset:usize, size:usize }
 struct Layout {
     width:u32,height:u32,
-    min_x:f64,max_y:f64,pixel:f64,
+    center:[f64;2], col:[f64;2], row:[f64;2],
+    min_u:f64,min_v:f64,pixel:f64,origin:[f64;2],
+}
+impl Layout {
+    fn transform(&self)->GeoTransform {
+        GeoTransform{
+            a:self.col[0]*self.pixel,b:self.row[0]*self.pixel,c:self.origin[0],
+            d:self.col[1]*self.pixel,e:self.row[1]*self.pixel,f:self.origin[1],
+        }
+    }
+    fn pixel_for(&self,x:f64,y:f64)->(i64,i64){
+        let p=[x-self.center[0],y-self.center[1]];
+        (((p[0]*self.col[0]+p[1]*self.col[1]-self.min_u)/self.pixel).floor() as i64,
+         ((p[0]*self.row[0]+p[1]*self.row[1]-self.min_v)/self.pixel).floor() as i64)
+    }
+}
+#[derive(Serialize,Deserialize,PartialEq)]
+struct OrientationStamp {
+    algorithm:u32,
+    fingerprint:String,
+    endpoints:Option<[[f64;2];2]>,
+}
+fn stamp(source:&PointCloudSource)->OrientationStamp {
+    OrientationStamp{
+        algorithm:2,
+        fingerprint:source.source_fingerprint.clone(),
+        endpoints:source.trench_endpoints().ok().map(|(a,b)|[
+            [a.vertices[0].x,a.vertices[0].y],
+            [b.vertices[0].x,b.vertices[0].y],
+        ]),
+    }
 }
 pub fn path_for(id:&str)->Result<PathBuf,String> {
     Ok(pointcloud::cloud_directory(id)?.join("orthoview.tif"))
+}
+fn stamp_path(cloud:&Path)->PathBuf {cloud.join("orthoview-orientation.json")}
+/// An old north-up image must be regenerated after the user defines or moves
+/// the trench start/end. Never register it as a current aligned background.
+pub fn is_current(source:&PointCloudSource)->bool {
+    let Ok(path)=pointcloud::cloud_directory(&source.id) else{return false;};
+    let file=path.join("orthoview.tif");
+    let sidecar=stamp_path(&path);
+    if !file.is_file(){return false;}
+    let Ok(reader)=File::open(sidecar) else{return false;};
+    let Ok(saved)=serde_json::from_reader::<_,OrientationStamp>(reader) else{return false;};
+    saved==stamp(source)
 }
 fn check(cancel:&AtomicBool)->Result<(),String>{input::check(cancel)}
 fn u16le(data:&[u8],at:usize)->u16 {u16::from_le_bytes(data[at..at+2].try_into().unwrap())}
@@ -39,19 +82,49 @@ fn u32le(data:&[u8],at:usize)->u32 {u32::from_le_bytes(data[at..at+4].try_into()
 fn u64le(data:&[u8],at:usize)->u64 {u64::from_le_bytes(data[at..at+8].try_into().unwrap())}
 fn rgb8(value:u16)->u8{if value<=255{value as u8}else{(value>>8) as u8}}
 fn bounds(source:&PointCloudSource)->Result<Layout,String>{
-    let dx=(source.bounds_max[0]-source.bounds_min[0]).max(0.05);
-    let dy=(source.bounds_max[1]-source.bounds_min[1]).max(0.05);
-    let padding=(dx.max(dy)*0.008).clamp(0.05,2.);
-    let span_x=dx+padding*2.;
-    let span_y=dy+padding*2.;
-    let pixel=(span_x.max(span_y)/f64::from(MAX_VIEW_SIDE)).max(0.008);
-    let width=(span_x/pixel).ceil().max(2.) as u32;
-    let height=(span_y/pixel).ceil().max(2.) as u32;
+    let center=[
+        source.bounds_min[0]+(source.bounds_max[0]-source.bounds_min[0])*0.5,
+        source.bounds_min[1]+(source.bounds_max[1]-source.bounds_min[1])*0.5,
+    ];
+    // Start -> end must point right in the image, while image rows run
+    // downward. GeoTIFF's affine matrix carries the actual RD orientation.
+    let col=if let Some((start,end))=source.trench_endpoints().ok(){
+        let [a,b]=[start.vertices[0],end.vertices[0]];
+        let length=(b.x-a.x).hypot(b.y-a.y);
+        if !length.is_finite()||length<=1e-9 {return Err("Begin- en eindpunt vallen samen; oriënteer de proefsleuf opnieuw.".into());}
+        [(b.x-a.x)/length,(b.y-a.y)/length]
+    }else{[1.,0.]};
+    let row=[col[1],-col[0]];
+    let corners=[
+        [source.bounds_min[0],source.bounds_min[1]],
+        [source.bounds_min[0],source.bounds_max[1]],
+        [source.bounds_max[0],source.bounds_min[1]],
+        [source.bounds_max[0],source.bounds_max[1]],
+    ];
+    let mut min_u=f64::INFINITY;let mut max_u=f64::NEG_INFINITY;
+    let mut min_v=f64::INFINITY;let mut max_v=f64::NEG_INFINITY;
+    for c in corners {
+        let dx=c[0]-center[0];let dy=c[1]-center[1];
+        let u=dx*col[0]+dy*col[1];
+        let v=dx*row[0]+dy*row[1];
+        min_u=min_u.min(u);max_u=max_u.max(u);
+        min_v=min_v.min(v);max_v=max_v.max(v);
+    }
+    let span=(max_u-min_u).max(max_v-min_v).max(0.05);
+    let padding=(span*0.008).clamp(0.05,2.);
+    min_u-=padding;max_u+=padding;min_v-=padding;max_v+=padding;
+    let pixel=((max_u-min_u).max(max_v-min_v)/f64::from(MAX_VIEW_SIDE)).max(0.008);
+    let width=((max_u-min_u)/pixel).ceil().max(2.) as u32;
+    let height=((max_v-min_v)/pixel).ceil().max(2.) as u32;
     let cells=(width as usize).checked_mul(height as usize).ok_or("GeoTIFF-formaat is te groot")?;
     if cells==0 || cells>MAX_CELLS {return Err("GeoTIFF-uitsnede is te groot".into());}
-    Ok(Layout{width,height,min_x:source.bounds_min[0]-padding,
-        max_y:source.bounds_max[1]+padding,pixel})
+    let origin=[
+        center[0]+col[0]*min_u+row[0]*min_v,
+        center[1]+col[1]*min_u+row[1]*min_v,
+    ];
+    Ok(Layout{width,height,center,col,row,min_u,min_v,pixel,origin})
 }
+
 /// Read existing DEFAULT uncompressed Potree nodes. Hierarchy records are
 /// 22 bytes; type 2 points to a hierarchy chunk, not an octree data block.
 fn read_points(cloud:&Path,source:&PointCloudSource,layout:&Layout,
@@ -131,8 +204,7 @@ fn read_points(cloud:&Path,source:&PointCloudSource,layout:&Layout,
                         let raw=i32::from_le_bytes(pos[i*4..i*4+4].try_into().unwrap());
                         f64::from(raw)*meta.scale[i]+meta.offset[i]
                     });
-                    let x=((coords[0]-layout.min_x)/layout.pixel).floor() as i64;
-                    let y=((layout.max_y-coords[1])/layout.pixel).floor() as i64;
+                    let (x,y)=layout.pixel_for(coords[0],coords[1]);
                     if x<0||y<0||x>=i64::from(layout.width)||y>=i64::from(layout.height)||!coords[2].is_finite(){continue;}
                     let index=y as usize*layout.width as usize+x as usize;
                     if coords[2] as f32 <= heights[index] {continue;}
@@ -211,9 +283,12 @@ pub fn generate(cloud:&Path,source:&PointCloudSource,cancel:&AtomicBool)->Result
     {
         let mut encoder=TiffEncoder::new(staged.as_file_mut()).map_err(|e|e.to_string())?;
         let mut image=encoder.new_image::<RGBA8>(layout.width,layout.height).map_err(|e|e.to_string())?;
-        image.encoder().write_tag(Tag::ModelPixelScaleTag,&[layout.pixel,layout.pixel,0.][..]).map_err(|e|e.to_string())?;
-        image.encoder().write_tag(Tag::ModelTiepointTag,
-            &[0.0,0.0,0.0,layout.min_x,layout.max_y,0.0][..]).map_err(|e|e.to_string())?;
+        let t=layout.transform();
+        // A real affine transform is essential for rotated imagery: storing
+        // only ModelPixelScale/Tiepoint would misplace it on an RD map.
+        image.encoder().write_tag(Tag::ModelTransformationTag,
+            &[t.a,t.b,0.0,t.c,t.d,t.e,0.0,t.f,
+              0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0][..]).map_err(|e|e.to_string())?;
         image.encoder().write_tag(Tag::GeoKeyDirectoryTag,
             &[1_u16,1,0,3,1024,0,1,1,1025,0,1,1,3072,0,1,28992][..]).map_err(|e|e.to_string())?;
         image.encoder().write_tag(Tag::ExtraSamples,&[2_u16][..]).map_err(|e|e.to_string())?;
@@ -222,5 +297,12 @@ pub fn generate(cloud:&Path,source:&PointCloudSource,cancel:&AtomicBool)->Result
     }
     staged.as_file().sync_all().map_err(|e|e.to_string())?;
     staged.persist(&output).map_err(|e|format!("GeoTIFF definitief opslaan mislukt: {e}"))?;
+    // The raster and its orientation are a pair. Missing/old metadata forces
+    // regeneration on the next load, not a silently wrong map placement.
+    let sidecar=stamp_path(cloud);
+    let temp=tempfile::NamedTempFile::new_in(cloud).map_err(|e|e.to_string())?;
+    serde_json::to_writer(&temp,&stamp(source)).map_err(|e|e.to_string())?;
+    temp.as_file().sync_all().map_err(|e|e.to_string())?;
+    temp.persist(&sidecar).map_err(|e|e.to_string())?;
     Ok(output)
 }

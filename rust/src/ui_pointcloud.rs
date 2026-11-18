@@ -284,7 +284,7 @@ impl SleufBaseApp {
                             if let Err(error)=self.register_cloud_geotiff(&source) {
                                 self.pointcloud_ui.status=format!("Proefsleuf geladen, maar de GeoTIFF kon niet worden toegevoegd: {error}");
                             }else{
-                                self.pointcloud_ui.status="Bovenaanzicht als GeoTIFF toegevoegd, zonder tekenpunten en labels.".into();
+                                self.pointcloud_ui.status="Bovenaanzicht georiënteerd op begin → eind, als GeoTIFF toegevoegd zonder tekenobjecten.".into();
                             }
                         }
                     }
@@ -740,7 +740,7 @@ impl SleufBaseApp {
         if let Err(error)=self.register_cloud_geotiff(&form.source) {
             self.pointcloud_ui.status=format!("Proefsleuf geplaatst, maar GeoTIFF laden mislukt: {error}");
         }
-        if !sleufbase_rust::pointcloud_ortho::path_for(&form.source.id)?.is_file() {
+        if !sleufbase_rust::pointcloud_ortho::is_current(&form.source) {
             self.start_ortho_worker(form.source.clone());
         }
 
@@ -752,7 +752,7 @@ impl SleufBaseApp {
     fn register_cloud_geotiff(&mut self, source:&PointCloudSource)->Result<bool,String> {
         if source.crs!=CloudCrs::RdNew {return Ok(false);}
         let path=sleufbase_rust::pointcloud_ortho::path_for(&source.id)?;
-        if !path.is_file() || self.geotiffs.iter().any(|r|r.path==path) {return Ok(false);}
+        if !sleufbase_rust::pointcloud_ortho::is_current(source) {return Ok(false);}
         let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path)?;
         if raster.epsg!=Some(28992) {return Err("GeoTIFF heeft geen RD New-coördinaten.".into());}
         raster.metadata=serde_json::json!({
@@ -760,8 +760,15 @@ impl SleufBaseApp {
             "pointcloud_title":source.title,
             "pointcloud_generated_orthoview":true
         });
-        self.geotiffs.push(raster);
-        self.raster_textures.push(None);
+        if let Some(index)=self.geotiffs.iter().position(|previous|previous.path==path) {
+            // Refresh affine placement as well as pixels if begin/end moved.
+            // Merely keeping the old cached texture would display the old view.
+            self.geotiffs[index]=raster;
+            if let Some(texture)=self.raster_textures.get_mut(index) {*texture=None;}
+        } else {
+            self.geotiffs.push(raster);
+            self.raster_textures.push(None);
+        }
         self.dirty=true;
         Ok(true)
     }
@@ -774,7 +781,7 @@ impl SleufBaseApp {
         self.pointcloud_ui.ortho=Some(OrthoWorker{
             rx,cancel,generation:self.project_generation,source_id:id,
         });
-        self.pointcloud_ui.status="Proefsleuf geplaatst; bovenaanzicht als GeoTIFF wordt voorbereid…".into();
+        self.pointcloud_ui.status="Proefsleuf geplaatst; GeoTIFF wordt op de begin-/eindrichting georiënteerd…".into();
         std::thread::spawn(move || {
             let result=source.validate_cache().and_then(|path|
                 sleufbase_rust::pointcloud_ortho::generate(&path,&source,&flag));
