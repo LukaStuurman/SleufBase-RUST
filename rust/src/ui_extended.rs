@@ -96,8 +96,11 @@ impl SleufBaseApp {
                 self.start_comment_mode(comments_ui::Mode::Place);
             }
             self.show_map_actions(ui, ctx);
-            if ui.button("Locatie zoeken").clicked() {
-                self.open_location();
+            if ui.add(egui::Button::new("Locatie zoeken").selected(self.location.open).corner_radius(6.))
+                .on_hover_text("Locatiezoekveld tonen of verbergen. Ctrl+L opent het zoekveld.")
+                .clicked()
+            {
+                self.toggle_location(ctx);
             }
             if ui.button("TIFF-adressen").clicked() {
                 self.open_tiff_addresses();

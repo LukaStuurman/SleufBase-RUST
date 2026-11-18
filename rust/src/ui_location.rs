@@ -131,8 +131,39 @@ impl Navigation {
 }
 impl SleufBaseApp {
     pub(super) fn open_location(&mut self) {
-        self.location.open = true;
+        if !self.location.open {
+            self.location.open = true;
+            // Closing keeps the query, but cancels and clears its suggestions.
+            // Fetch them again on reopening without requiring another edit.
+            if self.location.results.is_empty() && !self.location.query.trim().is_empty() {
+                self.location.deadline = Some(Instant::now());
+            }
+        }
         self.location.focus_entry = true;
+    }
+    pub(super) fn toggle_location(&mut self, ctx: &egui::Context) {
+        if self.location.open {
+            self.close_location(ctx);
+        } else {
+            self.open_location();
+        }
+    }
+    fn close_location(&mut self, ctx: &egui::Context) {
+        let entry_id = egui::Id::new("location-query");
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                if id == entry_id || self.location.result_ids.contains(&id) {
+                    memory.surrender_focus(id);
+                }
+            }
+        });
+        self.location.open = false;
+        self.location.focus_entry = false;
+        self.location.cancel();
+        self.location.results.clear();
+        self.location.selected = 0;
+        self.location.result_focus = false;
+        self.location.error = None;
     }
     pub(super) fn poll_location(&mut self, ctx: &egui::Context) {
         if let Some(ready) = self.location.worker.as_ref().and_then(Worker::poll) {
@@ -283,8 +314,7 @@ impl SleufBaseApp {
                 }
             });
         if close {
-            self.location.open=false; self.location.cancel(); self.location.results.clear();
-            self.location.result_focus=false;
+            self.close_location(ctx);
             return;
         }
         if submit {

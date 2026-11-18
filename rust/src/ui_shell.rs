@@ -290,8 +290,11 @@ impl SleufBaseApp {
                 ui.style_mut().override_font_id =
                     Some(egui::FontId::proportional(theme::FONT_SIZE));
                 ui.horizontal(|ui| {
-                    if ui.button("Locatie").clicked() {
-                        self.open_location();
+                    if ui.add(egui::Button::new("Locatie").selected(self.location.open).corner_radius(6.))
+                        .on_hover_text("Locatiezoekveld tonen of verbergen. Ctrl+L opent het zoekveld.")
+                        .clicked()
+                    {
+                        self.toggle_location(ctx);
                     }
                     action = action.or(menu(ui, "Acties", ACTIONS));
                     action = action.or(menu(ui, "KickTheMap", KICKTHEMAP));

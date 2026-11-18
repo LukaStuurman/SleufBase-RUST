@@ -60,7 +60,7 @@ De menubalk bovenaan bevat **Locatie**, **Acties**, **KickTheMap**, **Instelling
 
 Scroll boven de kaart om te zoomen naar de plek waar de muis staat. Sleep met de middelste muisknop om de kaart te verschuiven. Met de linkermuisknop kan dit ook wanneer er geen teken- of plaatsgereedschap actief is. Bij zo'n gereedschap heeft de linkermuisknop de functie die in de statusmelding wordt aangegeven.
 
-Gebruik **Locatie** of **Ctrl+L** om een adres, plaats of RD-/GPS-coördinaat te zoeken. Met de pijltjestoetsen kies je een zoeksuggestie en met Enter ga je ernaartoe.
+Gebruik **Locatie** of **Ctrl+L** om een adres, plaats of RD-/GPS-coördinaat te zoeken. Klik nogmaals op **Locatie** om het zoekpaneel te sluiten. **Ctrl+L** opent het paneel en zet de cursor in het zoekveld, ook als het al openstaat. Met de pijltjestoetsen kies je een zoeksuggestie en met Enter ga je ernaartoe.
 
 ### Achtergrond en namen
 
@@ -96,6 +96,8 @@ Met **Jobpunten** onder Overlays zet je de jobpunten gezamenlijk aan of uit. Tek
 Kies **Acties → Laad GeoTIFF(s)** en selecteer een of meer `.tif`- of `.tiff`-bestanden. SleufBase leest hun geografische ligging. Bij een KickTheMap-download kan een bijbehorend `.job.json`-bestand staan; laat dit naast het gedownloade bestand staan zodat de jobidentiteit beschikbaar blijft.
 
 De beelden verschijnen in **Proefsleuven**. Zet het vinkje aan en dubbelklik op een beeld om het terug te vinden. **Acties → Toon TIFF-adressen** opent het adressenoverzicht. Rechtsklik op een TIFF voor onder meer rotatie, een opmerking, een virtuele kopie en het kopiëren van het midden.
+
+Het TIFF-adressenvenster kun je vergroten en verkleinen. De lijst gebruikt de beschikbare hoogte en de kolommen passen zich aan de breedte aan. In een smal venster staan bestandsnaam en adres onder elkaar. De kopieerknoppen en **Vernieuwen** blijven onderaan beschikbaar en schuiven zo nodig naar een volgende regel. Selecteer een adresregel om die te kopiëren; dubbelklikken kopieert direct het adres.
 
 ### KLIC-DXF
 
