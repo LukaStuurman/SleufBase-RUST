@@ -1,6 +1,5 @@
 //! Persistent LAS/LAZ overview, editor ownership and deliberate project loading.
 use super::*;
-use egui_extras::{Column, TableBuilder};
 use sleufbase_rust::pointcloud::{self, AnnotationKind, AnnotationPurpose, CloudCrs, PointCloudSource};
 use sleufbase_rust::pointcloud_catalog::{self as catalog, Catalog};
 use sleufbase_rust::pointcloud_server::Session;
@@ -29,6 +28,7 @@ pub(super) struct State {
     titles: HashMap<String, String>,
     selected: Option<String>,
     search: String,
+    filters: [String; 7],
     only_loaded: bool,
     sort_column: usize,
     descending: bool,
@@ -384,18 +384,26 @@ impl SleufBaseApp {
         let loaded = self.point_clouds.iter().map(|source| source.id.clone()).collect::<HashSet<_>>();
         let mut state = std::mem::take(&mut self.pointcloud_ui);
         let enabled = can_work && state.pending_catalog.is_none();
+        let query = state.search.trim().to_lowercase();
         let mut rows = state.sources().iter().map(|source| Row::new(source, loaded.contains(&source.id)))
             .filter(|row| !state.only_loaded || row.loaded)
-            .filter(|row| {
-                let query = state.search.trim().to_lowercase();
-                query.is_empty() || format!("{} {} {} {}", row.title, row.path, row.axis, crs_short(row.crs)).to_lowercase().contains(&query)
-            }).collect::<Vec<_>>();
+            .filter(|row| query.is_empty() ||
+                format!("{} {} {} {} {}", row.title, row.path, row.axis, crs_short(row.crs),
+                    row.center.iter().map(|v| format!("{v:.3}")).collect::<Vec<_>>().join(" "))
+                    .to_lowercase().contains(&query))
+            .filter(|row| state.filters.iter().enumerate().all(|(column, filter)| {
+                let filter = filter.trim().to_lowercase();
+                filter.is_empty() || cloud_column_value(row, column).to_lowercase().contains(&filter)
+            }))
+            .collect::<Vec<_>>();
         rows.sort_by(|a, b| {
             let order = match state.sort_column {
-                1 => a.point_count.cmp(&b.point_count), 2 => a.object_count.cmp(&b.object_count),
-                3 => a.axis_ready.cmp(&b.axis_ready).then_with(|| a.axis.cmp(&b.axis)),
-                4..=6 => a.center[state.sort_column - 4].total_cmp(&b.center[state.sort_column - 4]),
-                7 => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
+                1 => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
+                2 => a.point_count.cmp(&b.point_count),
+                3 => a.object_count.cmp(&b.object_count),
+                4 => a.axis_ready.cmp(&b.axis_ready).then_with(|| a.axis.cmp(&b.axis)),
+                5 => a.center[0].total_cmp(&b.center[0]).then_with(|| a.center[1].total_cmp(&b.center[1])),
+                6 => crs_short(a.crs).cmp(crs_short(b.crs)),
                 _ => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
             };
             (if state.descending { order.reverse() } else { order }).then_with(|| a.id.cmp(&b.id))
@@ -412,12 +420,19 @@ impl SleufBaseApp {
         let mut details = None;
         let movable = !state.map_open || map::window_movable(ctx, &state.map);
         egui::Window::new("Puntenwolken · LAS / LAZ").id(egui::Id::new("pointcloud-manager"))
-            .open(&mut open).default_width((ctx.screen_rect().width() - 48.).clamp(540., 1320.))
-            .default_height((ctx.screen_rect().height() - 50.).clamp(420., 820.))
-            .min_width(540.).min_height(360.).constrain_to(ctx.screen_rect().shrink(12.))
+            .open(&mut open).default_width((ctx.screen_rect().width() - 48.).clamp(340., 1120.))
+            .default_height((ctx.screen_rect().height() - 50.).clamp(260., 760.))
+            .min_width(340.).min_height(240.).constrain_to(ctx.screen_rect().shrink(12.))
             .movable(movable).resizable(true).show(ctx, |ui| theme::bounded_window_body(ui, |ui| {
                 settings_ui::control_style(ui);
-                ui.spacing_mut().item_spacing = egui::vec2(7., 5.);
+                ui.set_max_width(ui.available_width());
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                ui.spacing_mut().item_spacing = egui::vec2(6., 4.);
+                ui.spacing_mut().button_padding = egui::vec2(9., 5.);
+                let visuals = ui.visuals_mut();
+                for widget in [&mut visuals.widgets.inactive, &mut visuals.widgets.hovered, &mut visuals.widgets.active] {
+                    widget.corner_radius = 8.into();
+                }
                 egui::TopBottomPanel::bottom("pointcloud-source-details")
                     .frame(theme::card(10, 8, 6)).show_inside(ui, |ui| {
                         if let Some(id) = state.selected.clone() {
@@ -448,18 +463,58 @@ impl SleufBaseApp {
                             action = Some(("reload-saved", String::new()));
                         }
                     });
+                // Like SleufBase Jobs, keep the list/map tabs and filtering in
+                // a compact toolbar, leaving the rest to virtualized rows.
+                let active_filters = state.filters.iter().filter(|value| !value.trim().is_empty()).count()
+                    + usize::from(state.only_loaded) + usize::from(!state.search.is_empty());
                 ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(enabled, egui::Button::new("LAS/LAZ toevoegen…").fill(ORANGE)).clicked() { action = Some(("choose", String::new())); }
-                    if ui.add_enabled(enabled, egui::Button::new("Lijst vernieuwen")).clicked() { action = Some(("refresh", String::new())); }
-                    ui.separator();
-                    if ui.selectable_label(!state.map_open, "Lijst").clicked() { state.map_open = false; state.map.pause(); }
+                    if ui.selectable_label(!state.map_open, "Lijst").clicked() {
+                        state.map_open = false; state.map.pause();
+                    }
                     if ui.selectable_label(state.map_open, "Kaart").clicked() { state.map_open = true; }
-                    ui.label(egui::RichText::new(format!("{} / {} scans · {} in dit project", rows.len(), state.sources().len(), loaded.len())).small().color(theme::MUTED));
+                    ui.separator();
+                    ui.menu_button(if active_filters == 0 { "Filter / selectie".into() }
+                        else { format!("Filters ({active_filters}) / selectie") }, |ui| {
+                        ui.set_max_width((ctx.screen_rect().width() - 50.).min(320.));
+                        egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 100.).max(100.)).show(ui, |ui| {
+                            ui.checkbox(&mut state.only_loaded, "Alleen ingeladen scans");
+                            if ui.button("Selectie wissen").clicked() { state.selected = None; }
+                            ui.separator();
+                            egui::ComboBox::from_id_salt("cloud-sort-column")
+                                .selected_text(CLOUD_COLUMNS[state.sort_column]).show_ui(ui, |ui| {
+                                for (column, name) in CLOUD_COLUMNS.iter().enumerate() {
+                                    if ui.selectable_label(state.sort_column == column, *name).clicked() {
+                                        state.sort_column = column; state.descending = matches!(column, 2 | 3);
+                                    }
+                                }
+                            });
+                            ui.checkbox(&mut state.descending, "Aflopend sorteren");
+                            ui.separator();
+                            for (column, name) in CLOUD_COLUMNS.iter().enumerate() {
+                                ui.label(*name);
+                                ui.add(egui::TextEdit::singleline(&mut state.filters[column])
+                                    .desired_width(230.).hint_text("Filter…"));
+                            }
+                            if ui.button("Alle filters wissen").clicked() {
+                                state.filters = Default::default();
+                                state.search.clear();
+                                state.only_loaded = false;
+                            }
+                        });
+                    });
+                    if ui.add_enabled(enabled, egui::Button::new("Vernieuwen")).clicked() {
+                        action = Some(("refresh", String::new()));
+                    }
+                    if cloud_action_button(ui, "LAS/LAZ toevoegen…", enabled, true).clicked() {
+                        action = Some(("choose", String::new()));
+                    }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Zoek op naam, bronbestand of status…").desired_width(310.));
-                    ui.checkbox(&mut state.only_loaded, "Alleen in dit project");
+                    ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Zoek scans…")
+                        .desired_width(ui.available_width().min(310.)));
                     if !state.search.is_empty() && ui.small_button("Wissen").clicked() { state.search.clear(); }
+                    ui.label(egui::RichText::new(format!("{} / {} scans · {} in project",
+                        rows.len(), state.sources().len(), loaded.len())).small().color(theme::MUTED));
                 });
                 if state.worker.is_some() {
                     ui.horizontal(|ui| {
@@ -476,7 +531,7 @@ impl SleufBaseApp {
                 ui.small("Bewerken: scan en meetobjecten aanpassen · Inladen: proefsleuf en objecten overnemen in het huidige project.");
                 ui.add_space(3.);
                 if state.map_open {
-                    let size = egui::vec2(ui.available_width().max(1.), (ui.available_height() - 75.).max(80.));
+                    let size = egui::vec2(ui.available_width().max(1.), ui.available_height().max(80.));
                     if let Some(id) = map::show(ui, &locations, &mut state.selected, &mut state.map, size) {
                         if enabled { action = Some(("edit", id)); }
                     }
@@ -757,9 +812,9 @@ fn show_source_details(ui: &mut egui::Ui, source: &PointCloudSource, title: &mut
     loaded: bool, enabled: bool, details: &mut Option<(String, String, CloudCrs)>, action: &mut Option<(&'static str, String)>) {
     ui.horizontal_wrapped(|ui| {
         ui.strong("Geselecteerde scan");
-        ui.small(if loaded { "Meetobjecten in huidig project" } else { "Bewaard in overzicht · nog niet ingeladen" });
-        if ui.add_enabled(enabled, egui::Button::new("Bewerken")).clicked() { *action = Some(("edit", source.id.clone())); }
-        if ui.add_enabled(enabled, egui::Button::new("Inladen").fill(ORANGE)).clicked() { *action = Some(("load", source.id.clone())); }
+        cloud_badge(ui, if loaded { "In dit project" } else { "Bewaard" }, loaded);
+        if cloud_action_button(ui, "Inladen", enabled, true).clicked() { *action = Some(("load", source.id.clone())); }
+        if cloud_action_button(ui, "Bewerken", enabled, false).clicked() { *action = Some(("edit", source.id.clone())); }
         ui.add_enabled_ui(enabled, |ui| {
             ui.menu_button("Meer", |ui| {
                 for (label, key) in [("Meetobjecten naar DXF…", "export"), ("Bronbestand opnieuw kiezen…", "relink"), ("Weergave opnieuw opbouwen", "rebuild")] {
@@ -802,68 +857,176 @@ fn show_source_details(ui: &mut egui::Ui, source: &PointCloudSource, title: &mut
     if source.crs != CloudCrs::RdNew { ui.small("Bewerken en DXF-export behouden de broncoördinaten. Inladen en de kaart vereisen RD New in meters."); }
 }
 
+// The cloud catalog shares the compact job-list visual grammar: responsive
+// columns, a single fixed header and virtualized rounded rows with an orange
+// selection rail. It intentionally does not require a horizontally scrolling
+// 1100-pixel table on smaller displays.
+const CLOUD_COLUMNS: [&str; 7] = [
+    "Naam", "Bronbestand", "Scanpunten", "Objecten", "Sleufstatus", "Coördinaten", "CRS",
+];
+const CLOUD_ROW_HEIGHT: f32 = 36.;
+const CLOUD_COLUMN_GAP: f32 = 6.;
+
+fn cloud_columns_for_width(width: f32) -> Vec<(usize, f32)> {
+    let visible = |column| match column {
+        0 | 4 => true,
+        1 => width >= 490.,
+        5 => width >= 700.,
+        2 => width >= 800.,
+        3 => width >= 1040.,
+        6 => width >= 1090.,
+        _ => false,
+    };
+    let mut columns = (0..CLOUD_COLUMNS.len()).filter(|&column| visible(column))
+        .map(|column| (column, match column {
+            2 => 82., 3 => 72., 4 => if width < 540. { 114. } else { 138. },
+            5 => 188., 6 => 94., _ => 0.,
+        })).collect::<Vec<_>>();
+    let free = (width - 28. - CLOUD_COLUMN_GAP * (columns.len() - 1) as f32
+        - columns.iter().map(|(_, value)| *value).sum::<f32>()).max(60.);
+    let has_path = columns.iter().any(|(column, _)| *column == 1);
+    for (column, column_width) in &mut columns {
+        match *column {
+            0 => *column_width = if has_path { free * 0.55 } else { free },
+            1 => *column_width = free * 0.45,
+            _ => {}
+        }
+    }
+    columns
+}
+fn cloud_column_value(item: &Row, column: usize) -> String {
+    match column {
+        0 => item.title.clone(),
+        1 => std::path::Path::new(&item.path).file_name()
+            .map(|value| value.to_string_lossy().into_owned()).unwrap_or_else(|| item.path.clone()),
+        2 => count(item.point_count),
+        3 => count(item.object_count as u64),
+        4 => item.axis.clone(),
+        5 => format!("{:.1} · {:.1} · {:.1}", item.center[0], item.center[1], item.center[2]),
+        6 => crs_short(item.crs).into(),
+        _ => String::new(),
+    }
+}
+fn cloud_badge(ui: &mut egui::Ui, text: &str, loaded: bool) {
+    let background = if loaded { Color32::from_rgb(232, 246, 238) } else { Color32::from_rgb(238, 242, 247) };
+    let foreground = if loaded { Color32::from_rgb(35, 114, 74) } else { theme::MUTED };
+    egui::Frame::new().fill(background).corner_radius(7)
+        .inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
+            ui.add(egui::Label::new(egui::RichText::new(text).size(12.).color(foreground)).selectable(false));
+        });
+}
+fn cloud_action_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> egui::Response {
+    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(label).strong()
+        .color(if primary { Color32::WHITE } else { INK }))
+        .fill(if primary { ORANGE } else { Color32::WHITE })
+        .stroke(Stroke::new(1., if primary { ORANGE } else { theme::BORDER }))
+        .corner_radius(8).min_size(egui::vec2(0., 30.)))
+}
+fn show_cloud_header(ui: &mut egui::Ui, width: f32, columns: &[(usize, f32)],
+    state: &mut State, inline_filters: bool) {
+    let height = if inline_filters { 56. } else { 28. };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    ui.painter_at(rect).rect_filled(rect, 6., Color32::WHITE);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("cloud-column-headings"));
+    let mut x = rect.left() + 12.;
+    for &(column, column_width) in columns {
+        let arrow = if state.sort_column == column {
+            if state.descending { " ▼" } else { " ▲" }
+        } else { "" };
+        let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(column_width, 27.));
+        let text = egui::RichText::new(format!("{}{arrow}", CLOUD_COLUMNS[column]))
+            .strong().size(12.).color(if state.sort_column == column { ORANGE } else { INK });
+        if child.put(cell, egui::Button::new(text).frame(false)
+            .wrap_mode(egui::TextWrapMode::Truncate))
+            .on_hover_text(format!("Sorteren op {}", CLOUD_COLUMNS[column])).clicked() {
+            if state.sort_column == column { state.descending = !state.descending; }
+            else { state.sort_column = column; state.descending = matches!(column, 2 | 3); }
+        }
+        if inline_filters {
+            let filter = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 29.), egui::vec2(column_width, 24.));
+            child.put(filter, egui::TextEdit::singleline(&mut state.filters[column])
+                .id(egui::Id::new(("pointcloud-filter", column)))
+                .desired_width(column_width).hint_text("Filter…").margin(egui::vec2(5., 3.)));
+        }
+        x += column_width + CLOUD_COLUMN_GAP;
+    }
+}
+fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
+    striped: bool, width: f32, columns: &[(usize, f32)]) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CLOUD_ROW_HEIGHT), egui::Sense::hover());
+    let response = ui.interact(rect, ui.make_persistent_id(("cloud-card", item.id.as_str())), egui::Sense::click());
+    let fill = if selected { Color32::from_rgb(255, 239, 226) }
+        else if response.hovered() { Color32::from_rgb(242, 245, 250) }
+        else if striped { theme::SURFACE_ALT } else { Color32::WHITE };
+    let border = if selected { Color32::from_rgb(245, 178, 125) } else { theme::BORDER };
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6., fill);
+    painter.rect_stroke(rect, 6., Stroke::new(1., border), egui::StrokeKind::Inside);
+    if selected {
+        painter.rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(2., 8.), egui::vec2(3., 20.)), 2., ORANGE);
+    }
+    // The small radio marker makes single-item selection clear without giving
+    // the false expectation of multi-selection from the KickTheMap checkbox.
+    let marker = egui::pos2(rect.left() + 16., rect.center().y);
+    painter.circle_stroke(marker, 7., Stroke::new(1.3, if selected { ORANGE } else { theme::MUTED }));
+    if selected { painter.circle_filled(marker, 3.8, ORANGE); }
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect)
+        .id_salt(("cloud-card-content", item.id.as_str()))
+        .layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let mut x = rect.left() + 28.;
+    for &(column, column_width) in columns {
+        let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 4.), egui::vec2(column_width, 28.));
+        let value = cloud_column_value(item, column);
+        if column == 0 {
+            let text_rect = if item.loaded {
+                painter.circle_filled(egui::pos2(cell.left() + 4., cell.center().y), 3., Color32::from_rgb(35, 114, 74));
+                egui::Rect::from_min_max(cell.min + egui::vec2(12., 0.), cell.max)
+            } else { cell };
+            child.put(text_rect, egui::Label::new(egui::RichText::new(&value).strong().size(13.))
+                .truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
+        } else if column == 4 {
+            let (background, foreground) = if item.axis_ready {
+                (Color32::from_rgb(232, 246, 238), Color32::from_rgb(35, 114, 74))
+            } else {
+                (Color32::from_rgb(255, 245, 225), Color32::from_rgb(149, 94, 24))
+            };
+            painter.rect_filled(cell.shrink2(egui::vec2(0., 2.)), 5., background);
+            child.put(cell.shrink2(egui::vec2(6., 0.)),
+                egui::Label::new(egui::RichText::new(&value).size(12.).color(foreground))
+                    .truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
+        } else {
+            child.put(cell, egui::Label::new(egui::RichText::new(if value.is_empty() { "—" } else { &value })
+                .color(if column == 1 { INK } else { theme::MUTED }))
+                .truncate().halign(egui::Align::Min).selectable(false)).on_hover_text(&value);
+        }
+        x += column_width + CLOUD_COLUMN_GAP;
+    }
+    response.on_hover_text(format!("{}\nBestand: {}\nX {:.3} · Y {:.3} · Z {:.3}\n{}\n{}",
+        item.title, item.path, item.center[0], item.center[1], item.center[2],
+        item.axis, if item.loaded { "In dit project" } else { "Bewaard in overzicht" }))
+}
 fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled: bool,
     action: &mut Option<(&'static str, String)>) {
-    // Reserve the header and horizontal scrollbar before sizing the table body.
-    let height = (ui.available_height() - 48.).max(0.);
-    egui::ScrollArea::horizontal().id_salt("pointcloud-table-horizontal").show(ui, |ui| {
-        ui.set_min_width(1110.);
-        TableBuilder::new(ui).id_salt("pointcloud-catalog-table").striped(true).resizable(true)
-            .sense(egui::Sense::click()).cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .max_scroll_height(height).min_scrolled_height(0.).auto_shrink([false, false])
-            .column(Column::initial(195.).at_least(130.).clip(true))
-            .column(Column::initial(100.).at_least(75.).clip(true))
-            .column(Column::initial(82.).at_least(60.).clip(true))
-            .column(Column::initial(150.).at_least(110.).clip(true))
-            .columns(Column::initial(100.).at_least(75.).clip(true), 3)
-            .column(Column::initial(155.).at_least(110.).clip(true))
-            .column(Column::exact(158.))
-            .header(28., |mut header| {
-                for (index, label) in ["Naam", "Scanpunten", "Objecten", "Begin / eind", "Centrum X", "Centrum Y", "Centrum Z", "Bron / CRS"].iter().enumerate() {
-                    header.col(|ui| {
-                        let suffix = if state.sort_column == index { if state.descending { " ↓" } else { " ↑" } } else { "" };
-                        if ui.selectable_label(state.sort_column == index, format!("{label}{suffix}")).clicked() {
-                            if state.sort_column == index { state.descending = !state.descending; }
-                            else { state.sort_column = index; state.descending = matches!(index, 1 | 2); }
-                        }
-                    });
+    let width = (ui.available_width() - ui.spacing().scroll.allocated_width()).max(1.);
+    let columns = cloud_columns_for_width(width);
+    let inline_filters = width >= 680. && ui.available_height() >= 240.;
+    show_cloud_header(ui, width, &columns, state, inline_filters);
+    ui.spacing_mut().item_spacing.y = 2.;
+    egui::ScrollArea::vertical().id_salt("pointcloud-catalog-vertical")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(ui.available_height().max(1.)).auto_shrink([false, false])
+        .show_rows(ui, CLOUD_ROW_HEIGHT, rows.len(), |ui, range| {
+            for index in range {
+                let item = &rows[index];
+                let response = show_cloud_card(ui, item,
+                    state.selected.as_deref() == Some(item.id.as_str()), index % 2 != 0, width, &columns);
+                if response.clicked() { state.selected = Some(item.id.clone()); }
+                if enabled && response.double_clicked() {
+                    state.selected = Some(item.id.clone());
+                    *action = Some(("edit", item.id.clone()));
                 }
-                header.col(|ui| { ui.strong("Acties"); });
-            })
-            .body(|body| {
-                body.rows(42., rows.len(), |mut row| {
-                    let item = &rows[row.index()];
-                    row.set_selected(state.selected.as_deref() == Some(item.id.as_str()));
-                    row.col(|ui| {
-                        ui.vertical(|ui| {
-                            ui.add(egui::Label::new(egui::RichText::new(&item.title).strong()).truncate()).on_hover_text(&item.title);
-                            if item.loaded { ui.small(egui::RichText::new("In huidig project").color(Color32::from_rgb(25, 120, 85))); }
-                        });
-                    });
-                    row.col(|ui| { ui.monospace(count(item.point_count)); });
-                    row.col(|ui| { ui.monospace(count(item.object_count as u64)); });
-                    row.col(|ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&item.axis).small()
-                            .color(if item.axis_ready { Color32::from_rgb(25, 120, 85) } else { Color32::from_rgb(149, 94, 24) })).truncate()).on_hover_text(&item.axis);
-                    });
-                    for coordinate in item.center { row.col(|ui| { ui.monospace(format!("{coordinate:.3}")); }); }
-                    row.col(|ui| {
-                        ui.vertical(|ui| {
-                            let file = std::path::Path::new(&item.path).file_name().unwrap_or_default().to_string_lossy();
-                            ui.add(egui::Label::new(egui::RichText::new(file).small()).truncate()).on_hover_text(&item.path);
-                            ui.small(crs_short(item.crs));
-                        });
-                    });
-                    row.col(|ui| {
-                        if ui.add_enabled(enabled, egui::Button::new("Bewerken")).clicked() { state.selected = Some(item.id.clone()); *action = Some(("edit", item.id.clone())); }
-                        if ui.add_enabled(enabled, egui::Button::new("Inladen").fill(ORANGE)).clicked() { state.selected = Some(item.id.clone()); *action = Some(("load", item.id.clone())); }
-                    });
-                    let response = row.response();
-                    if response.clicked() { state.selected = Some(item.id.clone()); }
-                    if enabled && response.double_clicked() && action.is_none() { *action = Some(("edit", item.id.clone())); }
-                });
-            });
-    });
+            }
+        });
 }
 
 fn same_source(trench: &VirtualTrench, id: &str) -> bool {

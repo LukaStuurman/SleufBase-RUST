@@ -56,6 +56,16 @@ function defaultName(kind, objectType = "") {
   while (names.has(`${base} ${index}`)) index += 1;
   return `${base} ${index}`;
 }
+function nameLooksAutomatic(item) {
+  // Keep a deliberately edited name. Older, untyped records may still have
+  // their original Punt/Lijn label, which should also follow a type change.
+  const prefixes = [defaultName(item.kind, item.object_type), defaultName(item.kind)]
+    .map((name) => name.replace(/ [1-9][0-9]*$/, ""));
+  return prefixes.some((prefix) => {
+    if (!item.name.startsWith(prefix + " ")) return false;
+    return /^[1-9][0-9]*$/.test(item.name.slice(prefix.length + 1));
+  });
+}
 function endpointFor(purpose) {
   for (const item of state.items.values()) if (item.purpose === purpose) return item;
   return null;
@@ -782,10 +792,17 @@ function installUI() {
       if (!item || item.purpose !== "object" || state.closeInProgress || state.drawing) return;
       finishFieldEdit(); finishDrag();
       const before = snapshot();
-      if (id === "object-type") Object.assign(item, readType(event.target.value));
-      else item.attributes[0] = event.target.value;
+      if (id === "object-type") {
+        const rename = nameLooksAutomatic(item);
+        Object.assign(item, readType(event.target.value));
+        if (rename) {
+          item.name = defaultName(item.kind, item.object_type);
+          const measure = state.measures.get(item.id);
+          if (measure) measure.name = item.name;
+        }
+      } else item.attributes[0] = event.target.value;
       updateMeasureColors();
-      remember(before); renderList(); renderCreationOptions(); queueSave(0);
+      remember(before); renderList(); renderCreationOptions(); renderInspector(); queueSave(0);
     });
   }
   $id("point-button").addEventListener("click", () => startDrawing("point"));
