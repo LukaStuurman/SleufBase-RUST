@@ -81,6 +81,10 @@ pub struct VirtualTrench {
     pub end_metadata:serde_json::Value,
     #[serde(default)]
     pub objects:Vec<TrenchPoint>,
+    /// Full measured 3D utility lines from Potree or KickTheMap, preserved beside
+    /// derived crossing points so profile and all map exports retain geometry.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub source_lines:Vec<Feature>,
     #[serde(default)]
     pub dekband_rows:Vec<Dekband>,
     #[serde(default)]
@@ -107,7 +111,7 @@ impl VirtualTrench {
     pub fn new(label:String,start:Vertex,end:Vertex,width:f64) -> Result<Self,String> {
         let result=Self {
             label,width_meters:width,start,end,start_metadata:Default::default(),end_metadata:Default::default(),
-            objects:Vec::new(),dekband_rows:Vec::new(),source_path:None,boundary_3d:Vec::new(),alignment:None,job_id:0,metadata:Default::default()
+            objects:Vec::new(),source_lines:Vec::new(),dekband_rows:Vec::new(),source_path:None,boundary_3d:Vec::new(),alignment:None,job_id:0,metadata:Default::default()
         };
         result.validate()?;
         Ok(result)
@@ -118,6 +122,21 @@ impl VirtualTrench {
         if let Some(alignment)=&self.alignment {alignment.validate()?;}
         if !self.width_meters.is_finite() || self.width_meters<0.1 {
             return Err("Een virtuele proefsleuf moet minstens 0,1 m breed zijn".into());
+        }
+        if self.source_lines.len() > 100_000 { return Err("Te veel oorspronkelijke 3D-lijnen".into()); }
+        let mut line_vertices = 0usize;
+        for line in &self.source_lines {
+            let Geometry::Polyline(vertices) = &line.geometry else {
+                return Err("Een bewaarde 3D-lijn bevat geen lijngeometrie".into());
+            };
+            line_vertices = line_vertices.saturating_add(vertices.len());
+            if vertices.len() < 2 || line_vertices > 1_000_000
+                || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()
+                    || p.z.is_some_and(|z| !z.is_finite())
+                    || p.x.abs() > 1e12 || p.y.abs() > 1e12
+                    || p.z.is_some_and(|z| z.abs() > 1e12)) {
+                return Err("Ongeldige of te grote oorspronkelijke 3D-lijn".into());
+            }
         }
         for v in std::iter::once(&self.start)
             .chain(std::iter::once(&self.end))
@@ -240,7 +259,7 @@ impl VirtualTrench {
     /// before injecting deck bands: endpoint markers can extend its axis.
     pub fn to_base_dataset_with_cancel(&self,job_id:u64,include_endpoints:bool,cancel:&std::sync::atomic::AtomicBool)->Result<Dataset,String> {
         crate::input::check(cancel)?;
-        let mut features=Vec::with_capacity(self.objects.len()+if include_endpoints{2}else{0});
+        let mut features=Vec::with_capacity(self.objects.len()+self.source_lines.len()+if include_endpoints{2}else{0});
         for (index,object) in self.objects.iter().enumerate() {
             if index%1024==0 {crate::input::check(cancel)?;}
             features.push(Feature {
@@ -249,6 +268,12 @@ impl VirtualTrench {
                 geometry:Geometry::Point(crate::cross_section::object_axis_position(self,object)),
                 attributes:object.attributes.clone()
             });
+        }
+        // Restore the original LAS/LAZ and KickTheMap polylines for the DXF
+        // profile, not just their derived intersection markers.
+        for (index,line) in self.source_lines.iter().enumerate() {
+            if index%1024==0 {crate::input::check(cancel)?;}
+            features.push(line.clone());
         }
         // Same stable chainage order as ordered_virtual_trench_points in Python.
         // Keep endpoints outside the object sort: they define marker direction.

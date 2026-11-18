@@ -71,6 +71,22 @@ pub fn layout(t:&VirtualTrench,quality:f64)->Result<Layout,String>{
     }
     Ok(Layout{bounds,width:w,height:h})
 }
+/// Rasterize a bounded pixel-space line. Reuse the same clipping for virtual
+/// detail images and real GeoTIFF overlays to avoid drawing off-image vertices.
+pub(crate) fn paint_pixel_polyline(
+    image:&mut RgbaImage,points:&[[f64;2]],color:[u8;3],width:u32,
+    cancel:&AtomicBool,budget:&mut u64,
+)->Result<(),String>{
+    let bounds=Bounds{min_x:0.,min_y:0.,max_x:image.width().saturating_sub(1) as f64,
+        max_y:image.height().saturating_sub(1) as f64};
+    for (index,edge) in points.windows(2).enumerate() {
+        if index%512==0 {input::check(cancel)?;}
+        if let Some((a,b))=crate::template_cad::clip(edge[0],edge[1],bounds) {
+            draw::line(image,&[a,b],width,[color[0],color[1],color[2],235],cancel,budget)?;
+        }
+    }
+    Ok(())
+}
 fn pixel(info:Layout,x:f64,y:f64)->[f64;2] {
     [((x-info.bounds.min_x)/(info.bounds.max_x-info.bounds.min_x))*(info.width-1) as f64,
      ((info.bounds.max_y-y)/(info.bounds.max_y-info.bounds.min_y))*(info.height-1) as f64]
@@ -170,6 +186,20 @@ fn render_with_style(source:&Source,cancel:&AtomicBool,export_detail:bool,draw_b
         let color=row.display_rgb.unwrap_or([17,24,39]);
         draw::line(&mut result,&[point(a),point(b)],dekband_width,
             [color[0],color[1],color[2],235],cancel,&mut budget)?;
+    }
+    // Paint the measured line itself, not only a generic transverse marker
+    // derived from its crossing with the trench axis. The polygon mask below
+    // still clips the detail to the trench footprint.
+    for (index,feature) in t.source_lines.iter().enumerate() {
+        if index%256==0 {input::check(cancel)?;}
+        let crate::model::Geometry::Polyline(vertices)=&feature.geometry else{continue;};
+        if crate::virtual_trench::measurement_helper_name(&feature.source_name)
+            &&crate::virtual_trench::measurement_helper_name(&feature.object_name) {continue;}
+        let color=crate::matching_rule(&feature.source_name,rules)
+            .map(|rule|crate::cad::aci_rgb(i32::from(rule.color_aci)))
+            .unwrap_or([37,99,235]);
+        let projected=vertices.iter().map(|v|pixel(info,v.x,v.y)).collect::<Vec<_>>();
+        paint_pixel_polyline(&mut result,&projected,color,point_width_px.max(3),cancel,&mut budget)?;
     }
     // The original stable chainage order determines overlapping marker colors.
     let mut objects=t.objects.iter().collect::<Vec<_>>();

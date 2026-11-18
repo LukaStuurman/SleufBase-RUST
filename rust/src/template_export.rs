@@ -754,8 +754,20 @@ fn export_with_asset_policy(
                                 }
                             })
                         });
+                    let lines = slot.profile.as_ref().and_then(|p|p.virtual_trench.as_ref())
+                        .map(|trench|trench.source_lines.iter().filter_map(|feature|{
+                            let crate::Geometry::Polyline(vertices)=&feature.geometry else{return None;};
+                            if crate::virtual_trench::measurement_helper_name(&feature.source_name)
+                                &&crate::virtual_trench::measurement_helper_name(&feature.object_name) {return None;}
+                            let color=crate::matching_rule(&feature.source_name,&request.rules)
+                                .map(|rule|crate::cad::aci_rgb(i32::from(rule.color_aci)))
+                                .unwrap_or([37,99,235]);
+                            Some(crate::template_raster::LineOverlay{
+                                vertices:vertices.iter().map(|v|[v.x,v.y]).collect(),color,
+                            })
+                        }).collect::<Vec<_>>()).unwrap_or_default();
                     asset_batch.push(assets::Kind::Tiff {
-                        source, axis, reverse: reverse_override.unwrap_or(source.reverse_orientation),
+                        source, axis, reverse: reverse_override.unwrap_or(source.reverse_orientation),lines,
                     }, destination.clone());
                 } else if let Some(source) = slot.map_source.as_ref().filter(|_| role == "kaart") {
                     let reference = if let (Some(options), Some(profile)) =

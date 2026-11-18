@@ -18,6 +18,7 @@ pub(super) struct State {
     queue: VecDeque<PathBuf>,
     form: Option<ImportForm>,
     worker: Option<ImportWorker>,
+    ortho: Option<OrthoWorker>,
     editor: Option<Editor>,
     trench: Option<TrenchForm>,
     catalog: Option<Catalog>,
@@ -43,6 +44,7 @@ impl State {
         // The catalog and overview belong to the application, not one project.
         self.queue.clear(); self.form = None; self.worker = None;
         self.editor = None; self.trench = None;
+        self.ortho = None;
         self.remembered_generation = None;
         self.map.pause(); self.status.clear();
     }
@@ -63,6 +65,9 @@ struct PendingCatalog { source: PointCloudSource, expected: Option<PointCloudSou
 enum ImportEvent { Progress(String), Done(Result<PointCloudSource, String>) }
 struct ImportWorker { rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>, generation: u64, expected: Option<PointCloudSource> }
 impl Drop for ImportWorker { fn drop(&mut self) { self.cancel.store(true, Ordering::Release); } }
+struct OrthoWorker { rx: Receiver<Result<PathBuf,String>>, cancel: Arc<AtomicBool>,
+    generation:u64, source_id:String }
+impl Drop for OrthoWorker { fn drop(&mut self) { self.cancel.store(true,Ordering::Release); } }
 struct Editor { session: Session, child: Child, source_id: String,
     revision: u64, _log: tempfile::NamedTempFile }
 impl Drop for Editor { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
@@ -259,22 +264,51 @@ impl SleufBaseApp {
             self.pointcloud_ui.worker = None;
             if generation == self.project_generation {
                 match result {
-                    Ok(source) => self.accept_catalog_source(source, true, expected),
+                    Ok(source) => self.accept_catalog_source(source, false, expected),
                     Err(error) => { self.pointcloud_ui.status = error.clone(); self.message = error; }
                 }
             }
         }
-        if self.pointcloud_ui.busy() { ctx.request_repaint_after(Duration::from_millis(100)); }
+        let completed_ortho=self.pointcloud_ui.ortho.as_ref().and_then(|worker| match worker.rx.try_recv() {
+            Ok(result)=>Some((worker.generation,worker.source_id.clone(),result)),
+            Err(TryRecvError::Disconnected)=>Some((worker.generation,worker.source_id.clone(),
+                Err("De GeoTIFF-verwerking is onverwacht gestopt.".into()))),
+            Err(TryRecvError::Empty)=>None,
+        });
+        if let Some((generation,id,result))=completed_ortho {
+            self.pointcloud_ui.ortho=None;
+            if generation==self.project_generation && self.point_clouds.iter().any(|source|source.id==id) {
+                match result {
+                    Ok(_) => {
+                        if let Some(source)=self.point_clouds.iter().find(|source|source.id==id).cloned() {
+                            if let Err(error)=self.register_cloud_geotiff(&source) {
+                                self.pointcloud_ui.status=format!("Proefsleuf geladen, maar de GeoTIFF kon niet worden toegevoegd: {error}");
+                            }else{
+                                self.pointcloud_ui.status="Bovenaanzicht als GeoTIFF toegevoegd, zonder tekenpunten en labels.".into();
+                            }
+                        }
+                    }
+                    Err(error)=>self.pointcloud_ui.status=format!("Proefsleuf is geladen; GeoTIFF maken mislukt: {error}"),
+                }
+            }
+        }
+        if self.pointcloud_ui.busy()||self.pointcloud_ui.ortho.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
         if self.pointcloud_ui.form.is_none() && !self.pointcloud_ui.busy()
             && self.pointcloud_ui.pending_catalog.is_none() && self.file_intent.is_none() {
             if let Some(path) = self.pointcloud_ui.queue.pop_front() {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 if let Some(source) = self.pointcloud_ui.sources().iter()
                     .find(|source| source.source_path == canonical && source.validate_cache().is_ok()) {
-                    let id = source.id.clone(); self.pointcloud_ui.selected = Some(id.clone()); self.open_pointcloud_editor(&id);
+                    let id = source.id.clone(); self.pointcloud_ui.selected = Some(id);
+                    self.pointcloud_ui.status = "Scan al bewaard. Kies Bewerken om punten of lijnen toe te voegen.".into();
                 } else {
                     let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-                    self.pointcloud_ui.form = Some(ImportForm { path, title, crs: CloudCrs::Unknown });
+                    // Every queued LAS/LAZ is prepared and remembered without
+                    // opening Potree. The user can edit any scan later from
+                    // the catalog, even when several files were selected.
+                    self.start_pointcloud_import(ImportForm { path, title, crs: CloudCrs::Unknown }, None, ctx);
                 }
             }
         }
@@ -578,7 +612,8 @@ impl SleufBaseApp {
                     }
                 }
                 "edit" => self.open_pointcloud_editor(&id),
-                "load" => self.start_pointcloud_load(&id),
+                "load" => self.start_pointcloud_load(&id, false),
+                "load-options" => self.start_pointcloud_load(&id, true),
                 "export" => self.export_pointcloud_objects(&id),
                 "locate" => {
                     if let Some(source) = self.pointcloud_ui.source(&id).cloned() {
@@ -625,7 +660,7 @@ impl SleufBaseApp {
         else if !cancel && !response.should_close() { self.pointcloud_ui.form = Some(form); }
     }
 
-    fn start_pointcloud_load(&mut self, id: &str) {
+    fn start_pointcloud_load(&mut self, id: &str, show_options: bool) {
         if !self.pointcloud_task_allowed() { self.message = self.pointcloud_unavailable_message().into(); return; }
         let source = match catalog::get(id) {
             Ok(Some(source)) => source,
@@ -646,8 +681,105 @@ impl SleufBaseApp {
         let (mode, label, width) = if let Some(trench) = existing {
             (LoadMode::Update(trench.label.clone()), trench.label.clone(), trench.width_meters)
         } else { (LoadMode::New, unique_label(&source.title, &self.virtual_trenches), 0.6) };
-        self.pointcloud_ui.trench = Some(TrenchForm { source, generation: self.project_generation, axis_id,
-            selected_ids, label, width, mode, preview: None, error: None });
+        let mut form = TrenchForm { source, generation: self.project_generation, axis_id,
+            selected_ids, label, width, mode, preview: None, error: None };
+        let duplicates = self.virtual_trenches.iter().filter(|trench| same_source(trench, id)).count();
+        if !show_options && form.source.trench_endpoints().is_ok() && duplicates <= 1 {
+            let ids = form.selected_ids.iter().cloned().collect::<Vec<_>>();
+            match sleufbase_rust::pointcloud_trench::prepare(
+                &form.source, &form.axis_id, &ids, form.label.clone(), form.width) {
+                Ok(prepared) => match self.commit_pointcloud_trench(&form, prepared) {
+                    Ok(()) => return,
+                    Err(error) => form.error = Some(error),
+                },
+                Err(error) => form.error = Some(error),
+            }
+        }
+        // Invalid/missing endpoints or ambiguous duplicates still use the
+        // options dialog, where the user can edit the missing geometry.
+        self.pointcloud_ui.trench = Some(form);
+    }
+
+
+    /// Finalize a Potree-drawn trench directly on the SleufBase map. The
+    /// regular virtual editor is still available explicitly from the map.
+    fn commit_pointcloud_trench(&mut self, form:&TrenchForm,
+        prepared:sleufbase_rust::pointcloud_trench::Prepared)->Result<(),String> {
+        if !self.pointcloud_task_allowed() || form.generation!=self.project_generation {
+            return Err("Het project is intussen gewijzigd. Open Inladen opnieuw.".into());
+        }
+        let (index, trench) = match &form.mode {
+            LoadMode::New => (self.virtual_trenches.len(), prepared.trench),
+            LoadMode::Update(label) => {
+                let index = self.virtual_trenches.iter().position(|trench| &trench.label == label && same_source(trench, &form.source.id))
+                    .ok_or("De bestaande proefsleuf is intussen gewijzigd. Open Inladen opnieuw.")?;
+                (index, merge_trench(&self.virtual_trenches[index], prepared.trench)?)
+            }
+        };
+        if self.virtual_trenches.iter().enumerate().any(|(other, old)| other != index && old.label == trench.label) {
+            return Err("Er bestaat al een proefsleuf met deze naam.".into());
+        }
+        if !self.point_clouds.iter().any(|source| source.id == form.source.id) && self.point_clouds.len() >= pointcloud::MAX_SOURCES {
+            return Err("Dit project bevat het maximumaantal puntenwolken. Gebruik een ander project.".into());
+        }
+        if index == self.virtual_trenches.len() { self.virtual_trenches.push(trench); } else { self.virtual_trenches[index] = trench; }
+        if let Some(source) = self.point_clouds.iter_mut().find(|source| source.id == form.source.id) { *source = form.source.clone(); }
+        else { self.point_clouds.push(form.source.clone()); }
+        self.sync_pointcloud_datasets();
+        self.trench_markers = self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
+        self.refresh_virtual_references(); self.virtual_map.selected = Some(index); self.dirty = true;
+        // The cloud editor already supplied a complete measured trench. Centre
+        // the real map and leave the separate virtual editor closed.
+        let placed=&self.virtual_trenches[index];
+        self.navigation.fit_bounds=Some(Bounds {
+            min_x:placed.start.x.min(placed.end.x)-2., max_x:placed.start.x.max(placed.end.x)+2.,
+            min_y:placed.start.y.min(placed.end.y)-2., max_y:placed.start.y.max(placed.end.y)+2.,
+        });
+        self.pointcloud_ui.status = "Proefsleuf direct op de kaart geplaatst. Sla het project op.".into();
+        self.pointcloud_ui.open = false; self.pointcloud_ui.map.pause();
+        if let Err(error)=self.register_cloud_geotiff(&form.source) {
+            self.pointcloud_ui.status=format!("Proefsleuf geplaatst, maar GeoTIFF laden mislukt: {error}");
+        }
+        if !sleufbase_rust::pointcloud_ortho::path_for(&form.source.id)?.is_file() {
+            self.start_ortho_worker(form.source.clone());
+        }
+
+        Ok(())
+    }
+
+    /// Register a generated, annotation-free overview raster alongside the
+    /// placed trench. The original LAS/LAZ is never modified.
+    fn register_cloud_geotiff(&mut self, source:&PointCloudSource)->Result<bool,String> {
+        if source.crs!=CloudCrs::RdNew {return Ok(false);}
+        let path=sleufbase_rust::pointcloud_ortho::path_for(&source.id)?;
+        if !path.is_file() || self.geotiffs.iter().any(|r|r.path==path) {return Ok(false);}
+        let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path)?;
+        if raster.epsg!=Some(28992) {return Err("GeoTIFF heeft geen RD New-coördinaten.".into());}
+        raster.metadata=serde_json::json!({
+            "pointcloud_source_id":source.id,
+            "pointcloud_title":source.title,
+            "pointcloud_generated_orthoview":true
+        });
+        self.geotiffs.push(raster);
+        self.raster_textures.push(None);
+        self.dirty=true;
+        Ok(true)
+    }
+    fn start_ortho_worker(&mut self, source:PointCloudSource) {
+        if self.pointcloud_ui.ortho.is_some() || source.crs!=CloudCrs::RdNew {return;}
+        let (tx,rx)=mpsc::channel();
+        let cancel=Arc::new(AtomicBool::new(false));
+        let flag=Arc::clone(&cancel);
+        let id=source.id.clone();
+        self.pointcloud_ui.ortho=Some(OrthoWorker{
+            rx,cancel,generation:self.project_generation,source_id:id,
+        });
+        self.pointcloud_ui.status="Proefsleuf geplaatst; bovenaanzicht als GeoTIFF wordt voorbereid…".into();
+        std::thread::spawn(move || {
+            let result=source.validate_cache().and_then(|path|
+                sleufbase_rust::pointcloud_ortho::generate(&path,&source,&flag));
+            let _=tx.send(result);
+        });
     }
 
     fn show_pointcloud_trench(&mut self, ctx: &egui::Context) {
@@ -776,34 +908,12 @@ impl SleufBaseApp {
         });
         if edit { self.open_pointcloud_editor(&form.source.id); return; }
         if create {
-            let result = (|| {
-                if !self.pointcloud_task_allowed() || form.generation != self.project_generation { return Err("Het project is intussen gewijzigd. Open Inladen opnieuw.".into()); }
-                let prepared = form.preview.take().ok_or("De inlaadvoorvertoning ontbreekt")??;
-                let (index, trench) = match &form.mode {
-                    LoadMode::New => (self.virtual_trenches.len(), prepared.trench),
-                    LoadMode::Update(label) => {
-                        let index = self.virtual_trenches.iter().position(|trench| &trench.label == label && same_source(trench, &form.source.id))
-                            .ok_or("De bestaande proefsleuf is intussen gewijzigd. Open Inladen opnieuw.")?;
-                        (index, merge_trench(&self.virtual_trenches[index], prepared.trench)?)
-                    }
-                };
-                if self.virtual_trenches.iter().enumerate().any(|(other, old)| other != index && old.label == trench.label) {
-                    return Err("Er bestaat al een proefsleuf met deze naam.".into());
-                }
-                if !self.point_clouds.iter().any(|source| source.id == form.source.id) && self.point_clouds.len() >= pointcloud::MAX_SOURCES {
-                    return Err("Dit project bevat het maximumaantal puntenwolken. Gebruik een ander project.".into());
-                }
-                if index == self.virtual_trenches.len() { self.virtual_trenches.push(trench); } else { self.virtual_trenches[index] = trench; }
-                if let Some(source) = self.point_clouds.iter_mut().find(|source| source.id == form.source.id) { *source = form.source.clone(); }
-                else { self.point_clouds.push(form.source.clone()); }
-                self.sync_pointcloud_datasets();
-                self.trench_markers = self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
-                self.refresh_virtual_references(); self.virtual_map.selected = Some(index); self.dirty = true;
-                self.pointcloud_ui.status = "Proefsleuf ingeladen. Controleer objectgegevens en maaiveldhoogtes en sla het project op.".into();
-                self.pointcloud_ui.open = false; self.pointcloud_ui.map.pause(); self.open_virtual_editor(index);
-                Ok::<(), String>(())
-            })();
-            if let Err(error) = result { form.error = Some(error); form.preview = None; self.pointcloud_ui.trench = Some(form); }
+            let result = form.preview.take()
+                .unwrap_or_else(|| Err("De inlaadvoorvertoning ontbreekt".into()));
+            match result.and_then(|prepared| self.commit_pointcloud_trench(&form, prepared)) {
+                Ok(()) => {}
+                Err(error) => { form.error = Some(error); form.preview = None; self.pointcloud_ui.trench = Some(form); }
+            }
         } else if !cancel && !response.should_close() { self.pointcloud_ui.trench = Some(form); }
     }
 }
@@ -820,6 +930,9 @@ fn show_source_details(ui: &mut egui::Ui, source: &PointCloudSource, title: &mut
                 for (label, key) in [("Meetobjecten naar DXF…", "export"), ("Bronbestand opnieuw kiezen…", "relink"), ("Weergave opnieuw opbouwen", "rebuild")] {
                     if ui.button(label).clicked() { *action = Some((key, source.id.clone())); ui.close_menu(); }
                 }
+                if ui.add_enabled(enabled, egui::Button::new("Inladen met opties…"))
+                    .on_hover_text("Kies zelf de sleufbreedte, objecten en bijwerken of kopiëren.")
+                    .clicked() { *action = Some(("load-options", source.id.clone())); ui.close_menu(); }
                 if ui.add_enabled(source.crs == CloudCrs::RdNew, egui::Button::new("Op kaart tonen")).clicked() { *action = Some(("locate", source.id.clone())); ui.close_menu(); }
                 if loaded {
                     ui.separator();

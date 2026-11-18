@@ -215,6 +215,23 @@ fn append_stroke(
     }
     Ok(())
 }
+/// Older projects already contain the full Potree source layer but their virtual
+/// trench retained just crossing points. Restore full lines for exports without
+/// requiring the user to re-import or redraw a saved LAS/LAZ file.
+fn with_measured_lines(trench:&VirtualTrench,jobs:&[Dataset])->VirtualTrench {
+    let mut complete=trench.clone();
+    if !complete.source_lines.is_empty() {return complete;}
+    let Some(id)=trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str) else{return complete;};
+    let key=PathBuf::from(format!("pointcloud-{id}.annotations.json"));
+    if let Some(dataset)=jobs.iter().find(|d|d.source_path==key && crate::pointcloud::is_cloud_dataset(d)) {
+        complete.source_lines=dataset.features.iter().filter(|feature|
+            matches!(feature.geometry,Geometry::Polyline(_))
+                && !(crate::virtual_trench::measurement_helper_name(&feature.source_name)
+                    &&crate::virtual_trench::measurement_helper_name(&feature.object_name)))
+            .cloned().collect();
+    }
+    complete
+}
 /// The selection is validated before any DXF or image is written. The existing
 /// atomic template-export transaction remains responsible for final publication.
 pub fn build(
@@ -324,11 +341,18 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                 return Err(format!("GeoTIFF niet gevonden: {}",raster.path.display()));
             }
         }
+        // The same full measured paths feed the profile and both raster panes,
+        // including LAS/LAZ paths from older projects.
+        let enriched_trench=match choice.source {
+            Source::Virtual(i)=>Some(with_measured_lines(
+                trenches.get(i).ok_or("Virtuele sleuf niet meer beschikbaar")?,jobs)),
+            _=>None,
+        };
         // A virtual or measured MarXact trench can export its own transparent
         // synthetic TIFF pane; it does not need an unrelated KickTheMap job.
         let virtual_source=match (choice.source,raster){
-            (Source::Virtual(i),None)=>{
-                let trench=trenches.get(i).ok_or("Virtuele sleuf niet meer beschikbaar")?;
+            (Source::Virtual(_),None)=>{
+                let trench=enriched_trench.as_ref().ok_or("Virtuele sleuf niet meer beschikbaar")?;
                 Some(crate::virtual_raster::Source{trench:trench.clone(),quality:4.,reverse:choice.reverse})
             },
             _=>None,
@@ -354,8 +378,8 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                 let dataset=if let Some(r)=raster.filter(|r|r.kickthemap_job_id==Some(job.job_id)&&hydrate::local_path(r).is_some()){hydrate::resolve_raster(r,jobs,control.flag())?.map(|d|d.into_owned()).unwrap_or_else(||job.clone())}else{job.clone()};
                 (dataset, raster.and_then(|r|crate::raster_points::start_in(&r.metadata)), None, Vec::new())
             }
-            Source::Virtual(i) => {
-                let trench = trenches.get(i).ok_or("Virtuele proefsleuf bestaat niet meer")?;
+            Source::Virtual(_) => {
+                let trench = enriched_trench.as_ref().ok_or("Virtuele proefsleuf bestaat niet meer")?;
                 trench.validate()?;
                 if choice.profile && (trench.start.z.is_none() || trench.end.z.is_none()) {
                     return Err(format!(
@@ -402,6 +426,20 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                     crate::cad::aci_rgb(i32::from(rule.color_aci)));
                 append_stroke(&mut overlays, &mut points, bounds,
                     vertices.iter().map(|p| [p.x,p.y]).collect(), color, false)?;
+            }
+        }
+        // The small map beside the TIFF must retain native line geometry as
+        // well; the synthetic virtual raster already paints these paths.
+        if virtual_source.is_none() {
+            if let Some(trench) = enriched_trench.as_ref() {
+                for feature in &trench.source_lines {
+                    let Geometry::Polyline(vertices)=&feature.geometry else{continue;};
+                    let color=crate::matching_rule(&feature.source_name,rules)
+                        .map(|rule|crate::cad::aci_rgb(i32::from(rule.color_aci)))
+                        .unwrap_or([37,99,235]);
+                    append_stroke(&mut overlays,&mut points,bounds,
+                        vertices.iter().map(|v|[v.x,v.y]).collect(),color,false)?;
+                }
             }
         }
         if !extra_polyline.is_empty() && virtual_source.is_none() {
@@ -487,7 +525,7 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
             profile: (choice.profile&&has_dataset).then_some(Profile {
                 dataset: local_index, forced_start, reverse: choice.reverse,
                 manual_scale:choice.manual_scale,
-                virtual_trench:match choice.source{Source::Virtual(i)=>Some(trenches[i].clone()),_=>None},
+                virtual_trench:enriched_trench.clone(),
                 metadata,
                 marker_diameter: opts.profile_style.marker_diameter,
                 show_reference: opts.profile_style.show_reference,

@@ -532,3 +532,10 @@ Met een rechtsklik op een proefsleuf krijg je de beschikbare acties voor die bro
 | Je ziet andere knoppen dan in de handleiding | Controleer de versie onder Info en of je de juiste SleufBase Rust-snelkoppeling hebt gestart. In smalle vensters worden sommige knopnamen korter en staan meer acties onder Meer. |
 
 Lees bij een fout de volledige melding. Noteer bij het melden van een probleem de versie uit **Info**, de gebruikte bronsoort, de gekozen handeling en de fouttekst. Daarmee is duidelijk in welke stap het probleem ontstaat.
+
+
+## Meerdere LAS/LAZ-scans en bovenaanzicht
+
+Selecteer meerdere scans via **Puntenwolk → LAS/LAZ openen**. De bestanden komen na elkaar in het puntenwolkoverzicht; openen van de Potree-editor is niet verplicht. Kies later **Bewerken** om punten of polylijnen te tekenen. Met een begin- en eindpunt plaatst **Inladen** de proefsleuf rechtstreeks op de kaart. **Meer → Inladen met opties** biedt de eerdere detailkeuzes.
+
+Voor een scan in RD New maakt SleufBase een GeoTIFF-bovenaanzicht uit de echte puntkleuren of intensiteit/hoogte. Alleen de scan vormt het raster: getekende punten, lijnmarkeringen en labels worden niet gefotografeerd. Dit GeoTIFF wordt bij het inladen als kaartlaag gebruikt en kan bij de DXF-sjabloonexport als raster dienen.

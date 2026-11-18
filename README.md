@@ -36,6 +36,8 @@ Het KickTheMap-jobvenster heeft kabel- en leidingvelden **in de webpagina zelf**
 
 ## Puntenwolken van andere leveranciers
 
+Open **Puntenwolk → LAS/LAZ openen** en selecteer desgewenst meerdere bestanden tegelijk. Die worden achtereenvolgens in het catalogusoverzicht opgeslagen en kunnen later afzonderlijk worden bewerkt. Met complete begin- en eindpunten plaatst **Inladen** de sleuf meteen op de kaart. Voor bevestigde RD-scans maakt SleufBase ook een gegeorefereerd GeoTIFF-bovenaanzicht zonder tekenannotaties.
+
 Open **Puntenwolk → LAS/LAZ openen** voor een lokale scan van KickTheMap of een andere leverancier. SleufBase bereidt de scan lokaal voor en opent een eigen Potree-editor in de stijl van de desktopapp. Plaats **Beginpunt** en **Eindpunt** op het maaiveld om de proefsleufas vast te leggen. Teken daarna punten of polylijnen voor kabels en leidingen. De dropdowns **Type** en **Materiaal** gebruiken dezelfde instellingen als de normale sleufbewerker.
 
 **Puntenwolken beheren** bewaart de scans ook na opnieuw starten of wisselen van project. De doorzoekbare tabel toont aantallen, de status van begin/eind en coördinaten, met **Bewerken** en **Inladen** per scan. De overzichtskaart toont bronnen met bevestigde RD-coördinaten. **Bewerken** wijzigt de bewaarde scan; alleen **Inladen** neemt nieuwe gegevens in het project over. Daarbij kies je de sleufnaam, breedte en objecten voor de doorsnede; begin/eind bepalen automatisch de as. De volledige tekening blijft daarnaast als bronlaag in het project beschikbaar. Een eerdere sleuf kun je bijwerken of als nieuwe kopie inladen. Meetpunten binnen de sleuf en werkelijke kruisingen van kabelpolylijnen komen in de gewone sleufbewerker en DXF-sjabloonexport terecht.

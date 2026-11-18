@@ -31,6 +31,8 @@ pub struct Prepared {
     pub image: RgbaImage,
     pub details: Details,
 }
+/// Native-world linework drawn on a physical TIFF before its rotation and crop.
+pub struct LineOverlay { pub vertices:Vec<XY>, pub color:[u8;3] }
 fn nearest(point: XY, paths: &[Vec<XY>], cancel: &AtomicBool) -> Result<Option<(XY, f64)>, String> {
     let mut best = None;
     let mut distance = f64::INFINITY;
@@ -286,20 +288,33 @@ pub fn from_tiff(
     axis: Option<[XY; 2]>,
     cancel: &AtomicBool,
 ) -> Result<Prepared, String> {
-    let raster = crate::raster::decode_full_with_cancel(&source.path, cancel)?;
-    let image = RgbaImage::from_raw(raster.width, raster.height, raster.rgba)
+    from_tiff_with_lines(source,roads,terrain,axis,&[],cancel)
+}
+/// Overlay measured cable/pipe paths before the standard TIFF rotate/crop.
+/// Thus the profile, the TIFF detail and the adjacent map use the same original
+/// line coordinates, even when a line was drawn after importing a KickTheMap TIFF.
+pub fn from_tiff_with_lines(
+    source:&Source, roads:&[Vec<XY>], terrain:&[Vec<XY>],
+    axis:Option<[XY;2]>, lines:&[LineOverlay], cancel:&AtomicBool,
+)->Result<Prepared,String>{
+    let raster=crate::raster::decode_full_with_cancel(&source.path,cancel)?;
+    let mut image=RgbaImage::from_raw(raster.width,raster.height,raster.rgba)
         .ok_or("Ongeldige TIFF-pixelbuffer")?;
-    prepare(
-        image,
-        &Options {
-            transform: source.transform,
-            roads,
-            terrain,
-            axis: axis.or(source.axis),
-            reverse: source.reverse_orientation,
-        },
-        cancel,
-    )
+    let mut budget=150_000_000_u64;
+    for (index,line) in lines.iter().enumerate() {
+        if index%128==0 { input::check(cancel)?; }
+        if line.vertices.len()<2 {continue;}
+        let projected=line.vertices.iter()
+            .map(|point|source.transform.world_to_pixel(point[0],point[1])
+                .map(|(x,y)|[x,y]))
+            .collect::<Result<Vec<_>,_>>()?;
+        crate::virtual_raster::paint_pixel_polyline(
+            &mut image,&projected,line.color,6,cancel,&mut budget)?;
+    }
+    prepare(image,&Options {
+        transform:source.transform,roads,terrain,
+        axis:axis.or(source.axis),reverse:source.reverse_orientation,
+    },cancel)
 }
 struct CheckedPng<'a, W> {
     out: W,

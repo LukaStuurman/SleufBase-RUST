@@ -69,10 +69,14 @@ pub fn prepare(
                 }
             }
             AnnotationKind::Polyline => {
+                if let Some(feature) = annotation.to_feature() { trench.source_lines.push(feature); }
                 for segment in annotation.vertices.windows(2) {
                     if let Some((p, angle)) = crossing(trench.start, trench.end, segment[0], segment[1]) {
                         if angle.abs() > 80. {
-                            return Err(format!("Lijn '{}' loopt bijna evenwijdig aan de sleufas. Kies deze lijn niet voor het dwarsprofiel; de sleufbewerker ondersteunt maximaal 80 graden schuinte.", annotation.name));
+                            // A near-parallel cable has no meaningful crossing
+                            // marker, but its full polyline remains in the profile
+                            // and on the detail/overview maps.
+                            continue;
                         }
                         // A vertex shared by two adjacent segments is one crossing.
                         if !crossings.iter().any(|(old, _)| (old.x-p.x).hypot(old.y-p.y) < 1e-7

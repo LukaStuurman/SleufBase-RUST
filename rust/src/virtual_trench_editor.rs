@@ -278,6 +278,7 @@ pub fn copy_kickthemap_objects(
             Geometry::Point(point)=>(*point,None),
             Geometry::Polyline(vertices)=>{
                 let Some(result)=line_crossing(trench,vertices) else{continue;};
+                trench.source_lines.push(feature.clone());
                 result
             }
         };

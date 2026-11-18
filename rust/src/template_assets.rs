@@ -21,6 +21,7 @@ pub(super) enum Kind<'a> {
         source: &'a template_raster::Source,
         axis: Option<[[f64; 2]; 2]>,
         reverse: bool,
+        lines: Vec<template_raster::LineOverlay>,
     },
     Virtual {
         source: &'a virtual_raster::Source,
@@ -134,14 +135,16 @@ impl<'a> Batch<'a> {
                             source,
                             axis,
                             reverse,
+                            lines,
                         } => {
                             let mut oriented = (*source).clone();
                             oriented.reverse_orientation = *reverse;
-                            let raster = template_raster::from_tiff(
+                            let raster = template_raster::from_tiff_with_lines(
                                 &oriented,
                                 &request.roads,
                                 &request.terrain_boundaries,
                                 *axis,
+                                lines,
                                 batch.flag(),
                             )?;
                             template_raster::save_image_budgeted(

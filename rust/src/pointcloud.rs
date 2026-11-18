@@ -836,6 +836,14 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
         crs, annotations: previous.map_or_else(Vec::new, |source| source.annotations.clone()),
     };
     source.validate()?;
+    // An overhead GeoTIFF is a purely derived image of the scan, never of the
+    // editor markers. Failure must not destroy a valid LAS/LAZ conversion.
+    if source.crs==CloudCrs::RdNew {
+        progress("Bovenaanzicht zonder tekenobjecten naar GeoTIFF omzetten…".into());
+        if let Err(error)=crate::pointcloud_ortho::generate(&output,&source,cancel) {
+            progress(format!("De 3D-scan is klaar, maar het bovenaanzicht kon niet worden gemaakt: {error}"));
+        }
+    }
     write_stamp(&output, &SourceStamp::from_inspected(&after, fingerprint))?;
     let destination = cache_root.join(&id);
     let backup = cache_root.join(format!(".replaced-{id}-{}", new_id()?));

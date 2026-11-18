@@ -148,6 +148,7 @@ pub mod export_control;
 pub mod export_worker;
 mod object_layout;
 pub mod pointcloud;
+pub mod pointcloud_ortho;
 pub mod pointcloud_catalog;
 pub mod pointcloud_server;
 pub mod pointcloud_webview;

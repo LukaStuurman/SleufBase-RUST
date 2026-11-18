@@ -106,6 +106,14 @@ pub fn for_job(dataset:&Dataset, rasters:&[GeoTiffInfo])->Suggestion {
     choose(dataset.job_id,&sample_geometry(dataset),rasters)
 }
 pub fn for_trench(trench:&VirtualTrench, rasters:&[GeoTiffInfo])->Suggestion {
+    // A georeferenced orthoview from the exact same LAS/LAZ source takes
+    // precedence over nearby KickTheMap or unrelated raster imagery.
+    if let Some(id)=trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str) {
+        let matching=rasters.iter().enumerate().filter(|(_,r)|r.epsg==Some(28992)
+            && r.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)==Some(id))
+            .map(|(i,_)|i).collect::<Vec<_>>();
+        if matching.len()==1 {return Suggestion{raster:Some(matching[0]),reason:MatchKind::JobId};}
+    }
     choose(trench.job_id,&sample_trench(trench),rasters)
 }
 pub fn source_coverage(dataset:&Dataset, raster:&GeoTiffInfo)->f64 {
