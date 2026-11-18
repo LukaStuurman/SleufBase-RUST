@@ -1,18 +1,18 @@
-# SleufBase Rust 1.0.31 — punten plaatsen in de Potree-editor hersteld
+# SleufBase Rust 1.0.32 — lokaal laden van de puntenwolkeditor hersteld
 
-Deze versie verhelpt de Potree-fout `Cannot read properties of undefined (reading getCenter)` bij het plaatsen of selecteren van een meetpunt.
+Deze versie herstelt een Windows-fout in de lokale verbinding naar de Potree-editor. Die kon grote viewerbestanden onvolledig doorgeven en een lege puntenwolkweergave met een algemene opstartmelding veroorzaken.
 
 ## Hersteld
 
-- Meetpunten en de hoekpunten van polylijnen gebruiken de eigen objectselectie van SleufBase. Zij worden niet meer onbedoeld aangemeld bij Potrees gereedschap voor het verplaatsen en schalen van volumes.
-- Een klik op een meetpunt selecteert het bijbehorende object zonder dezelfde klik opnieuw aan de algemene Potree-selectie door te geven.
-- Het plaatsen van een punt wordt pas afgerond nadat Potree de muisklik en het neerzetten van de marker heeft afgehandeld.
-- Dezelfde markerafhandeling geldt voor nieuw getekende, opnieuw geopende en via ongedaan maken/opnieuw herstelde objecten.
+- De lokale server zet iedere geaccepteerde verbinding expliciet in de juiste lees- en schrijfmodus. Op Windows bleef anders de nonblocking-modus van de listener actief, waardoor een bestandsoverdracht voortijdig kon stoppen.
+- Een tijdelijke, door de browser afgebroken verbinding stopt niet meer de volledige lokale server.
+- Opstartfouten bewaren de oorspronkelijke script- of modulefout en de betrokken bestandsnaam. Een mislukte resource wordt niet meer zonder bewijs als een ontbrekend installatieonderdeel beschreven.
+- De verbeterde puntselectie en muisafhandeling uit 1.0.31 blijven aanwezig.
 
 ## Bijwerken
 
-Sluit SleufBase en installeer versie 1.0.31. Open daarna je bestaande project of LAS/LAZ-bestand opnieuw. Het projectformaat en de voorbereide puntenwolken blijven compatibel met versie 1.0.30; opnieuw converteren is voor deze correctie niet nodig.
+Sluit SleufBase, installeer 1.0.32 en open je bestaande project of puntenwolk opnieuw. De bestaande projectgegevens en voorbereide LAS/LAZ-weergaven blijven bruikbaar; deze correctie vereist geen nieuwe conversie.
 
 ## Controle
 
-De correctie is beoordeeld tegen de meegeleverde Potree 1.8.2-code. JavaScript-syntax, Rust-compilatie en de Windows-pakketten worden gecontroleerd. Geautomatiseerde tests blijven volgens afspraak overgeslagen. De interactieve Windows-bediening met eigen scanbestanden is niet uitgevoerd.
+De Windows-socketafhandeling is beoordeeld tegen de officiële Microsoft- en Rust-documentatie. Het gepubliceerde 1.0.31-pakket is statisch gecontroleerd: de runtimebestanden waren aanwezig en hun controlesommen klopten. Deze release krijgt Rust- en Windows-bouwcontrole, JavaScript-syntaxcontrole en pakketverificatie. Geautomatiseerde tests blijven volgens afspraak overgeslagen; er is geen interactieve Windows-praktijkcontrole uitgevoerd.

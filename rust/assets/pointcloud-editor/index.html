@@ -88,7 +88,7 @@
       </aside>
       <section id="viewport" class="viewport" aria-label="Interactieve 3D-puntenwolk">
         <div id="potree_render_area" class="render-area"></div>
-        <div id="loading-overlay" class="loading-overlay" role="status"><div class="loading-card"><div id="loading-spinner" class="spinner"></div><h2 id="loading-title">Puntenwolk laden</h2><p id="loading-message">Je lokale puntenwolk wordt klaargezet.</p><button id="reload-button" class="primary-button" hidden>Opnieuw openen</button></div></div>
+        <div id="loading-overlay" class="loading-overlay" role="status"><div class="loading-card"><div id="loading-spinner" class="spinner"></div><h2 id="loading-title">Puntenwolk laden</h2><p id="loading-message">Je lokale puntenwolk wordt klaargezet.</p><details id="startup-details" class="startup-details" hidden><summary>Technische details</summary><pre id="startup-details-text"></pre></details><button id="reload-button" class="primary-button" hidden>Opnieuw openen</button></div></div>
         <div id="drawing-hint" class="drawing-hint" hidden><span id="drawing-message"></span><button id="finish-button" class="primary-button"><svg><use href="#icon-check"/></svg>Afronden</button><button id="cancel-button" class="quiet-button">Annuleren</button></div>
         <div class="canvas-hint" id="canvas-hint">Slepen: draaien <span>·</span> Rechts slepen: verplaatsen <span>·</span> Scrollen: zoomen</div>
         <div id="coordinate-readout" class="coordinate-readout" hidden></div>
@@ -98,17 +98,92 @@
   </div>
   <dialog id="help-dialog" class="help-dialog"><div class="section-heading"><h2>Tekenen op je puntenwolk</h2><button id="close-help-button" class="icon-button" aria-label="Uitleg sluiten"><svg><use href="#icon-close"/></svg></button></div><p>Kies <strong>Punt</strong> of <strong>Polylijn</strong> en klik op zichtbare punten in de scan. De getekende objecten gebruiken de oorspronkelijke XYZ-coördinaten.</p><dl class="help-keys"><dt>P / L / V</dt><dd>Punt, polylijn of bekijken</dd><dt>Enter / rechtermuisknop</dt><dd>Polylijn afronden</dd><dt>Esc</dt><dd>De actieve tekening annuleren</dd><dt>Ctrl+Z / Ctrl+Shift+Z</dt><dd>Ongedaan maken / opnieuw</dd><dt>Delete</dt><dd>Geselecteerd object verwijderen</dd><dt>F</dt><dd>Hele puntenwolk in beeld</dd><dt>Ctrl+S</dt><dd>Wijzigingen opslaan in SleufBase</dd></dl><p>Selecteer een object in de lijst of klik op een bol in het beeld. Sleep een bol naar een ander punt in de scan om de geometrie aan te passen. Dubbelklik op een object in de lijst om erop in te zoomen.</p><p>Afgeronde objecten en wijzigingen worden automatisch doorgegeven aan SleufBase. De knop <strong>Opslaan en sluiten</strong> wacht totdat die wijzigingen zijn bewaard. Sla daarna je SleufBase-project op om het projectbestand bij te werken.</p></dialog>
   <script>
-    // If a packaged dependency is missing, there cannot be new edits yet.
-    // Keep the native close contract available even before the module loads.
+    // Keep close/retry available even if the entry module never loads. Once
+    // the editor starts, its own hooks flush edits before either operation.
     window.sleufbaseBeforeClose = async function () {
       if (window.ipc) window.ipc.postMessage('close');
     };
+    (function () {
+      var base = new URL('.', location.href);
+      function clean(value) {
+        var text = String(value == null ? '' : value);
+        text = text.split(base.href).join('./');
+        text = text.split(base.pathname).join('./');
+        // Stack traces and browser import errors can contain an absolute URL.
+        // Never expose the private session token in diagnostic text.
+        return text.replace(/https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/[a-f0-9]{48}\//gi, './').slice(0, 6000);
+      }
+      function assetPath(value) {
+        if (!value) return '';
+        try {
+          var url = new URL(value, base);
+          return clean(url.origin === base.origin ? url.pathname : url.origin + url.pathname);
+        } catch (_) { return clean(value); }
+      }
+      var diagnostics = {
+        stage: 'Lokale scripts laden', records: [], failed: false,
+        clean: clean,
+        setStage: function (stage) { this.stage = stage; },
+        record: function (kind, error, asset, line, column) {
+          var message = clean(error && error.message ? error.message : error || 'Geen verdere foutinformatie beschikbaar.');
+          var record = { stage: this.stage, kind: kind, message: message, asset: assetPath(asset),
+            line: line || 0, column: column || 0, stack: clean(error && error.stack ? error.stack : '') };
+          if (!this.records.length || JSON.stringify(this.records[this.records.length - 1]) !== JSON.stringify(record)) {
+            this.records.push(record);
+            if (this.records.length > 12) this.records.shift();
+          }
+          document.getElementById('startup-details-text').textContent = this.records.map(function (entry) {
+            var rows = ['Stap: ' + entry.stage, 'Soort: ' + entry.kind];
+            if (entry.asset) rows.push('Onderdeel: ' + entry.asset);
+            if (entry.line) rows.push('Positie: regel ' + entry.line + (entry.column ? ', kolom ' + entry.column : ''));
+            rows.push('Melding: ' + entry.message);
+            if (entry.stack && entry.stack !== entry.message) rows.push(entry.stack);
+            return rows.join('\n');
+          }).join('\n\n');
+          return message + (record.asset ? ' (' + record.asset + (record.line ? ':' + record.line : '') + ')' : '');
+        },
+        showFailure: function (title, message) {
+          this.failed = true;
+          document.getElementById('loading-title').textContent = title;
+          document.getElementById('loading-message').textContent = clean(message);
+          document.getElementById('loading-spinner').hidden = true;
+          document.getElementById('startup-details').hidden = !this.records.length;
+          document.getElementById('loading-overlay').hidden = false;
+          document.getElementById('reload-button').hidden = false;
+        }
+      };
+      window.sleufbaseDiagnostics = diagnostics;
+      document.getElementById('reload-button').addEventListener('click', async function () {
+        if (typeof window.sleufbaseReloadEditor === 'function') {
+          await window.sleufbaseReloadEditor();
+        } else {
+          // The editor has not evaluated, so it cannot contain new annotations.
+          location.reload();
+        }
+      });
+    })();
     window.addEventListener('error', function (event) {
-      if (window.sleufbaseReportError) return;
-      document.getElementById('loading-title').textContent = 'De editor kon niet starten';
-      document.getElementById('loading-message').textContent = 'Een lokaal onderdeel ontbreekt of kon niet worden geladen. Sluit dit venster en controleer de installatie van SleufBase.';
-      document.getElementById('loading-spinner').hidden = true;
+      var diagnostics = window.sleufbaseDiagnostics;
+      var target = event.target;
+      var tag = target && target.tagName;
+      var asset = tag ? target.src || target.href : event.filename;
+      if (tag && tag !== 'SCRIPT') {
+        // An image, font or stylesheet failure is useful context, but does not
+        // establish that the editor itself is unavailable.
+        diagnostics.record('Niet-essentieel onderdeel laden', 'Onderdeel kon niet worden geladen.', asset);
+        return;
+      }
+      var message = diagnostics.record(tag === 'SCRIPT' ? 'Script laden' : 'JavaScript-fout',
+        event.error || event.message || 'Het lokale script kon niet worden geladen.', asset, event.lineno, event.colno);
+      if (typeof window.sleufbaseReportError === 'function') window.sleufbaseReportError(message);
+      else diagnostics.showFailure('De editor kon niet starten', 'Het starten van de lokale editor is onderbroken. De technische details tonen welk onderdeel of welke bewerking mislukte.');
     }, true);
+    window.addEventListener('unhandledrejection', function (event) {
+      var diagnostics = window.sleufbaseDiagnostics;
+      var message = diagnostics.record('Asynchrone fout', event.reason);
+      if (typeof window.sleufbaseReportError === 'function') window.sleufbaseReportError(message);
+      else diagnostics.showFailure('De editor kon niet starten', 'Het starten van de lokale editor is onderbroken. Bekijk de technische details voor de oorspronkelijke fout.');
+    });
   </script>
   <script src="./vendor/libs/jquery/jquery-3.1.1.min.js"></script>
   <script src="./vendor/libs/spectrum/spectrum.js"></script>
@@ -121,6 +196,14 @@
   <script src="./vendor/libs/i18next/i18next.js"></script>
   <script src="./vendor/libs/jstree/jstree.js"></script>
   <script src="./vendor/build/potree/potree.js"></script>
-  <script type="module" src="./editor.js"></script>
+  <script>
+    // Dynamic import makes failures in editor.js or its static THREE import
+    // observable here, before any code in the entry module can execute.
+    window.sleufbaseDiagnostics.setStage('Editor-module laden');
+    import('./editor.js').catch(function (error) {
+      window.sleufbaseDiagnostics.record('Editor-module laden', error, './editor.js');
+      window.sleufbaseDiagnostics.showFailure('De editor kon niet starten', 'De lokale editorcode kon niet worden geladen. Bekijk de technische details en probeer opnieuw te openen.');
+    });
+  </script>
 </body>
 </html>

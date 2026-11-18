@@ -87,6 +87,9 @@ fieldset label:first-child { margin-top: 0; }
 .loading-card h2 { font-size: 18px; margin: 18px 0 6px; }
 .loading-card p { color: #a9b8c5; overflow-wrap: anywhere; }
 .loading-card .primary-button { margin-top: 8px; }
+.startup-details { margin: 14px 0 7px; padding: 9px 11px; border: 1px solid #425364; border-radius: 7px; text-align: left; color: #c2d0dc; font-size: 11px; }
+.startup-details summary { cursor: pointer; font-weight: 600; }
+.startup-details pre { margin: 9px 0 0; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.5 Consolas, monospace; color: #bac9d6; user-select: text; }
 .spinner { width: 33px; height: 33px; border-radius: 50%; border: 3px solid #394b5b; border-top-color: #f18c41; animation: spin .9s linear infinite; margin: 0 auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .drawing-hint { position: absolute; top: 17px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 30px); padding: 9px 12px; border: 1px solid #eeb487; border-radius: 11px; background: #fff6ef; color: #813d13; box-shadow: 0 4px 20px #0002; }

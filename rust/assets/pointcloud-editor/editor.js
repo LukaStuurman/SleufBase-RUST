@@ -536,6 +536,13 @@ window.sleufbaseBeforeClose = async function () {
 window.addEventListener("beforeunload", (event) => {
   if (!state.allowClose && dirty()) { event.preventDefault(); event.returnValue = ""; }
 });
+window.sleufbaseReloadEditor = async function () {
+  try {
+    if (await saveNow()) { state.allowClose = true; location.reload(); }
+  } catch (_) {
+    // A failed save already displays its error; keep the current edits open.
+  }
+};
 
 function installUI() {
   $id("point-button").addEventListener("click", () => startDrawing("point"));
@@ -555,9 +562,6 @@ function installUI() {
   $id("retry-save-button").addEventListener("click", () => saveNow().catch(() => {}));
   $id("close-button").addEventListener("click", () => window.sleufbaseBeforeClose());
   $id("dismiss-error-button").addEventListener("click", clearError);
-  $id("reload-button").addEventListener("click", async () => {
-    try { if (await saveNow()) { state.allowClose = true; location.reload(); } } catch (_) {}
-  });
   $id("help-button").addEventListener("click", () => $id("help-dialog").showModal());
   $id("close-help-button").addEventListener("click", () => $id("help-dialog").close());
   $id("point-size").addEventListener("input", (event) => {
@@ -661,9 +665,11 @@ async function loadCloud() {
 }
 
 async function boot() {
-  installUI();
   try {
+    window.sleufbaseDiagnostics?.setStage("Editor initialiseren");
+    installUI();
     if (!window.Potree?.Viewer) throw new Error("De lokale Potree-viewer ontbreekt in deze installatie.");
+    window.sleufbaseDiagnostics?.setStage("Brongegevens ophalen");
     const response = await fetch("./api/source", { cache: "no-store" });
     if (!response.ok) throw new Error("De verbinding met de lokale SleufBase-editor is niet beschikbaar.");
     const source = await response.json();
@@ -677,6 +683,7 @@ async function boot() {
     $id("source-crs").textContent = source.crs === "rd_new" ? "RD New (EPSG:28992)"
       : source.projection || (source.crs === "unknown" ? "Niet vastgelegd in het bestand" : "Coördinatenstelsel uit het bronbestand");
     $id("coordinate-system-status").textContent = source.crs === "rd_new" ? "RD New · originele XYZ" : "Originele XYZ · broncoördinaten";
+    window.sleufbaseDiagnostics?.setStage("3D-viewer initialiseren");
     state.viewer = new Potree.Viewer($id("potree_render_area"));
     state.viewer.setEDLEnabled(true);
     state.viewer.setFOV(60);
@@ -686,20 +693,35 @@ async function boot() {
     state.viewer.measuringTool.showLabels = false;
     installDrawingCapture();
     restoreSnapshot(source.annotations);
+    window.sleufbaseDiagnostics?.setStage("Puntenwolk laden");
     await loadCloud();
     state.ready = true;
+    window.sleufbaseDiagnostics?.setStage("Editor gereed");
     $id("loading-overlay").hidden = true;
     $id("cloud-status").textContent = `${integer.format(source.point_count)} bronpunten · dynamische weergave`;
     updateButtons();
     new ResizeObserver(() => state.viewer?.renderer?.setSize($id("viewport").clientWidth, $id("viewport").clientHeight)).observe($id("viewport"));
   } catch (error) {
     state.loadFailed = true;
-    $id("loading-title").textContent = "Puntenwolk kon niet worden geopend";
-    $id("loading-message").textContent = error.message || "Er ging iets mis bij het laden van de lokale puntenwolk.";
-    $id("loading-spinner").hidden = true;
-    $id("reload-button").hidden = false;
+    if (window.sleufbaseDiagnostics) {
+      window.sleufbaseDiagnostics.record("Opstartfout", error);
+      window.sleufbaseDiagnostics.showFailure("Puntenwolk kon niet worden geopend",
+        error.message || "Er ging iets mis bij het laden van de lokale puntenwolk.");
+    } else {
+      $id("loading-title").textContent = "Puntenwolk kon niet worden geopend";
+      $id("loading-message").textContent = error.message || "Er ging iets mis bij het laden van de lokale puntenwolk.";
+      $id("loading-spinner").hidden = true;
+      $id("reload-button").hidden = false;
+    }
     updateButtons();
   }
 }
 
-boot();
+boot().catch((error) => {
+  // Also retain failures while presenting an earlier startup error.
+  if (window.sleufbaseDiagnostics) {
+    window.sleufbaseDiagnostics.record("Editor starten", error);
+    window.sleufbaseDiagnostics.showFailure("De editor kon niet starten",
+      "Het starten van de editor is onderbroken. Bekijk de technische details.");
+  }
+});

@@ -123,16 +123,27 @@ fn accept(socket: TcpListener, shared: Arc<Shared>) {
                 if !matches!(address, SocketAddr::V4(a) if *a.ip() == Ipv4Addr::LOCALHOST) {
                     continue;
                 }
+                // Winsock accept inherits the listener's nonblocking mode.
+                // Each request worker uses blocking read/write_all with timeouts;
+                // without this reset, an early read or a large JS response can
+                // fail with WouldBlock and leave the browser with a partial file.
+                if let Err(error) = stream.set_nonblocking(false) {
+                    eprintln!("Puntenwolkverbinding kon niet worden ingesteld: {error}");
+                    continue;
+                }
                 if shared.active.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
                     shared.active.fetch_sub(1, Ordering::AcqRel);
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+                    if stream.set_write_timeout(Some(Duration::from_millis(250))).is_err() { continue; }
                     let _ = error_response(&mut stream, 503, "De editor is bezig; probeer opnieuw.");
                     continue;
                 }
                 let connection = Connection(Arc::clone(&shared));
                 let _ = thread::Builder::new().name("pointcloud-request".into()).spawn(move || {
                     let shared = &connection.0;
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+                    if let Err(error) = stream.set_write_timeout(Some(Duration::from_secs(10))) {
+                        eprintln!("Puntenwolkverbinding kon geen schrijftime-out instellen: {error}");
+                        return;
+                    }
                     let result = read_request(&mut stream)
                         .and_then(|request| serve(&mut stream, request, shared));
                     if let Err(error) = result {
@@ -142,10 +153,16 @@ fn accept(socket: TcpListener, shared: Arc<Shared>) {
                     }
                 });
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::Interrupted | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::ConnectionReset) => {
+                // A cancelled browser preconnection must not stop the service.
                 thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => break,
+            Err(error) => {
+                eprintln!("De lokale puntenwolkserver is gestopt: {error}");
+                break;
+            }
         }
     }
 }
