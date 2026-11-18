@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 
 #[path="ui_pointcloud.rs"]
 mod pointcloud_ui;
+#[path="ui_pointcloud_options.rs"]
+mod pointcloud_options_ui;
 #[path="ui_file_loading.rs"]
 mod file_loading;
 #[path="ui_marxact_mapping.rs"]

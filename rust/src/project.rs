@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 pub const MAX_PROJECT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -252,7 +252,9 @@ pub fn read_project_with_cancel(path:&Path,cancel:&std::sync::atomic::AtomicBool
     drop(reader);
     // V3 stores source block/curve definitions separately from derived WCS
     // caches. V1/V2 remain readable; opening never rewrites their source bytes.
-    if matches!(project.version,1..=5) {project.version=FORMAT_VERSION;}
+    // V7 adds defaulted annotation purposes/types; older cloud objects keep
+    // their original object meaning and names without inventing trench points.
+    if matches!(project.version,1..=6) {project.version=FORMAT_VERSION;}
     if project.view.is_none(){project.view=crate::project_view::ProjectView::from_legacy(&project)?;}
     if let Some(view)=&mut project.view{view.normalize_removed_provider();}
     let mut used=0;

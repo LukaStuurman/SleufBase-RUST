@@ -36,11 +36,13 @@ Het KickTheMap-jobvenster heeft kabel- en leidingvelden **in de webpagina zelf**
 
 ## Puntenwolken van andere leveranciers
 
-Open **Puntenwolk → LAS/LAZ openen** voor een lokale scan van KickTheMap of een andere leverancier. SleufBase bereidt de scan lokaal voor en opent een eigen Potree-editor. Teken punten en polylijnen, vul naam, materiaal, diameter en omschrijving in en sluit de editor om verder te werken in het project.
+Open **Puntenwolk → LAS/LAZ openen** voor een lokale scan van KickTheMap of een andere leverancier. SleufBase bereidt de scan lokaal voor en opent een eigen Potree-editor in de stijl van de desktopapp. Plaats **Beginpunt** en **Eindpunt** op het maaiveld om de proefsleufas vast te leggen. Teken daarna punten of polylijnen voor kabels en leidingen. De dropdowns **Type** en **Materiaal** gebruiken dezelfde instellingen als de normale sleufbewerker.
 
-Met **Puntenwolken beheren → Maak proefsleuf** kies je een gemeten lijn met twee eindpunten als sleufas. Geselecteerde meetpunten en werkelijke kruisingen van kabelpolylijnen worden overgenomen in de bestaande sleufbewerker en DXF-sjabloonexport. Kaart- en proefsleufintegratie vereisen bevestigde RD-coördinaten in meters. Bij andere stelsels blijven de originele XYZ behouden en kun je getekende objecten rechtstreeks naar DXF exporteren.
+**Puntenwolken beheren** bewaart de scans ook na opnieuw starten of wisselen van project. De doorzoekbare tabel toont aantallen, de status van begin/eind en coördinaten, met **Bewerken** en **Inladen** per scan. De overzichtskaart toont bronnen met bevestigde RD-coördinaten. **Bewerken** wijzigt de bewaarde scan; alleen **Inladen** neemt nieuwe gegevens in het project over. Daarbij kies je de sleufnaam, breedte en objecten voor de doorsnede; begin/eind bepalen automatisch de as. De volledige tekening blijft daarnaast als bronlaag in het project beschikbaar. Een eerdere sleuf kun je bijwerken of als nieuwe kopie inladen. Meetpunten binnen de sleuf en werkelijke kruisingen van kabelpolylijnen komen in de gewone sleufbewerker en DXF-sjabloonexport terecht.
 
-De installer en portable ZIP bevatten de viewer en converter; import en tekenen vereisen geen online account. Bewaar het Rust-project én de originele LAS/LAZ als je het werk naar een andere computer verplaatst. De lokale weergave kan daar opnieuw worden opgebouwd.
+Kaart- en proefsleufintegratie vereisen bevestigde RD-coördinaten in meters. Bij andere stelsels blijven de originele XYZ behouden en kun je getekende objecten rechtstreeks naar DXF exporteren. Er wordt niet automatisch herprojecteerd.
+
+De installer en portable ZIP bevatten de viewer en converter; import en tekenen vereisen geen online account. Sla ingeladen sleuven op in je Rust-project en bewaar de originele LAS/LAZ als je het werk naar een andere computer verplaatst. De lokale weergave kan daar opnieuw worden opgebouwd. Puntenwolken uit oudere projecten worden bij het openen aan het overzicht toegevoegd.
 
 ## Voor ontwikkeling
 

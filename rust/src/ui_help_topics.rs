@@ -4,12 +4,13 @@ use super::Topic;
 pub(super) const TOPICS: &[Topic] = &[
     Topic {
         title: "LAS/LAZ-puntenwolken",
-        summary: "Scans van verschillende leveranciers openen en punten of lijnen tekenen.",
-        keywords: "potree las laz puntenwolk pointcloud 3d import leverancier scan meten lijn punt",
+        summary: "Scans bewaren, begin/eind en kabelobjecten tekenen en proefsleuven inladen.",
+        keywords: "potree las laz puntenwolk pointcloud 3d import leverancier scan meten lijn punt begin eind as materiaal type tabel kaart inladen",
         sections: &[
             ("Bestand openen", "Kies Puntenwolk > LAS/LAZ openen of sleep het bestand naar de app. Kies een naam en controleer het coördinatenstelsel. SleufBase bereidt de scan lokaal voor. De viewer en converter worden met het programma meegeleverd."),
-            ("Tekenen en bewaren", "Klik in de editor op Punt of Lijn en vervolgens op de zichtbare puntenwolk. Rechts klikken rondt een lijn af. Vul naam, materiaal, diameter en omschrijving in. Sluit de editor na het opslaan en bewaar daarna het Rust-project via Acties > Project opslaan."),
-            ("Proefsleuf maken", "Teken een rechte lijn met twee maaiveldpunten als sleufas. Kies in Puntenwolken beheren de actie Maak proefsleuf. Selecteer as, breedte en kabelobjecten. Punten binnen de sleuf en echte kruisingen van kabelpolylijnen worden overgenomen. Controleer hoogtes en eigenschappen in de sleufbewerker; daarna kun je de DXF-sjabloonexport gebruiken."),
+            ("Tekenen en bewaren", "Plaats eerst Beginpunt en Eindpunt op het maaiveld; zij bepalen automatisch de sleufas. Klik daarna op Punt of Lijn voor kabels en leidingen. Rechts klikken rondt een lijn af. De dropdowns Type en Materiaal gebruiken dezelfde instellingen als de gewone sleufbewerker. Een eigen naam, diameter en omschrijving blijven mogelijk. Sluit de editor wanneer de opslag is voltooid."),
+            ("Proefsleuf inladen", "Klik in Puntenwolken beheren op Inladen. Met een begin- en eindpunt is de as direct bekend. Kies naam, breedte en kabelobjecten. Bij een ontbrekend eindpunt kun je terug naar Bewerken. Een oude lijn met twee punten kan nog expliciet als as worden gekozen. Punten binnen de sleuf en echte lijnkruisingen worden overgenomen. Is de scan al ingeladen, kies dan bijwerken of een nieuwe kopie. Controleer de sleuf in de gewone bewerker en sla het projectbestand op."),
+            ("Bewaard overzicht", "Alle geïmporteerde scans blijven in een doorzoekbare tabel beschikbaar na opnieuw starten of wisselen van project. De tabel geeft aantallen, begin/eind-status en het midden van de bronbegrenzing. Bewerken wijzigt de bewaarde scan; alleen Inladen neemt de nieuwe tekening en sleuf in het huidige project over. De vinkjes bij het inladen bepalen de objecten in de doorsnede; de volledige tekening blijft daarnaast als bronlaag beschikbaar. De kaart toont scans met bevestigde RD-coördinaten. Puntenwolken uit oude projecten worden bij het openen aan het overzicht toegevoegd."),
             ("Coördinaten en andere computers", "Alle XYZ blijven in het oorspronkelijke stelsel. Alleen bevestigde RD-coördinaten in meters worden op de kaart overgenomen. Objecten naar DXF gebruikt de originele coördinaten. Bewaar het oorspronkelijke LAS/LAZ samen met het project. Bij verplaatsing kun je het bronbestand opnieuw kiezen en de weergave opnieuw opbouwen."),
         ],
     },

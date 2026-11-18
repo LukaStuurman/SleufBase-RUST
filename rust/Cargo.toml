@@ -1,12 +1,13 @@
 [package]
 name = "sleufbase-rust"
-version = "1.0.32"
+version = "1.0.33"
 edition = "2021"
 license = "MIT"
 description = "SleufBase for Windows"
 
 [dependencies]
 eframe = "0.31"
+egui_extras = { version = "0.31", default-features = false }
 rfd = "0.15"
 serde_json = { version = "1", features = ["float_roundtrip", "arbitrary_precision", "preserve_order"] }
 serde = { version = "1", features = ["derive", "rc"] }

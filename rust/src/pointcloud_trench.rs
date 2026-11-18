@@ -6,6 +6,7 @@ use crate::{
     pointcloud::{AnnotationKind, CloudCrs, PointCloudSource},
     virtual_trench::{TrenchPoint, VirtualTrench},
 };
+use std::collections::HashSet;
 
 pub struct Prepared {
     pub trench: VirtualTrench,
@@ -23,24 +24,41 @@ pub fn prepare(
     if !matches!(source.crs, CloudCrs::RdNew) {
         return Err("Bevestig eerst dat de puntenwolk RD-coördinaten (EPSG:28992) in meters bevat.".into());
     }
-    if label.trim().is_empty() || label.len() > 256 {
+    if label.trim().is_empty() || label.len() > 256 || label.chars().any(char::is_control) {
         return Err("Geef de proefsleuf een naam van maximaal 256 tekens.".into());
     }
-    let axis = source.annotations.iter().find(|a| a.id == axis_id)
-        .ok_or("Kies een getekende lijn als sleufas.")?;
-    if !matches!(axis.kind, AnnotationKind::Polyline) || axis.vertices.len() != 2 {
-        return Err("De sleufas moet een rechte lijn met precies twee meetpunten zijn.".into());
-    }
-    let mut trench = VirtualTrench::new(label.trim().into(), axis.vertices[0], axis.vertices[1], width)?;
-    trench.source_path = Some(source.source_path.clone());
-    trench.metadata = serde_json::json!({
+    let mut metadata = serde_json::json!({
         "pointcloud_source_id": source.id,
-        "pointcloud_axis_id": axis.id,
         "pointcloud_title": source.title,
         "pointcloud_projection": source.projection,
     });
+    let (start, end, start_metadata, end_metadata) = if axis_id.is_empty() {
+        let (start, end) = source.trench_endpoints()?;
+        metadata["pointcloud_axis_kind"] = "endpoints".into();
+        metadata["pointcloud_start_id"] = start.id.clone().into();
+        metadata["pointcloud_end_id"] = end.id.clone().into();
+        (start.vertices[0], end.vertices[0],
+            serde_json::json!({"pointcloud_annotation_id": start.id, "pointcloud_purpose": "trench_start"}),
+            serde_json::json!({"pointcloud_annotation_id": end.id, "pointcloud_purpose": "trench_end"}))
+    } else {
+        // Older projects can still use a deliberately selected straight line.
+        let axis = source.annotations.iter().find(|a| a.id == axis_id)
+            .ok_or("De gekozen sleufaslijn bestaat niet meer. Kies een lijn of plaats een begin- en eindpunt.")?;
+        if !axis.is_object() || axis.kind != AnnotationKind::Polyline || axis.vertices.len() != 2 {
+            return Err("De sleufas moet een rechte lijn met precies twee meetpunten zijn.".into());
+        }
+        metadata["pointcloud_axis_kind"] = "line".into();
+        metadata["pointcloud_axis_id"] = axis.id.clone().into();
+        (axis.vertices[0], axis.vertices[1], serde_json::Value::Null, serde_json::Value::Null)
+    };
+    let mut trench = VirtualTrench::new(label.trim().into(), start, end, width)?;
+    trench.source_path = Some(source.source_path.clone());
+    trench.metadata = metadata;
+    trench.start_metadata = start_metadata;
+    trench.end_metadata = end_metadata;
+    let selected: HashSet<&str> = selected_ids.iter().map(String::as_str).collect();
     let mut skipped = 0;
-    for annotation in source.annotations.iter().filter(|a| a.id != axis_id && selected_ids.contains(&a.id)) {
+    for annotation in source.annotations.iter().filter(|a| a.is_object() && a.id != axis_id && selected.contains(a.id.as_str())) {
         let mut crossings = Vec::<(Vertex, Option<f64>)>::new();
         match annotation.kind {
             AnnotationKind::Point => {
@@ -67,11 +85,17 @@ pub fn prepare(
         }
         if crossings.is_empty() { skipped += 1; }
         for (position, angle) in crossings {
-            let mut metadata = serde_json::json!({"pointcloud_annotation_id": annotation.id});
+            let mut metadata = serde_json::json!({
+                "pointcloud_annotation_id": annotation.id,
+                "pointcloud_annotation_name": annotation.name,
+                "pointcloud_object_type": annotation.object_type,
+                "pointcloud_type_key": annotation.type_key,
+            });
             if let Some(angle) = angle { metadata["crossing_angle_degrees"] = angle.into(); }
             trench.add_object(TrenchPoint {
-                role: "kabel".into(), object_name: annotation.name.clone(),
-                source_name: annotation.name.clone(), position,
+                role: if annotation.display_name().to_lowercase().contains("leiding") { "leiding" } else { "kabel" }.into(),
+                object_name: annotation.display_name().into(),
+                source_name: annotation.source_name().into(), position,
                 attributes: annotation.attributes.clone(), metadata,
             })?;
         }

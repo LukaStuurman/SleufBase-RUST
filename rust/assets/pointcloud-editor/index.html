@@ -38,10 +38,8 @@
       </div>
     </header>
     <nav class="toolbar" aria-label="Puntenwolk gereedschap">
-      <div class="tool-group" aria-label="Tekenen">
+      <div class="tool-group" aria-label="Bekijken">
         <button id="navigate-button" class="tool-button active" aria-pressed="true" disabled title="Bekijken en verplaatsen (V)"><svg><use href="#icon-hand"/></svg>Bekijken</button>
-        <button id="point-button" class="tool-button" aria-pressed="false" disabled title="Punt plaatsen (P)"><svg><use href="#icon-point"/></svg>Punt</button>
-        <button id="line-button" class="tool-button" aria-pressed="false" disabled title="Polylijn tekenen (L)"><svg><use href="#icon-line"/></svg>Polylijn</button>
       </div>
       <div class="toolbar-divider"></div>
       <div class="tool-group">
@@ -63,24 +61,60 @@
     <div id="error-banner" class="error-banner" role="alert" hidden><span id="error-message"></span><button id="retry-save-button" hidden>Opnieuw opslaan</button><button id="dismiss-error-button" class="icon-button" aria-label="Melding sluiten"><svg><use href="#icon-close"/></svg></button></div>
     <main class="editor-main">
       <aside class="sidebar" aria-label="Objecten en eigenschappen">
-        <section class="objects-section">
-          <div class="section-heading"><h2>Getekende objecten</h2><span id="object-count" class="count-badge">0</span></div>
-          <input id="object-filter" class="search-field" type="search" placeholder="Zoeken op naam…" aria-label="Objecten zoeken" disabled>
-          <div id="object-list" class="object-list" role="listbox" aria-label="Getekende objecten"></div>
-          <p id="empty-list" class="empty-state">Plaats een punt of teken een lijn op de puntenwolk. Je objecten verschijnen hier.</p>
+        <div class="workflow-tabs" role="tablist" aria-label="Stappen">
+          <button id="trench-tab" class="workflow-tab active" role="tab" aria-selected="true" aria-controls="trench-panel" tabindex="0"><span>1</span>Proefsleuf</button>
+          <button id="objects-tab" class="workflow-tab" role="tab" aria-selected="false" aria-controls="objects-panel" tabindex="-1"><span>2</span>Kabels/leidingen</button>
+        </div>
+        <section id="trench-panel" class="workflow-panel" role="tabpanel" aria-labelledby="trench-tab">
+          <h2>Begin en einde vastleggen</h2>
+          <p class="panel-intro">Plaats beide punten op het <strong>maaiveld</strong> aan de uiteinden van de proefsleuf.</p>
+          <div id="trench-start-card" class="endpoint-card">
+            <div class="endpoint-heading"><span class="endpoint-badge start">B</span><strong>Beginpunt</strong><span id="trench-start-status" class="endpoint-status">Ontbreekt</span></div>
+            <button id="trench-start-select" class="endpoint-coordinate" disabled title="Beginpunt selecteren; dubbelklik om erop in te zoomen">Nog niet geplaatst</button>
+            <button id="trench-start-button" class="tool-button endpoint-place" disabled aria-pressed="false" title="Beginpunt op maaiveld plaatsen (B)"><svg><use href="#icon-point"/></svg><span id="trench-start-action">Beginpunt plaatsen</span></button>
+          </div>
+          <div id="trench-end-card" class="endpoint-card">
+            <div class="endpoint-heading"><span class="endpoint-badge end">E</span><strong>Eindpunt</strong><span id="trench-end-status" class="endpoint-status">Ontbreekt</span></div>
+            <button id="trench-end-select" class="endpoint-coordinate" disabled title="Eindpunt selecteren; dubbelklik om erop in te zoomen">Nog niet geplaatst</button>
+            <button id="trench-end-button" class="tool-button endpoint-place" disabled aria-pressed="false" title="Eindpunt op maaiveld plaatsen (E)"><svg><use href="#icon-point"/></svg><span id="trench-end-action">Eindpunt plaatsen</span></button>
+          </div>
+          <div class="trench-length-card"><span>Sleuflengte · horizontaal</span><strong id="trench-length">—</strong><small id="trench-height">De lengte verschijnt na het plaatsen van beide punten.</small></div>
+          <p id="trench-status" class="workflow-status" role="status">Beginpunt en eindpunt ontbreken.</p>
+          <button id="to-objects-button" class="quiet-button next-step" disabled>Verder naar kabels/leidingen <span aria-hidden="true">→</span></button>
+        </section>
+        <section id="objects-panel" class="workflow-panel" role="tabpanel" aria-labelledby="objects-tab" hidden>
+          <h2>Kabels en leidingen tekenen</h2>
+          <p class="panel-intro">Kies een type en materiaal uit je project. Leg daarna een punt of een polylijn vast op de scan.</p>
+          <fieldset id="drawing-defaults" disabled>
+            <label for="new-object-type">Type</label><select id="new-object-type"><option value="">Type kiezen…</option></select>
+            <label for="new-material">Materiaal</label><select id="new-material"><option value="">Materiaal kiezen…</option></select>
+            <div class="drawing-buttons">
+              <button id="point-button" class="tool-button" aria-pressed="false" disabled title="Objectpunt plaatsen (P)"><svg><use href="#icon-point"/></svg>Punt</button>
+              <button id="line-button" class="tool-button" aria-pressed="false" disabled title="Polylijn tekenen (L)"><svg><use href="#icon-line"/></svg>Polylijn</button>
+            </div>
+          </fieldset>
+          <div class="objects-section">
+            <div class="section-heading"><h2>Getekende objecten</h2><span id="object-count" class="count-badge">0</span></div>
+            <input id="object-filter" class="search-field" type="search" placeholder="Zoeken op naam, type of materiaal…" aria-label="Objecten zoeken" disabled>
+            <div id="object-list" class="object-list" role="listbox" aria-label="Getekende kabels en leidingen"></div>
+            <p id="empty-list" class="empty-state">Plaats een punt of teken een lijn. Je kabels en leidingen verschijnen hier.</p>
+          </div>
         </section>
         <section class="properties-section">
-          <div class="section-heading"><h2>Eigenschappen</h2><button id="focus-object-button" class="icon-button small" disabled title="Naar geselecteerd object" aria-label="Naar geselecteerd object"><svg><use href="#icon-fit"/></svg></button></div>
-          <p id="no-selection" class="muted">Selecteer een object om de naam, kenmerken en coördinaten te bekijken.</p>
+          <div class="section-heading"><h2 id="properties-title">Eigenschappen</h2><button id="focus-object-button" class="icon-button small" disabled title="Naar geselecteerd object" aria-label="Naar geselecteerd object"><svg><use href="#icon-fit"/></svg></button></div>
+          <p id="no-selection" class="muted">Selecteer een beginpunt, eindpunt of getekend object om het te bewerken.</p>
           <fieldset id="properties-fields" disabled hidden>
             <label for="object-name">Naam</label><input id="object-name" type="text" maxlength="512" autocomplete="off">
-            <label for="attribute-0">Materiaal</label><input id="attribute-0" type="text" maxlength="2048" placeholder="Bijvoorbeeld PVC of koper" autocomplete="off">
-            <label for="attribute-1">Diameter</label><input id="attribute-1" type="text" maxlength="2048" placeholder="Bijvoorbeeld 110 mm" autocomplete="off">
-            <label for="attribute-2">Bundel / omschrijving</label><input id="attribute-2" type="text" maxlength="2048" placeholder="Aanvullende informatie" autocomplete="off">
+            <div id="object-type-fields">
+              <label for="object-type">Type</label><select id="object-type"><option value="">Type kiezen…</option></select>
+              <label for="attribute-0">Materiaal</label><select id="attribute-0"><option value="">Materiaal kiezen…</option></select>
+              <label for="attribute-1">Diameter</label><input id="attribute-1" type="text" maxlength="2048" placeholder="Bijvoorbeeld 110 mm" autocomplete="off">
+              <label for="attribute-2">Bundel / omschrijving</label><input id="attribute-2" type="text" maxlength="2048" placeholder="Aanvullende informatie" autocomplete="off">
+            </div>
             <div id="object-summary" class="object-summary"></div>
             <div class="coordinate-heading">Coördinaten in het bronbestand</div>
             <div class="coordinate-table-wrap"><table class="coordinate-table"><thead><tr><th>Punt</th><th>X</th><th>Y</th><th>Z</th></tr></thead><tbody id="coordinate-rows"></tbody></table></div>
-            <p class="field-hint">Sleep een oranje bol om een vertex op de puntenwolk te verplaatsen. Z is de bronhoogte.</p>
+            <p id="geometry-hint" class="field-hint">Sleep een geselecteerde bol naar een ander punt op de scan. Z is de bronhoogte.</p>
           </fieldset>
         </section>
         <details class="source-details"><summary>Over deze puntenwolk</summary><dl><dt>Bestand</dt><dd id="source-path">—</dd><dt>Bronpunten</dt><dd id="source-points">—</dd><dt>Coördinatenstelsel</dt><dd id="source-crs">—</dd></dl><p>De oorspronkelijke XYZ-coördinaten blijven behouden.</p></details>
@@ -90,13 +124,16 @@
         <div id="potree_render_area" class="render-area"></div>
         <div id="loading-overlay" class="loading-overlay" role="status"><div class="loading-card"><div id="loading-spinner" class="spinner"></div><h2 id="loading-title">Puntenwolk laden</h2><p id="loading-message">Je lokale puntenwolk wordt klaargezet.</p><details id="startup-details" class="startup-details" hidden><summary>Technische details</summary><pre id="startup-details-text"></pre></details><button id="reload-button" class="primary-button" hidden>Opnieuw openen</button></div></div>
         <div id="drawing-hint" class="drawing-hint" hidden><span id="drawing-message"></span><button id="finish-button" class="primary-button"><svg><use href="#icon-check"/></svg>Afronden</button><button id="cancel-button" class="quiet-button">Annuleren</button></div>
+        <button id="trench-start-label" class="endpoint-label start" hidden title="Beginpunt selecteren"><span>B</span>Beginpunt</button>
+        <button id="trench-end-label" class="endpoint-label end" hidden title="Eindpunt selecteren"><span>E</span>Eindpunt</button>
+        <div id="trench-axis-legend" class="trench-axis-legend" hidden><i aria-hidden="true"></i><span id="trench-axis-text"></span></div>
         <div class="canvas-hint" id="canvas-hint">Slepen: draaien <span>·</span> Rechts slepen: verplaatsen <span>·</span> Scrollen: zoomen</div>
         <div id="coordinate-readout" class="coordinate-readout" hidden></div>
       </section>
     </main>
-    <footer class="statusbar"><span id="save-status" class="save-status" role="status" aria-live="polite">Puntenwolk laden…</span><span id="cloud-status"></span><span id="coordinate-system-status">Broncoördinaten</span></footer>
+    <footer class="statusbar"><span id="save-status" class="save-status" role="status" aria-live="polite">Puntenwolk laden…</span><span id="trench-statusbar">— Beginpunt · — Eindpunt</span><span id="cloud-status"></span><span id="coordinate-system-status">Broncoördinaten</span></footer>
   </div>
-  <dialog id="help-dialog" class="help-dialog"><div class="section-heading"><h2>Tekenen op je puntenwolk</h2><button id="close-help-button" class="icon-button" aria-label="Uitleg sluiten"><svg><use href="#icon-close"/></svg></button></div><p>Kies <strong>Punt</strong> of <strong>Polylijn</strong> en klik op zichtbare punten in de scan. De getekende objecten gebruiken de oorspronkelijke XYZ-coördinaten.</p><dl class="help-keys"><dt>P / L / V</dt><dd>Punt, polylijn of bekijken</dd><dt>Enter / rechtermuisknop</dt><dd>Polylijn afronden</dd><dt>Esc</dt><dd>De actieve tekening annuleren</dd><dt>Ctrl+Z / Ctrl+Shift+Z</dt><dd>Ongedaan maken / opnieuw</dd><dt>Delete</dt><dd>Geselecteerd object verwijderen</dd><dt>F</dt><dd>Hele puntenwolk in beeld</dd><dt>Ctrl+S</dt><dd>Wijzigingen opslaan in SleufBase</dd></dl><p>Selecteer een object in de lijst of klik op een bol in het beeld. Sleep een bol naar een ander punt in de scan om de geometrie aan te passen. Dubbelklik op een object in de lijst om erop in te zoomen.</p><p>Afgeronde objecten en wijzigingen worden automatisch doorgegeven aan SleufBase. De knop <strong>Opslaan en sluiten</strong> wacht totdat die wijzigingen zijn bewaard. Sla daarna je SleufBase-project op om het projectbestand bij te werken.</p></dialog>
+  <dialog id="help-dialog" class="help-dialog"><div class="section-heading"><h2>Van puntenwolk naar proefsleuf</h2><button id="close-help-button" class="icon-button" aria-label="Uitleg sluiten"><svg><use href="#icon-close"/></svg></button></div><h3>1 · Proefsleuf</h3><p>Plaats het <strong>beginpunt</strong> en <strong>eindpunt op maaiveld</strong> aan de uiteinden van de sleuf. De stippellijn verbindt beide punten en toont de richting van je proefsleuf. De sleuflengte wordt horizontaal gemeten. Met opnieuw plaatsen verplaats je het bestaande begin- of eindpunt; Annuleren houdt de vorige positie.</p><h3>2 · Kabels/leidingen</h3><p>Kies een <strong>type</strong> en <strong>materiaal</strong> uit dezelfde projectkeuzes als in SleufBase. Kies daarna <strong>Punt</strong> of <strong>Polylijn</strong> en klik op zichtbare punten in de scan. Naam, type en overige eigenschappen kun je na het tekenen aanpassen.</p><dl class="help-keys"><dt>B / E</dt><dd>Beginpunt / eindpunt op maaiveld plaatsen</dd><dt>P / L / V</dt><dd>Objectpunt, polylijn of bekijken</dd><dt>Enter / rechtermuisknop</dt><dd>Polylijn afronden</dd><dt>Esc</dt><dd>De actieve tekening annuleren</dd><dt>Ctrl+Z / Ctrl+Shift+Z</dt><dd>Ongedaan maken / opnieuw</dd><dt>Delete</dt><dd>Geselecteerd punt of object verwijderen</dd><dt>F</dt><dd>Hele puntenwolk in beeld</dd><dt>Ctrl+S</dt><dd>Wijzigingen opslaan in SleufBase</dd></dl><p>Selecteer een punt of object in het zijpaneel of klik op een bol in het beeld. Sleep de bol naar een ander punt in de scan om de geometrie aan te passen. Kies ook bij het verplaatsen van begin- en eindpunten een punt op het maaiveld. Alle objecten behouden de oorspronkelijke XYZ-coördinaten.</p><p>Afgeronde objecten en wijzigingen worden automatisch doorgegeven aan SleufBase. <strong>Opslaan en sluiten</strong> wacht totdat die wijzigingen zijn bewaard. Sla daarna je SleufBase-project op om het projectbestand bij te werken.</p></dialog>
   <script>
     // Keep close/retry available even if the entry module never loads. Once
     // the editor starts, its own hooks flush edits before either operation.

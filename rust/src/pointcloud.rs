@@ -18,6 +18,7 @@ use std::{
 pub const MAX_SOURCES: usize = 512;
 pub const MAX_ANNOTATIONS: usize = 100_000;
 pub const MAX_ANNOTATION_VERTICES: usize = 1_000_000;
+pub const MAX_ANNOTATION_TYPE_BYTES: usize = 1024;
 const MAX_METADATA_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PROJECTION_BYTES: usize = 1024 * 1024;
 const STAMP_FILE: &str = "source-info.json";
@@ -35,6 +36,15 @@ pub enum CloudCrs {
 #[serde(rename_all = "lowercase")]
 pub enum AnnotationKind { Point, Polyline }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationPurpose {
+    #[default]
+    Object,
+    TrenchStart,
+    TrenchEnd,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Annotation {
@@ -42,12 +52,51 @@ pub struct Annotation {
     pub name: String,
     pub kind: AnnotationKind,
     pub vertices: Vec<Vertex>,
+    #[serde(default)]
+    pub purpose: AnnotationPurpose,
+    /// Human-readable utility type from the active object palette.
+    #[serde(default)]
+    pub object_type: String,
+    /// Stable rule keyword used by the native map/profile/DXF classification.
+    #[serde(default)]
+    pub type_key: String,
     /// Material, diameter, and bundle/description, matching existing objects.
     #[serde(default)]
     pub attributes: [String; 3],
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl Annotation {
+    pub fn is_object(&self) -> bool { self.purpose == AnnotationPurpose::Object }
+
+    /// Old untyped annotations retain their existing display name.
+    pub fn display_name(&self) -> &str {
+        if self.object_type.trim().is_empty() { &self.name } else { self.object_type.trim() }
+    }
+
+    /// Match the chosen type rather than incidental words in an editable name.
+    pub fn source_name(&self) -> &str {
+        if self.type_key.trim().is_empty() { self.display_name() } else { self.type_key.trim() }
+    }
+
+    /// Start/end references never enter the cable object layer or object DXF.
+    /// Callers handling a complete source validate it before deriving features.
+    pub fn to_feature(&self) -> Option<Feature> {
+        if !self.is_object() { return None; }
+        let geometry = match self.kind {
+            AnnotationKind::Point => Geometry::Point(*self.vertices.first()?),
+            AnnotationKind::Polyline if self.vertices.len() >= 2 => Geometry::Polyline(self.vertices.clone()),
+            AnnotationKind::Polyline => return None,
+        };
+        Some(Feature {
+            object_name: self.display_name().into(),
+            source_name: self.source_name().into(),
+            geometry,
+            attributes: self.attributes.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PointCloudSource {
     pub id: String,
@@ -67,7 +116,7 @@ pub struct PointCloudSource {
     pub annotations: Vec<Annotation>,
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
@@ -86,11 +135,15 @@ pub fn validate_annotations(annotations: &[Annotation]) -> Result<(), String> {
     }
     let mut ids = HashSet::new();
     let mut count = 0usize;
+    let mut trench_start = false;
+    let mut trench_end = false;
     for annotation in annotations {
         if !valid_text(&annotation.id, 128, false) || !ids.insert(&annotation.id) {
             return Err("Een puntenwolkobject heeft een ongeldig of dubbel ID".into());
         }
         if !valid_text(&annotation.name, 512, false)
+            || !valid_text(&annotation.object_type, MAX_ANNOTATION_TYPE_BYTES, true)
+            || !valid_text(&annotation.type_key, MAX_ANNOTATION_TYPE_BYTES, true)
             || annotation.attributes.iter().any(|value| !valid_text(value, 4096, true)) {
             return Err("Een puntenwolkobject heeft een ongeldige naam of eigenschap".into());
         }
@@ -101,6 +154,18 @@ pub fn validate_annotations(annotations: &[Annotation]) -> Result<(), String> {
         count = count.saturating_add(annotation.vertices.len());
         if !valid_count || count > MAX_ANNOTATION_VERTICES {
             return Err("Een punt moet één positie hebben; een lijn minstens twee. Er zijn te veel lijnpunten.".into());
+        }
+        if !annotation.is_object() {
+            if annotation.kind != AnnotationKind::Point {
+                return Err("Het begin- en eindpunt van de proefsleuf moeten losse punten zijn.".into());
+            }
+            let (present, label) = match annotation.purpose {
+                AnnotationPurpose::TrenchStart => (&mut trench_start, "beginpunt"),
+                AnnotationPurpose::TrenchEnd => (&mut trench_end, "eindpunt"),
+                AnnotationPurpose::Object => unreachable!(),
+            };
+            if *present { return Err(format!("Een puntenwolk mag maar één {label} van de proefsleuf hebben.")); }
+            *present = true;
         }
         if annotation.vertices.iter().any(|vertex|
             !vertex.x.is_finite() || !vertex.y.is_finite()
@@ -141,6 +206,20 @@ impl PointCloudSource {
         PathBuf::from(format!("pointcloud-{}.annotations.json", self.id))
     }
 
+    /// Explicit survey references define the axis in start-to-end order.
+    /// A partially drawn pair remains a valid source, but cannot create a trench.
+    pub fn trench_endpoints(&self) -> Result<(&Annotation, &Annotation), String> {
+        validate_annotations(&self.annotations)?;
+        let start = self.annotations.iter().find(|a| a.purpose == AnnotationPurpose::TrenchStart);
+        let end = self.annotations.iter().find(|a| a.purpose == AnnotationPurpose::TrenchEnd);
+        match (start, end) {
+            (Some(start), Some(end)) => Ok((start, end)),
+            (None, None) => Err("Plaats eerst een beginpunt en een eindpunt van de proefsleuf op het maaiveld.".into()),
+            (None, Some(_)) => Err("Het beginpunt van de proefsleuf ontbreekt. Plaats dit eerst op het maaiveld.".into()),
+            (Some(_), None) => Err("Het eindpunt van de proefsleuf ontbreekt. Plaats dit eerst op het maaiveld.".into()),
+        }
+    }
+
     /// Only confirmed RD objects may enter the RD map. Native coordinates and
     /// their heights remain unchanged; declaring a CRS never reprojects data.
     pub fn to_dataset(&self) -> Result<Dataset, String> {
@@ -152,15 +231,7 @@ impl PointCloudSource {
             job_id: 0,
             title: self.title.clone(),
             source_path: self.marker_path(),
-            features: self.annotations.iter().map(|annotation| Feature {
-                object_name: annotation.name.clone(),
-                source_name: annotation.name.clone(),
-                geometry: match annotation.kind {
-                    AnnotationKind::Point => Geometry::Point(annotation.vertices[0]),
-                    AnnotationKind::Polyline => Geometry::Polyline(annotation.vertices.clone()),
-                },
-                attributes: annotation.attributes.clone(),
-            }).collect(),
+            features: self.annotations.iter().filter_map(Annotation::to_feature).collect(),
         })
     }
 

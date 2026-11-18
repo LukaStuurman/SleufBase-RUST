@@ -21,6 +21,20 @@ const MAX_HEADER: usize = 32 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 
+/// Choices from the effective project settings, shared with the native editor.
+#[derive(Clone, Debug, Serialize)]
+pub struct TypeChoice {
+    pub label: String,
+    pub key: String,
+    pub color: [u8; 3],
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct EditorOptions {
+    pub types: Vec<TypeChoice>,
+    pub materials: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Update {
@@ -43,6 +57,7 @@ struct Shared {
     vendor: PathBuf,
     cloud: PathBuf,
     recovery: PathBuf,
+    options: EditorOptions,
     state: Mutex<State>,
     stop: AtomicBool,
     active: AtomicUsize,
@@ -58,11 +73,16 @@ pub struct Session {
 
 impl Session {
     pub fn start(source: PointCloudSource) -> Result<Self, String> {
+        Self::start_with_options(source, EditorOptions::default())
+    }
+
+    pub fn start_with_options(source: PointCloudSource, options: EditorOptions) -> Result<Self, String> {
         source.validate()?;
         let cloud = source.validate_cache()?.canonicalize().map_err(|e| e.to_string())?;
         let vendor = crate::pointcloud::runtime_directory()?
             .canonicalize()
             .map_err(|e| e.to_string())?;
+        crate::pointcloud_catalog::remember_if_missing(&source)?;
         let recovery = cloud.parent().ok_or("Puntenwolkmap is ongeldig")?
             .join("annotations-recovery.json");
         let socket = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -83,6 +103,7 @@ impl Session {
             vendor,
             cloud,
             recovery,
+            options,
             state: Mutex::new(State { source, revision: 0, pending: None, last_save_hash: None }),
             stop: AtomicBool::new(false),
             active: AtomicUsize::new(0),
@@ -294,6 +315,14 @@ fn serve(stream: &mut TcpStream, request: Request, shared: &Shared) -> HttpResul
         crate::storage::atomic_write(&shared.recovery, true, |file| {
             serde_json::to_writer(file, &update).map_err(|e| e.to_string())
         }).map_err(|e| failure(500, format!("Tekenobjecten konden niet worden opgeslagen: {e}")))?;
+        // A successful acknowledgement means the drawing also survives a
+        // restart or switching projects, even if the main UI has not polled it.
+        crate::pointcloud_catalog::save_if_current(&candidate, Some(&state.source))
+            .map_err(|e| if e == crate::pointcloud_catalog::CONFLICT_MESSAGE {
+                failure(409, e)
+            } else {
+                failure(500, format!("De puntenwolk kon niet blijvend worden opgeslagen: {e}"))
+            })?;
         state.source = candidate;
         state.revision = revision;
         state.last_save_hash = Some(hash);
@@ -304,6 +333,10 @@ fn serve(stream: &mut TcpStream, request: Request, shared: &Shared) -> HttpResul
         return bytes_response(stream, 200, "application/json; charset=utf-8", &body, false);
     }
     let head = request.method == "HEAD";
+    if relative == "api/options" {
+        let body = serde_json::to_vec(&shared.options).map_err(|e| failure(500, e.to_string()))?;
+        return bytes_response(stream, 200, "application/json; charset=utf-8", &body, head);
+    }
     if relative == "api/source" {
         let state = shared.state.lock().map_err(|_| failure(500, "Editorgegevens zijn niet beschikbaar"))?;
         let mut source = serde_json::to_value(&state.source).map_err(|e| failure(500, e.to_string()))?;
