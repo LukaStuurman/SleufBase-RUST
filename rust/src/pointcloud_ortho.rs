@@ -10,8 +10,10 @@ use tiff::{encoder::{TiffEncoder,colortype::RGBA8},tags::Tag};
 const METADATA_LIMIT:u64=4*1024*1024;
 const HIERARCHY_LIMIT:u64=256*1024*1024;
 const NODE_LIMIT:usize=1_000_000;
-const MAX_CELLS:usize=8_388_608;
-const MAX_VIEW_SIDE:u32=2800;
+// 8K longest side, with a bounded 36 megapixel allocation.
+const MAX_CELLS:usize=36_000_000;
+const MAX_VIEW_SIDE:u32=8192;
+const MAX_SAMPLE_POINTS:u64=80_000_000;
 
 #[derive(Deserialize)]
 struct Metadata {
@@ -49,27 +51,46 @@ impl Layout {
 struct OrientationStamp {
     algorithm:u32,
     fingerprint:String,
+    title:String,
     endpoints:Option<[[f64;2];2]>,
 }
 fn stamp(source:&PointCloudSource)->OrientationStamp {
     OrientationStamp{
-        algorithm:2,
+        algorithm:3,
         fingerprint:source.source_fingerprint.clone(),
+        title:source.title.clone(),
         endpoints:source.trench_endpoints().ok().map(|(a,b)|[
             [a.vertices[0].x,a.vertices[0].y],
             [b.vertices[0].x,b.vertices[0].y],
         ]),
     }
 }
-pub fn path_for(id:&str)->Result<PathBuf,String> {
-    Ok(pointcloud::cloud_directory(id)?.join("orthoview.tif"))
+/// Name the GeoTIFF after its scan, never a generic "orthoview" filename.
+/// Cloud-specific cache folders keep equal titles separate.
+fn photo_stem(title:&str)->String {
+    let mut safe=String::new();
+    for character in title.trim().chars() {
+        let character=if character.is_control() || r#"\/:*?"<>|"#.contains(character) {'_'} else {character};
+        if safe.len()+character.len_utf8()>170 {break;}
+        safe.push(character);
+    }
+    let safe=safe.trim_matches([' ','.']);
+    if safe.is_empty() {return "Puntenwolk".into();}
+    let reserved=["CON","PRN","AUX","NUL","COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"];
+    if reserved.iter().any(|value|safe.eq_ignore_ascii_case(value)) {
+        format!("Puntenwolk-{safe}")
+    }else{safe.into()}
+}
+pub fn path_for(source:&PointCloudSource)->Result<PathBuf,String> {
+    Ok(pointcloud::cloud_directory(&source.id)?.join(format!("{}.tif",photo_stem(&source.title))))
 }
 fn stamp_path(cloud:&Path)->PathBuf {cloud.join("orthoview-orientation.json")}
 /// An old north-up image must be regenerated after the user defines or moves
 /// the trench start/end. Never register it as a current aligned background.
 pub fn is_current(source:&PointCloudSource)->bool {
     let Ok(path)=pointcloud::cloud_directory(&source.id) else{return false;};
-    let file=path.join("orthoview.tif");
+    let Ok(file)=path_for(source) else{return false;};
     let sidecar=stamp_path(&path);
     if !file.is_file(){return false;}
     let Ok(reader)=File::open(sidecar) else{return false;};
@@ -113,11 +134,18 @@ fn bounds(source:&PointCloudSource)->Result<Layout,String>{
     let span=(max_u-min_u).max(max_v-min_v).max(0.05);
     let padding=(span*0.008).clamp(0.05,2.);
     min_u-=padding;max_u+=padding;min_v-=padding;max_v+=padding;
-    let pixel=((max_u-min_u).max(max_v-min_v)/f64::from(MAX_VIEW_SIDE)).max(0.008);
-    let width=((max_u-min_u)/pixel).ceil().max(2.) as u32;
-    let height=((max_v-min_v)/pixel).ceil().max(2.) as u32;
-    let cells=(width as usize).checked_mul(height as usize).ok_or("GeoTIFF-formaat is te groot")?;
-    if cells==0 || cells>MAX_CELLS {return Err("GeoTIFF-uitsnede is te groot".into());}
+    let span_u=max_u-min_u;
+    let span_v=max_v-min_v;
+    // Fit both the 8K side limit and 36 MP peak-memory budget.
+    let mut pixel=(span_u.max(span_v)/f64::from(MAX_VIEW_SIDE))
+        .max((span_u*span_v/MAX_CELLS as f64).sqrt()).max(0.002);
+    let (width,height)=loop {
+        let width=(span_u/pixel).ceil().max(2.) as u32;
+        let height=(span_v/pixel).ceil().max(2.) as u32;
+        if u64::from(width)*u64::from(height)<=MAX_CELLS as u64
+            && width<=MAX_VIEW_SIDE && height<=MAX_VIEW_SIDE {break (width,height);}
+        pixel*=1.002;
+    };
     let origin=[
         center[0]+col[0]*min_u+row[0]*min_v,
         center[1]+col[1]*min_u+row[1]*min_v,
@@ -166,7 +194,7 @@ fn read_points(cloud:&Path,source:&PointCloudSource,layout:&Layout,
     let mut seen=HashSet::<(u64,u64)>::new();
     let mut visited=0usize;
     let mut plotted=0usize;
-    let sample_every=(source.point_count/25_000_000).max(1);
+    let sample_every=(source.point_count/MAX_SAMPLE_POINTS).max(1);
     let mut sampled=0_u64;
     let mut data=vec![0_u8;stride*4096];
     while let Some((chunk_offset,chunk_size))=queued.pop_front() {
@@ -277,8 +305,11 @@ pub fn generate(cloud:&Path,source:&PointCloudSource,cancel:&AtomicBool)->Result
     if read_points(cloud,source,&layout,&mut colors,&mut heights,cancel)?==0 {
         return Err("Geen scanpunten binnen de GeoTIFF-uitsnede gevonden".into());
     }
+    // Height scores are unnecessary after assigning the source colors.
+    // Release their memory before large-image dilation and TIFF encoding.
+    drop(heights);
     interpolate(&mut colors,layout.width as usize,layout.height as usize,cancel)?;
-    let output=cloud.join("orthoview.tif");
+    let output=path_for(source)?;
     let mut staged=tempfile::NamedTempFile::new_in(cloud).map_err(|e|e.to_string())?;
     {
         let mut encoder=TiffEncoder::new(staged.as_file_mut()).map_err(|e|e.to_string())?;
@@ -292,7 +323,7 @@ pub fn generate(cloud:&Path,source:&PointCloudSource,cancel:&AtomicBool)->Result
         image.encoder().write_tag(Tag::GeoKeyDirectoryTag,
             &[1_u16,1,0,3,1024,0,1,1,1025,0,1,1,3072,0,1,28992][..]).map_err(|e|e.to_string())?;
         image.encoder().write_tag(Tag::ExtraSamples,&[2_u16][..]).map_err(|e|e.to_string())?;
-        let flat=colors.iter().flat_map(|px|px.iter().copied()).collect::<Vec<_>>();
+        let flat=colors.into_iter().flatten().collect::<Vec<_>>();
         image.write_data(&flat).map_err(|e|format!("GeoTIFF schrijven mislukt: {e}"))?;
     }
     staged.as_file().sync_all().map_err(|e|e.to_string())?;

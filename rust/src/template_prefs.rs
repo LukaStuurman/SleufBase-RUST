@@ -236,6 +236,13 @@ impl TemplatePreferences {
                     .map(|(i,_)|i).collect::<Vec<_>>();
                 next.raster=if found.len()==1 {Some(found[0])} else {None};
             } else {next.raster=None;}
+            // A former generic cloud orthoview path must not suppress the new
+            // image named after its pointcloud source.
+            if let Source::Virtual(index)=next.source {
+                if trenches[index].metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str).is_some(){
+                    next.raster=crate::template_match::for_trench(&trenches[index],rasters).raster;
+                }
+            }
             options.choices.push(next);
         }
         for (i,item) in candidates.into_iter().enumerate() {

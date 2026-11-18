@@ -153,7 +153,12 @@ pub fn suggest(datasets: &[Dataset], rasters: &[GeoTiffInfo], trenches: &[Virtua
     // remain available alongside jobs and virtual trenches.
     let mut represented=choices.iter().filter_map(|c|c.raster).map(|i|raster_identity(&rasters[i])).collect::<HashSet<_>>();
     for (index,raster) in rasters.iter().enumerate(){
-        if represented.insert(raster_identity(raster)){choices.push(raster_choice(index,raster));}
+        let linked_cloud=raster.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)
+            .is_some_and(|id|trenches.iter().any(|trench|
+                trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)==Some(id)));
+        if !linked_cloud && represented.insert(raster_identity(raster)) {
+            choices.push(raster_choice(index,raster));
+        }
     }
     choices
 }
@@ -165,12 +170,20 @@ pub fn raster_choice(index:usize,raster:&GeoTiffInfo)->Choice{Choice{
 }}
 pub fn suggest_rasters(rasters:&[GeoTiffInfo],trenches:&[VirtualTrench])->Vec<Choice>{
     let mut choices=Vec::with_capacity(rasters.len()+trenches.len());
-    for (index,raster) in rasters.iter().enumerate(){choices.push(Choice{
-        source:Source::Raster(index),raster:Some(index),include:true,
-        title:raster.path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),label:None,legacy_slot:None,
-        profile:true,manual_scale:crate::template_scale::coerce(raster.metadata.get(crate::template_scale::METADATA_KEY)),reverse:false,comments:String::new(),photos:Vec::new(),
-    });}
+    for (index,raster) in rasters.iter().enumerate(){
+        let linked_cloud=raster.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)
+            .is_some_and(|id|trenches.iter().any(|trench|
+                trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)==Some(id)));
+        if !linked_cloud {choices.push(Choice{
+            source:Source::Raster(index),raster:Some(index),include:true,
+            title:raster.path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),label:None,legacy_slot:None,
+            profile:true,manual_scale:crate::template_scale::coerce(raster.metadata.get(crate::template_scale::METADATA_KEY)),reverse:false,comments:String::new(),photos:Vec::new(),
+        });}
+    }
     for mut choice in suggest(&[],&[],trenches){
+        if let Source::Virtual(i)=choice.source {
+            choice.raster=crate::template_match::for_trench(&trenches[i],rasters).raster;
+        }
         let Source::Virtual(index)=choice.source else{unreachable!()};
         let trench=&trenches[index];let path=PathBuf::from(format!("{}.tif",trench.label));
         let number=trench.metadata.get("template_export_ps_number").and_then(|v|crate::python_values::string(Some(v)).ok()).and_then(|v|crate::template_order::number(&v)).unwrap_or_else(||crate::template_order::default_number(&path,choices.len()+1));
@@ -327,9 +340,28 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         crate::template_photo::validate(&choice.photos)?;
         if choice.manual_scale.is_some_and(|s|!(1..=1_000_000).contains(&s)){return Err("Ongeldige handmatige profielschaal".into());}
         if !seen.insert(choice.source) { return Err("Dubbele proefsleufselectie".into()); }
-        let raster = choice.raster.or_else(||match choice.source{Source::Raster(i)=>Some(i),_=>None}).map(|index|
+        // Always use the source-owned orthophoto for a cloud trench, even
+        // when an old saved template preference still points at orthoview.tif.
+        let linked_cloud=match choice.source {
+            Source::Virtual(i)=>trenches.get(i)
+                .and_then(|t|t.metadata.get("pointcloud_source_id"))
+                .and_then(serde_json::Value::as_str).is_some(),
+            _=>false,
+        };
+        let matching_ortho=if linked_cloud {
+            if let Source::Virtual(i)=choice.source {
+                crate::template_match::for_trench(&trenches[i],rasters).raster
+            } else {None}
+        } else {None};
+        let selected_raster=if linked_cloud {
+            matching_ortho
+        }else{choice.raster.or_else(||match choice.source{Source::Raster(i)=>Some(i),_=>None})};
+        let raster=selected_raster.map(|index|
             rasters.get(index).ok_or("GeoTIFF-verwijzing buiten de projectlijst")
         ).transpose()?;
+        if linked_cloud && raster.is_none(){
+            return Err(format!("Voor '{}' is de orthofoto van de puntenwolk nog niet beschikbaar. Laad de puntenwolk opnieuw in en open de DXF-sjabloonexport nadat de GeoTIFF klaar is.",choice.title));
+        }
         if raster.is_none() && matches!(choice.source,Source::Job(_)|Source::Raster(_)){
             return Err(format!("Voor '{}' ontbreekt een GeoTIFF; koppel deze in het exportvenster",choice.title));
         }
@@ -352,6 +384,8 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
         // synthetic TIFF pane; it does not need an unrelated KickTheMap job.
         let virtual_source=match (choice.source,raster){
             (Source::Virtual(_),None)=>{
+                // A manually drawn virtual trench still uses its synthetic
+                // detail image. Cloud trenches must only use their orthophoto.
                 let trench=enriched_trench.as_ref().ok_or("Virtuele sleuf niet meer beschikbaar")?;
                 Some(crate::virtual_raster::Source{trench:trench.clone(),quality:4.,reverse:choice.reverse})
             },

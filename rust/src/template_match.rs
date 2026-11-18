@@ -112,7 +112,13 @@ pub fn for_trench(trench:&VirtualTrench, rasters:&[GeoTiffInfo])->Suggestion {
         let matching=rasters.iter().enumerate().filter(|(_,r)|r.epsg==Some(28992)
             && r.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)==Some(id))
             .map(|(i,_)|i).collect::<Vec<_>>();
-        if matching.len()==1 {return Suggestion{raster:Some(matching[0]),reason:MatchKind::JobId};}
+        // Never associate a nearby KickTheMap TIFF with a scanned trench,
+        // nor silently choose an unrelated raster as an orthophoto.
+        return if matching.len()==1 {
+            Suggestion{raster:Some(matching[0]),reason:MatchKind::JobId}
+        } else {
+            Suggestion{raster:None,reason:if matching.is_empty(){MatchKind::Missing}else{MatchKind::Ambiguous}}
+        };
     }
     choose(trench.job_id,&sample_trench(trench),rasters)
 }

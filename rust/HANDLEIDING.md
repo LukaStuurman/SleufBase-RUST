@@ -546,3 +546,10 @@ Bij LAS/LAZ-bovenaanzichten wordt de GeoTIFF-richting bepaald door de lijn van *
 ### Potree-muisbediening
 
 Met **links slepen** of **midden slepen** verschuif je de puntenwolk, met **rechts slepen** draai je het 3D-beeld. Een gewone linksklik plaatst nog steeds een meetpunt wanneer een tekengereedschap actief is.
+
+
+### Orthofoto als enige puntenwolkafbeelding in DXF
+
+Bij een puntenwolk maakt SleufBase na het tekenen van **Beginpunt** en **Eindpunt** een eigen gegeorefereerde **orthofoto met de naam van de puntenwolk**. De foto heeft maximaal 8.192 pixels langs de langste zijde en maximaal 36 megapixels. Een echte RGB-scan levert de kleuren; anders gebruikt SleufBase intensiteit of hoogte. De Potree-meetpunten en -lijnen zitten niet in de achtergrondfoto, maar worden als afzonderlijke objecten in de export getekend.
+
+De DXF-sjabloonexport gebruikt voor een LAS/LAZ-proefsleuf **alleen deze orthofoto** als detailafbeelding, niet ook een kunstmatige virtuele sleufafbeelding. Wacht op het gereedmelden van de orthofoto voordat je exporteert. Bij handmatig getekende virtuele proefsleuven blijft de bestaande afbeeldingsmethode werken. Bij het importeren van meerdere LAS/LAZ-scans wordt nog niet voor iedere scan meteen een zware orthofoto opgebouwd; dat gebeurt bij het inladen van de uitgewerkte proefsleuf.

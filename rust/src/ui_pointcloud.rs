@@ -751,7 +751,7 @@ impl SleufBaseApp {
     /// placed trench. The original LAS/LAZ is never modified.
     fn register_cloud_geotiff(&mut self, source:&PointCloudSource)->Result<bool,String> {
         if source.crs!=CloudCrs::RdNew {return Ok(false);}
-        let path=sleufbase_rust::pointcloud_ortho::path_for(&source.id)?;
+        let path=sleufbase_rust::pointcloud_ortho::path_for(source)?;
         if !sleufbase_rust::pointcloud_ortho::is_current(source) {return Ok(false);}
         let mut raster=sleufbase_rust::geotiff::read_geotiff_metadata(&path)?;
         if raster.epsg!=Some(28992) {return Err("GeoTIFF heeft geen RD New-coördinaten.".into());}
@@ -760,11 +760,26 @@ impl SleufBaseApp {
             "pointcloud_title":source.title,
             "pointcloud_generated_orthoview":true
         });
-        if let Some(index)=self.geotiffs.iter().position(|previous|previous.path==path) {
-            // Refresh affine placement as well as pixels if begin/end moved.
-            // Merely keeping the old cached texture would display the old view.
+        // Keep a single physical GeoTIFF per pointcloud source, even if an
+        // older project still refers to the generic "orthoview.tif".
+        let same_cloud=|candidate:&sleufbase_rust::geotiff::GeoTiffInfo| {
+            candidate.path==path || candidate.metadata.get("pointcloud_source_id")
+                .and_then(serde_json::Value::as_str)==Some(source.id.as_str())
+        };
+        if let Some(index)=self.geotiffs.iter().position(same_cloud) {
+            let previous_path=self.geotiffs[index].path.clone();
             self.geotiffs[index]=raster;
             if let Some(texture)=self.raster_textures.get_mut(index) {*texture=None;}
+            if self.raster_points.selected.as_ref()==Some(&previous_path) {
+                self.raster_points.selected=Some(path.clone());
+            }
+            // A prior save could contain two physical entries for one scan.
+            for other in (0..self.geotiffs.len()).rev() {
+                if other!=index && same_cloud(&self.geotiffs[other]) {
+                    self.geotiffs.remove(other);
+                    if other<self.raster_textures.len(){self.raster_textures.remove(other);}
+                }
+            }
         } else {
             self.geotiffs.push(raster);
             self.raster_textures.push(None);

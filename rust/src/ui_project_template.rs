@@ -149,7 +149,18 @@ pub(super) fn validate_export_sources(options:&Options,jobs:&[Dataset],rasters:&
             },
             Source::Raster(_)=>{},Source::Empty(_)=>unreachable!(),
         }
-        let raster_index=choice.raster.or_else(||if let Source::Raster(index)=choice.source{Some(index)}else{None});
+        let cloud_trench=match choice.source {
+            Source::Virtual(index)=>trenches.get(index).filter(|trench|
+                trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str).is_some()),
+            _=>None,
+        };
+        let raster_index=if let Some(trench)=cloud_trench {
+            let image=sleufbase_rust::template_match::for_trench(trench,rasters).raster;
+            if image.is_none() {
+                return Err(format!("{name}: de orthofoto van de puntenwolk is nog niet klaar. Laad de scan in, laat de GeoTIFF afronden en open de DXF-export opnieuw."));
+            }
+            image
+        }else{choice.raster.or_else(||if let Source::Raster(index)=choice.source{Some(index)}else{None})};
         if let Some(index)=raster_index{
             let raster=rasters.get(index).ok_or_else(||format!("{name}: de GeoTIFF-koppeling ontbreekt. Kies de bron opnieuw."))?;
             if !raster.path.is_file(){return Err(format!("{name}: GeoTIFF ontbreekt: {}",raster.path.display()));}
