@@ -1,16 +1,17 @@
-# SleufBase Rust 1.0.38 — orthofoto van puntenwolken in zeer hoge resolutie
+# SleufBase Rust 1.0.39 — één puntenwolkproefsleuf op de kaart
 
-## Nieuw en verbeterd
+## Nieuwe werking voor ingeladen LAS/LAZ
 
-- **Geen kunstmatige virtuele proefsleufafbeelding voor LAS/LAZ-sleuven.** In de DXF-sjabloonexport gebruikt een puntenwolkproefsleuf uitsluitend de eigen gegeorefereerde orthofoto. De extra rastervermelding voor dezelfde scan verdwijnt uit de standaardlijst. Gewone handmatig getekende virtuele proefsleuven houden hun bestaande rasterweergave.
-- **Eigen bestandsnaam:** de orthofoto wordt opgeslagen als `<naam-van-de-puntenwolk>.tif` in de map van de betreffende scan. Verboden Windows-tekens worden veilig vervangen. Bij hernoemen wordt de nieuwe foto met de nieuwe naam opnieuw aangemaakt. De naam is herkenbaar in de GeoTIFF-lijst en DXF-export.
-- **Veel hogere resolutie:** het bovenaanzicht wordt maximaal **8.192 pixels** langs de langste zijde, met een geheugenveilig plafond van **36 megapixels**. Vierkante scans worden proportioneel geresampled om onder die limiet te blijven. De rastercellen worden op basis van RGB, intensiteit of hoogte van de echte scanpunten gevormd; getekende Potree-punten, lijnmarkeringen en labels zitten niet in deze orthofoto.
-- **Oriëntatie op het begin- en eindpunt:** de volledige RD New (EPSG:28992) affine matrix blijft in de GeoTIFF opgeslagen. Een gewijzigd begin-/eindpunt of een nieuwe titel zorgt dat de orthofoto opnieuw wordt opgebouwd.
-- **Bewuste verwerking:** bij het aanvankelijk importeren van meerdere scans wordt nog geen zware 8K-orthofoto gemaakt. Zodra begin en eind zijn getekend en je de sleuf inlaadt, wordt het raster in de achtergrond voorbereid en daarna als echte kaartlaag toegevoegd. De projectgegevens en originele LAS/LAZ worden niet aangepast of verwijderd.
-- **Automatische bronkoppeling:** bestaande DXF-sjablooninstellingen met het oude `orthoview.tif` worden opnieuw aan de juiste scanorthofoto gekoppeld. Als die afbeelding nog niet klaar is, krijg je een duidelijke melding in plaats van de kunstmatige virtuele afbeelding.
+- **Geen dubbele visualizer:** een puntenwolkproefsleuf wordt niet langer als zwarte virtuele rechthoek met gekleurde, dwarsgetekende markeringen boven op de orthofoto getekend.
+- **Eén vermelding links:** het menu **Proefsleuven** toont de gekoppelde orthofoto als één laag. De afgeleide virtuele proefsleuf is uitsluitend nog het interne meetmodel voor kabels, dieptes, dwarsprofielen en DXF-export; zij verschijnt niet als tweede bestand.
+- **Direct op de kaart:** de knop **Inladen** neemt de getekende begin-/eindpunten en kabel-/leidinggegevens uit de Potree-editor over. Zodra de orthofoto is gemaakt, wordt die automatisch als echte RD-kaartlaag geselecteerd. De aparte gewone virtuele sleufeditor wordt niet geopend.
+- **Foto direct zichtbaar:** het verschijnen of opnieuw opbouwen van een scanorthofoto ververst zowel de basisraster-preview als de cameragebonden detailweergave. Eerder gedraaide of oudere textures worden niet hergebruikt.
+- **Oudere projecten:** een eerder opgeslagen selectie van de virtuele LAS-sleuf verwijst bij het openen naar de gekoppelde orthofoto.
+- **Eén logische verwijderactie:** verwijder je een orthofoto van een LAS/LAZ-sleuf uit de projectlijst, dan worden ook de bijbehorende afgeleide meetmodellen en in-project scanoverlays verwijderd. De oorspronkelijke LAS/LAZ en de persoonlijke puntenwolkcatalogus blijven bewaard.
+- **Overige sleuven ongewijzigd:** handmatig gemaakte virtuele proefsleuven en MarXact-sleuven blijven hun bestaande weergave en bediening gebruiken.
 
-De eerdere correcties voor oorspronkelijke 3D-polylijnen, directe inlaadfunctie, bulkimport, Potree-kleuren en muisknoppen blijven behouden.
+De verbeteringen uit 1.0.38 blijven beschikbaar, waaronder de scanorthofoto met de naam van de puntenwolk, maximaal 8.192 pixels langs de langste zijde en 36 megapixels, de juiste RD-oriëntatie en behoud van originele 3D-polylijnen in de DXF.
 
 ## Controle
 
-De Windows-releasebuild en controles van installer en portable ZIP vinden plaats via GitHub Actions. De volledige geautomatiseerde tests blijven volgens afspraak overgeslagen. De hoge-resolutieweergave is nog niet interactief met jouw Windows-scanbestand gecontroleerd.
+De normale Windows-compiler, installatiepakketcontrole en releaseworkflow blijven actief. Volledige geautomatiseerde tests zijn voor deze release op verzoek overgeslagen. De kaartbediening met het echte scanbestand is niet interactief op de Windows-computer getest.

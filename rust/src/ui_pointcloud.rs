@@ -727,6 +727,8 @@ impl SleufBaseApp {
         else { self.point_clouds.push(form.source.clone()); }
         self.sync_pointcloud_datasets();
         self.trench_markers = self.virtual_trenches.iter().map(sleufbase_rust::cross_section::markers).collect();
+        // Keep the source trench for cross-sections/DXF but never select its
+        // synthetic virtual outline: the orthophoto is the one map layer.
         self.refresh_virtual_references(); self.virtual_map.selected = Some(index); self.dirty = true;
         // The cloud editor already supplied a complete measured trench. Centre
         // the real map and leave the separate virtual editor closed.
@@ -762,6 +764,10 @@ impl SleufBaseApp {
         });
         // Keep a single physical GeoTIFF per pointcloud source, even if an
         // older project still refers to the generic "orthoview.tif".
+        let old_virtual=self.virtual_map.selected;
+        let old_raster=self.raster_points.selected.clone();
+        let cloud_selected=old_virtual.and_then(|i|self.virtual_trenches.get(i))
+            .is_some_and(|trench|same_source(trench,&source.id));
         let same_cloud=|candidate:&sleufbase_rust::geotiff::GeoTiffInfo| {
             candidate.path==path || candidate.metadata.get("pointcloud_source_id")
                 .and_then(serde_json::Value::as_str)==Some(source.id.as_str())
@@ -783,6 +789,17 @@ impl SleufBaseApp {
         } else {
             self.geotiffs.push(raster);
             self.raster_textures.push(None);
+        }
+        // Display the orthophoto immediately after generation. Reset both
+        // preview pipelines, otherwise a new/updated TIFF is listed but the
+        // map keeps showing its previous or empty cached texture.
+        self.navigation.raster_crops.clear();
+        if let Some(loader)=&mut self.viewport_loader {loader.update(&[]);}
+        self.schedule_raster_previews();
+        if cloud_selected || old_raster.as_ref()==Some(&path) {
+            self.virtual_map.selected=None;
+            self.raster_points.selected=Some(path);
+            self.update_view_selection(old_virtual,old_raster.as_deref());
         }
         self.dirty=true;
         Ok(true)

@@ -657,8 +657,12 @@ impl SleufBaseApp {
     }
 
     fn trench_rows(&self) -> Vec<TrenchRow> {
+        // A LAS/LAZ scan contributes one visible orthophoto entry; its
+        // virtual trench remains an internal profile/DXF data source.
         self.geotiffs.iter().map(|r| TrenchRow::Raster(r.path.clone()))
-            .chain(self.virtual_trenches.iter().map(|t| TrenchRow::Virtual(t.job_id, t.label.clone())))
+            .chain(self.virtual_trenches.iter()
+                .filter(|t| !layer_visibility_ui::cloud_trench(t))
+                .map(|t| TrenchRow::Virtual(t.job_id, t.label.clone())))
             .collect()
     }
 
@@ -672,16 +676,20 @@ impl SleufBaseApp {
         let rows = self.trench_rows();
         let preferred = self.shell.trench_selection.is_current(self.project_generation, &rows)
             .then(|| self.shell.trench_selection.active()).flatten();
-        let active = if let Some(index) = self.virtual_map.selected.filter(|&i| i < self.virtual_trenches.len()) {
-            Some(self.geotiffs.len() + index)
-        } else if let Some(path) = self.raster_points.selected.as_ref() {
+        let active_virtual = self.virtual_map.selected.and_then(|index| {
+            self.virtual_trenches.iter().enumerate()
+                .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench))
+                .position(|(actual, _)| actual == index)
+                .map(|position| self.geotiffs.len() + position)
+        });
+        let active_raster = self.raster_points.selected.as_ref().and_then(|path|
             preferred.filter(|&i| self.geotiffs.get(i).is_some_and(|r| &r.path == path))
                 .or_else(|| {
                     let mut matches = self.geotiffs.iter().enumerate().filter(|(_, r)| &r.path == path);
                     let first = matches.next().map(|(i, _)| i);
                     if matches.next().is_none() { first } else { None }
-                })
-        } else { None };
+                }));
+        let active = active_virtual.or(active_raster);
         self.shell.trench_selection.sync(self.project_generation, rows, active);
     }
 
@@ -706,8 +714,10 @@ impl SleufBaseApp {
         let old_raster = self.raster_points.selected.clone();
         let old_point_mode = self.raster_points.mode;
         let active = self.shell.trench_selection.active();
-        let selected_virtual = active.and_then(|i| i.checked_sub(self.geotiffs.len()))
-            .filter(|&i| i < self.virtual_trenches.len());
+        let selected_virtual = active.and_then(|row| row.checked_sub(self.geotiffs.len()))
+            .and_then(|position| self.virtual_trenches.iter().enumerate()
+                .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench))
+                .nth(position).map(|(index, _)| index));
         let selected_raster = active.and_then(|i| self.geotiffs.get(i)).map(|r| r.path.clone());
         // Selecting an already active row must keep its prepared point markers.
         if selected_virtual == old_virtual && selected_raster == old_raster { return; }
@@ -787,8 +797,9 @@ impl SleufBaseApp {
                                 response.on_hover_text(error);
                             }
                         }
-                        for (i, trench) in self.virtual_trenches.iter().enumerate() {
-                            let row = self.geotiffs.len() + i;
+                        for (position, (i, trench)) in self.virtual_trenches.iter().enumerate()
+                            .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench)).enumerate() {
+                            let row = self.geotiffs.len() + position;
                             let response = ui.push_id(("virtual-row", i), |ui| {
                                 ui.horizontal(|ui| {
                                     let mut visible = layer_visibility_ui::trench_is_visible(trench);
@@ -843,8 +854,10 @@ impl SleufBaseApp {
             response.context_menu(|ui| {
                 if row < self.geotiffs.len() {
                     self.show_raster_trench_context(ui, row);
-                } else if row - self.geotiffs.len() < self.virtual_trenches.len() {
-                    self.show_virtual_tiff_context(ui, row - self.geotiffs.len());
+                } else if let Some((index, _)) = self.virtual_trenches.iter().enumerate()
+                    .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench))
+                    .nth(row - self.geotiffs.len()) {
+                    self.show_virtual_tiff_context(ui, index);
                 }
                 ui.separator();
                 if ui.button(format!("Verwijder selectie ({})", self.shell.trench_selection.len())).clicked() {
@@ -1052,8 +1065,32 @@ impl SleufBaseApp {
         let selected = self.shell.trench_selection.indices();
         if selected.is_empty() { return; }
         let raster_count = self.geotiffs.len();
-        let remove_virtual = selected.iter().any(|&i| i >= raster_count);
-        let remove_raster = selected.iter().any(|&i| i < raster_count);
+        let visible_virtual = self.virtual_trenches.iter().enumerate()
+            .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench))
+            .map(|(index, _)| index).collect::<Vec<_>>();
+        let mut virtual_indices = selected.iter().filter_map(|&row|
+            row.checked_sub(raster_count).and_then(|position| visible_virtual.get(position).copied()))
+            .collect::<Vec<_>>();
+        let mut raster_indices = selected.iter().copied().filter(|&row|row < raster_count).collect::<Vec<_>>();
+        // Removing the single orthophoto row removes the linked analytical
+        // trench(s) from this project as well. The durable LAS/LAZ catalog and
+        // its original scan files remain untouched.
+        let cloud_ids = raster_indices.iter().filter_map(|&i| self.geotiffs.get(i))
+            .filter_map(|raster|raster.metadata.get("pointcloud_source_id")
+                .and_then(serde_json::Value::as_str).map(str::to_owned))
+            .collect::<std::collections::HashSet<_>>();
+        if !cloud_ids.is_empty() {
+            virtual_indices.extend(self.virtual_trenches.iter().enumerate()
+                .filter(|(_, trench)| trench.metadata.get("pointcloud_source_id")
+                    .and_then(serde_json::Value::as_str).is_some_and(|id|cloud_ids.contains(id)))
+                .map(|(index, _)| index));
+        }
+        virtual_indices.sort_unstable();
+        virtual_indices.dedup();
+        raster_indices.sort_unstable();
+        raster_indices.dedup();
+        let remove_virtual = !virtual_indices.is_empty();
+        let remove_raster = !raster_indices.is_empty();
         self.cancel_virtual_map();
         self.stop_raster_rotation();
         self.raster_points.mode = None;
@@ -1065,14 +1102,17 @@ impl SleufBaseApp {
             if let Some(worker) = &mut self.pending_ahn { worker.cancel(); }
             self.shell.marxact_open = false;
         }
-        for &row in selected.iter().rev() {
-            if row >= raster_count {
-                self.virtual_trenches.remove(row - raster_count);
-            } else {
-                self.geotiffs.remove(row);
-                if row < self.raster_textures.len() { self.raster_textures.remove(row); }
-                if row < self.raster_errors.len() { self.raster_errors.remove(row); }
-            }
+        for index in virtual_indices.into_iter().rev() {
+            self.virtual_trenches.remove(index);
+        }
+        for index in raster_indices.into_iter().rev() {
+            self.geotiffs.remove(index);
+            if index < self.raster_textures.len() { self.raster_textures.remove(index); }
+            if index < self.raster_errors.len() { self.raster_errors.remove(index); }
+        }
+        if !cloud_ids.is_empty() {
+            self.point_clouds.retain(|source| !cloud_ids.contains(&source.id));
+            self.sync_pointcloud_datasets();
         }
         if remove_virtual {
             self.trench_markers.clear();

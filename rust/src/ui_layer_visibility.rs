@@ -9,8 +9,15 @@ pub(super) fn raster_is_visible(raster: &GeoTiffInfo) -> bool {
     visible(&raster.metadata)
 }
 
+/// A LAS/LAZ trench is an analytical profile backing its source orthophoto,
+/// not a second drawable virtual trench. Keep it for geometry and DXF output
+/// while rendering and selecting only its corresponding GeoTIFF on the map.
+pub(super) fn cloud_trench(trench: &VirtualTrench) -> bool {
+    trench.metadata.get("pointcloud_source_id")
+        .and_then(Value::as_str).is_some()
+}
 pub(super) fn trench_is_visible(trench: &VirtualTrench) -> bool {
-    visible(&trench.metadata)
+    !cloud_trench(trench) && visible(&trench.metadata)
 }
 
 fn visible(metadata: &Value) -> bool {

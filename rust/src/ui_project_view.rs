@@ -96,7 +96,21 @@ impl SleufBaseApp {
         match &self.project_view.selected_tiff{
             Some(S::Virtual{job_id,label})=>{
                 let mut hits=self.virtual_trenches.iter().enumerate().filter(|(_,t)|t.job_id==*job_id&&t.label==*label).map(|(i,_)|i);
-                let first=hits.next();if hits.next().is_none(){self.virtual_map.selected=first;}
+                let first=hits.next();
+                if hits.next().is_none() {
+                    if let Some(index)=first {
+                        let trench=&self.virtual_trenches[index];
+                        if layer_visibility_ui::cloud_trench(trench) {
+                            // Older projects persist the analytical virtual
+                            // entry. Restore the corresponding single photo
+                            // entry instead of reselecting a hidden proxy.
+                            let cloud_id=trench.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str);
+                            self.raster_points.selected=self.geotiffs.iter().find(|r|
+                                r.metadata.get("pointcloud_source_id").and_then(serde_json::Value::as_str)==cloud_id)
+                                .map(|r|r.path.clone());
+                        } else {self.virtual_map.selected=Some(index);}
+                    }
+                }
             }
             Some(S::Raster{path})=>{if self.geotiffs.iter().filter(|r|r.path==*path).count()==1{self.raster_points.selected=Some(path.clone());}}
             None=>{}
