@@ -651,10 +651,10 @@ impl SleufBaseApp {
             ui.label("Naam"); ui.add(egui::TextEdit::singleline(&mut form.title).char_limit(1024));
             ui.label("Coördinatenstelsel"); crs_combo(ui, "import-crs", &mut form.crs);
             ui.label("RD New gebruikt meters; WGS 84 gebruikt geografische lengte-/breedtegraad. SleufBase herprojecteert de originele XYZ niet. Alleen RD New kan op de Nederlandse kaart worden ingeladen.");
-            ui.small("De scan wordt bewaard in het puntenwolkoverzicht en opent daarna in de editor. Met Inladen neem je hem over in een project.");
+            ui.small("De scan wordt opgeslagen in het puntenwolkoverzicht. Kies later Bewerken om punten of lijnen te tekenen; met Inladen neem je de proefsleuf over in een project.");
             let valid = !form.title.trim().is_empty() && form.title.len() <= 1024 && !form.title.chars().any(char::is_control);
             ui.horizontal(|ui| {
-                if ui.add_enabled(valid, egui::Button::new("Toevoegen en bewerken").fill(ORANGE)).clicked() { create = true; }
+                if ui.add_enabled(valid, egui::Button::new("Puntenwolk toevoegen").fill(ORANGE)).clicked() { create = true; }
                 if ui.button("Annuleren").clicked() { cancel = true; }
             });
         });
