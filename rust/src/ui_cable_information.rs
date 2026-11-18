@@ -173,15 +173,10 @@ fn pick(overlays:&[DxfOverlay],view:&raster_point_ui::View,pointer:Pos2)->Option
     pick_all(overlays,view,pointer).into_iter().next()
 }
 impl SleufBaseApp {
-    /// Draw a steady halo over the selected CAD geometry without an animation
+    /// Draw a steady halo over every selected CAD object without an animation
     /// loop. Preserve the cable's original colour in the centre of the glow.
     pub(super) fn paint_selected_cable(&self, view: &raster_point_ui::View) {
         let Some(selection) = &self.dxf_selection else { return; };
-        let Some(overlay) = self.overlays.get(selection.overlay).filter(|o| o.visible) else { return; };
-        // The expanded block leaves are drawn, not their raw INSERT origin.
-        if selection.feature < overlay.features.len()
-            && overlay.features[selection.feature].entity_type == "INSERT" { return; }
-        let Some(feature) = overlay.inspect_feature(selection.feature).filter(|f| f.visible) else { return; };
         let rect = view.rect.intersect(view.painter.clip_rect()).expand(8.);
         let clip = [f64::from(rect.min.x), f64::from(rect.min.y),
             f64::from(rect.max.x), f64::from(rect.max.y)];
@@ -190,45 +185,52 @@ impl SleufBaseApp {
             (9., Color32::from_rgba_unmultiplied(255, 128, 24, 100)),
             (4.5, Color32::WHITE),
         ];
-        if matches!(feature.source.entity_type.as_str(), "POINT" | "INSERT") {
-            if let Some(point) = feature.points.first() {
-                let p = pixel(view, *point);
-                let p = egui::pos2(p[0] as f32, p[1] as f32);
-                if rect.contains(p) {
-                    for (width, color) in halo {
-                        view.painter.circle_filled(p, width * 0.5 + 1.5, color);
+        for &(overlay_index, feature_index) in &selection.members {
+            let Some(overlay) = self.overlays.get(overlay_index).filter(|o| o.visible) else { continue; };
+            // The expanded block leaves are drawn, not their raw INSERT origin.
+            if feature_index < overlay.features.len()
+                && overlay.features[feature_index].entity_type == "INSERT" { continue; }
+            let Some(feature) = overlay.inspect_feature(feature_index).filter(|f| f.visible) else { continue; };
+            if matches!(feature.source.entity_type.as_str(), "POINT" | "INSERT") {
+                if let Some(point) = feature.points.first() {
+                    let p = pixel(view, *point);
+                    let p = egui::pos2(p[0] as f32, p[1] as f32);
+                    if rect.contains(p) {
+                        for (width, color) in halo {
+                            view.painter.circle_filled(p, width * 0.5 + 1.5, color);
+                        }
+                        let [r, g, b] = feature.rgb;
+                        view.painter.circle_filled(p, 2.5, Color32::from_rgb(r, g, b));
                     }
-                    let [r, g, b] = feature.rgb;
-                    view.painter.circle_filled(p, 2.5, Color32::from_rgb(r, g, b));
                 }
             }
-        }
-        for (path, [r, g, b]) in feature.painted_paths() {
-            let mut visible = Vec::<Pos2>::new();
-            let paint = |points: &mut Vec<Pos2>| {
-                if points.len() >= 2 {
-                    for (width, color) in halo {
-                        view.painter.add(egui::Shape::line(points.clone(), Stroke::new(width, color)));
+            for (path, [r, g, b]) in feature.painted_paths() {
+                let mut visible = Vec::<Pos2>::new();
+                let paint = |points: &mut Vec<Pos2>| {
+                    if points.len() >= 2 {
+                        for (width, color) in halo {
+                            view.painter.add(egui::Shape::line(points.clone(), Stroke::new(width, color)));
+                        }
+                        view.painter.add(egui::Shape::line(points.clone(),
+                            Stroke::new(2.5_f32, Color32::from_rgb(r, g, b))));
                     }
-                    view.painter.add(egui::Shape::line(points.clone(),
-                        Stroke::new(2.5_f32, Color32::from_rgb(r, g, b))));
-                }
-                points.clear();
-            };
-            for pair in path.windows(2) {
-                if let Some([a, b]) = clip_segment(pixel(view, pair[0]), pixel(view, pair[1]), clip) {
-                    let a = egui::pos2(a[0] as f32, a[1] as f32);
-                    let b = egui::pos2(b[0] as f32, b[1] as f32);
-                    if visible.last().is_some_and(|last| last.distance_sq(a) > 0.01) {
+                    points.clear();
+                };
+                for pair in path.windows(2) {
+                    if let Some([a, b]) = clip_segment(pixel(view, pair[0]), pixel(view, pair[1]), clip) {
+                        let a = egui::pos2(a[0] as f32, a[1] as f32);
+                        let b = egui::pos2(b[0] as f32, b[1] as f32);
+                        if visible.last().is_some_and(|last| last.distance_sq(a) > 0.01) {
+                            paint(&mut visible);
+                        }
+                        if visible.is_empty() { visible.push(a); }
+                        visible.push(b);
+                    } else {
                         paint(&mut visible);
                     }
-                    if visible.is_empty() { visible.push(a); }
-                    visible.push(b);
-                } else {
-                    paint(&mut visible);
                 }
+                paint(&mut visible);
             }
-            paint(&mut visible);
         }
     }
     pub(super) fn handle_cable_information(&mut self, view: &raster_point_ui::View) {
@@ -239,10 +241,17 @@ impl SleufBaseApp {
         let visible = |overlay, feature| candidate_visible(overlays, overlay, feature);
         let before = self.found_layers.len();
         self.found_layers.retain(|&(overlay, feature)| visible(overlay, feature));
-        let hidden_selection = self.dxf_selection.as_ref()
-            .is_some_and(|selection| !visible(selection.overlay, selection.feature));
-        if hidden_selection { self.dxf_selection = None; }
-        if hidden_selection || before != self.found_layers.len() {
+        let remaining_selection = self.dxf_selection.as_ref().and_then(|selection| {
+            selection.members.iter().any(|&(overlay, feature)| !visible(overlay, feature))
+                .then(|| selection.members.iter().copied()
+                    .filter(|&(overlay, feature)| visible(overlay, feature)).collect::<Vec<_>>())
+        });
+        let selection_changed = remaining_selection.is_some();
+        if let Some(members) = remaining_selection {
+            if members.is_empty() { self.dxf_selection = None; }
+            else { self.select_dxf_group(members); }
+        }
+        if selection_changed || before != self.found_layers.len() {
             view.painter.ctx().request_repaint();
         }
         if self.virtual_map.captures()

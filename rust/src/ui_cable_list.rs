@@ -252,16 +252,55 @@ fn group_layout(ui: &egui::Ui, label: &str, width: f32) -> RowLayout {
     let galley = ui.fonts(|fonts| fonts.layout_job(job));
     RowLayout { height: (galley.size().y + 14.).ceil().max(30.), blocks: vec![(galley, color)] }
 }
-fn row_widget(ui: &mut egui::Ui, active: bool, layout: RowLayout, expanded: Option<bool>) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), layout.height), egui::Sense::click());
+struct RowResponse {
+    select: egui::Response,
+    disclosure: Option<egui::Response>,
+}
+fn row_widget(ui: &mut egui::Ui, active: bool, layout: RowLayout, expanded: Option<bool>) -> RowResponse {
+    let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), layout.height));
+    // The row UI is keyed by the object/group identity. Keep selection and
+    // disclosure separately focusable, with no overlapping click targets.
+    let (select_rect, disclosure_rect) = if expanded.is_some() {
+        let split = (rect.left() + 28.).min(rect.right());
+        (egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max),
+            Some(egui::Rect::from_min_max(rect.min,
+                egui::pos2(split, (rect.top() + 30.).min(rect.bottom())))))
+    } else { (rect, None) };
+    let mut select = ui.interact(select_rect, ui.id().with("select"), egui::Sense::click());
+    if let Some(disclosure_rect) = disclosure_rect {
+        let lower_left = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), disclosure_rect.bottom()),
+            egui::pos2(disclosure_rect.right(), rect.bottom()));
+        if lower_left.is_positive() {
+            // Complete the L-shaped selection area below the arrow. This is
+            // only a pointer target: the body remains its single tab stop and
+            // accessible selection control, including after a padding click.
+            let padding = ui.interact(lower_left, ui.id().with("select-padding"), egui::Sense::CLICK);
+            if padding.clicked() { select.request_focus(); }
+            select = select.union(padding);
+        }
+    }
+    let select = select.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let disclosure = disclosure_rect.map(|rect| {
+        ui.interact(rect, ui.id().with("disclosure"), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+    });
     if ui.is_rect_visible(rect) {
-        let highlighted = response.hovered() || response.has_focus();
+        let disclosure_highlighted = disclosure.as_ref()
+            .is_some_and(|response| response.hovered() || response.has_focus());
+        let highlighted = select.hovered() || select.has_focus() || disclosure_highlighted;
         ui.painter().rect(rect, 10_u8,
             if active { Color32::from_rgb(255, 224, 199) } else if highlighted { APP_BG } else { Color32::WHITE },
             egui::Stroke::new(if active { 2_f32 } else { 1_f32 },
                 if active || highlighted { ORANGE } else { theme::BORDER }), egui::StrokeKind::Inside);
         let mut position = rect.min + egui::vec2(10., 7.);
         if let Some(expanded) = expanded {
+            if disclosure_highlighted {
+                if let Some(response) = &disclosure {
+                    ui.painter().rect(response.rect.shrink(3.), 5_u8, Color32::TRANSPARENT,
+                        egui::Stroke::new(1., ORANGE), egui::StrokeKind::Inside);
+                }
+            }
             let center = rect.min + egui::vec2(16., 15.);
             let points = if expanded { [egui::vec2(-4., -2.), egui::vec2(0., 2.), egui::vec2(4., -2.)] }
                 else { [egui::vec2(-2., -4.), egui::vec2(2., 0.), egui::vec2(-2., 4.)] };
@@ -275,17 +314,19 @@ fn row_widget(ui: &mut egui::Ui, active: bool, layout: RowLayout, expanded: Opti
             position.y += height + 2.;
         }
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    RowResponse { select, disclosure }
 }
 
 pub(super) fn show(
     ctx: &egui::Context, state: &mut State, generation: u64, overlays: &[DxfOverlay],
-    candidates: &[Candidate], selected: Option<Candidate>,
-) -> Option<Candidate> {
+    candidates: &[Candidate], selected: &[Candidate],
+) -> Option<Vec<Candidate>> {
     if !state.open { return None; }
     state.sync(generation, overlays, candidates);
-    let reveal = state.reveal_selection || state.last_scroll_target != selected;
-    state.last_scroll_target = selected;
+    let scroll_target = selected.first().copied();
+    let selected_members: BTreeSet<_> = selected.iter().copied().collect();
+    let reveal = state.reveal_selection || state.last_scroll_target != scroll_target;
+    state.last_scroll_target = scroll_target;
     state.reveal_selection = false;
     let available = ctx.available_rect().width();
     // Leave useful map space at normal window sizes, including after resizing.
@@ -337,7 +378,7 @@ pub(super) fn show(
                     ui.ctx().request_repaint();
                 }
                 let origin = ui.min_rect().min;
-                let target = selected.and_then(|value| state.selected_entry(value)).unwrap_or(0);
+                let target = scroll_target.and_then(|value| state.selected_entry(value)).unwrap_or(0);
                 let mut target_rect = None;
                 let mut top = 0.;
                 // Cache only cheap heights for offscreen rows. Building and
@@ -368,13 +409,13 @@ pub(super) fn show(
                                 .and_then(|id| state.groups.get(*id)).is_some_and(|group| group.members.len() > 1)
                                 { 12. } else { 0. };
                             (row_layout(ui, &state.rows[&candidate], width - indent),
-                                selected == Some(candidate), indent, None)
+                                selected_members.contains(&candidate), indent, None)
                         }
                         Entry::Group(id) => {
                             let group = &mut state.groups[id];
                             let label = group.label.get_or_insert_with(|| group_label(overlays, &group.members));
                             (group_layout(ui, label, width),
-                                selected.is_some_and(|candidate| group.members.contains(&candidate)),
+                                group.members.iter().all(|candidate| selected_members.contains(candidate)),
                                 0., Some(state.expanded_groups.contains(&id)))
                         }
                     };
@@ -383,7 +424,7 @@ pub(super) fn show(
                     let rect = egui::Rect::from_min_size(origin + egui::vec2(indent, top), egui::vec2(width - indent, height));
                     let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(entry)
                         .layout(egui::Layout::top_down(egui::Align::Min)));
-                    let response = row_widget(&mut row_ui, active, layout, expanded);
+                    let RowResponse { select: response, disclosure } = row_widget(&mut row_ui, active, layout, expanded);
                     if reveal && row_index == target { target_rect = Some(rect); }
                     top += height + spacing;
                     match entry {
@@ -392,7 +433,7 @@ pub(super) fn show(
                             let overlay = &overlays[candidate.0];
                             response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel,
                                 ui.is_enabled(), active, &row.layer));
-                            if response.clicked() { choose = Some(candidate); }
+                            if response.clicked() { choose = Some(vec![candidate]); }
                             response.on_hover_ui(|ui| {
                                 ui.set_max_width(420.);
                                 if let Some(feature) = overlay.inspect_feature(candidate.1) {
@@ -407,17 +448,25 @@ pub(super) fn show(
                             });
                         }
                         Entry::Group(id) => {
-                            let label = state.groups[id].label.as_deref().unwrap_or_default();
+                            let group = &state.groups[id];
+                            let label = group.label.as_deref().unwrap_or_default();
                             let expanded = state.expanded_groups.contains(&id);
-                            response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader,
-                                ui.is_enabled(), expanded, label));
-                            if response.clicked() { toggle_group = Some(id); }
+                            response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel,
+                                ui.is_enabled(), active, format!("Selecteer alle {} kabelobjecten: {label}", group.members.len())));
+                            if response.clicked() { choose = Some(group.members.clone()); }
                             response.on_hover_ui(|ui| {
                                 ui.set_max_width(420.);
                                 ui.add(egui::Label::new(label).wrap());
-                                ui.small(if expanded { "Klik om deze kabelobjecten in te klappen." }
-                                    else { "Klik om de afzonderlijke kabelobjecten te tonen en te selecteren." });
+                                ui.small(format!("Klik om alle {} kabelobjecten in deze groep te selecteren.", group.members.len()));
+                                ui.small("Gebruik het pijltje om de groep uit of in te klappen.");
                             });
+                            if let Some(disclosure) = disclosure {
+                                let action = if expanded { "Klap groep in" } else { "Klap groep uit" };
+                                disclosure.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader,
+                                    ui.is_enabled(), expanded, format!("{action}: {label}")));
+                                if disclosure.clicked() { toggle_group = Some(id); }
+                                disclosure.on_hover_text(format!("{action}. De selectie blijft behouden."));
+                            }
                         }
                     }
                 }

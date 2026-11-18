@@ -148,7 +148,14 @@ impl TrenchForm {
 #[derive(Clone,Debug,PartialEq)]
 enum ProjectAction { New, ClearLayers, Open(PathBuf), OpenInput(PathBuf), Restore(PathBuf), ImportPython(PathBuf), Close }
 
-struct DxfSelection {overlay:usize,feature:usize,details:Vec<(String,String)>}
+struct DxfSelection {
+    // The primary object is always members[0]. Keep every selected identity
+    // here so clearing the selection also clears a complete cable group.
+    overlay:usize,
+    feature:usize,
+    members:Vec<(usize,usize)>,
+    details:Vec<(String,String)>,
+}
 
 struct LiveJobsRefreshResult {
     session:KickTheMapLiveClient,
@@ -629,7 +636,53 @@ impl SleufBaseApp {
             Some(position)=>format!("Kabel/object geselecteerd: {layer} · {position} van {count}"),
             None=>format!("Kabel/object geselecteerd: {layer}"),
         };
-        self.dxf_selection=Some(DxfSelection{overlay,feature,details:details.into_iter().collect()});
+        self.dxf_selection=Some(DxfSelection{
+            overlay,feature,members:vec![(overlay,feature)],details:details.into_iter().collect(),
+        });
+    }
+
+    fn select_dxf_group(&mut self,mut members:Vec<(usize,usize)>) {
+        // A group can span drawings. Validate every member before accepting
+        // it, keeping the same order as the objects found along the cut line.
+        let mut seen=std::collections::HashSet::with_capacity(members.len());
+        members.retain(|&(overlay,feature)|
+            cable_information_ui::candidate_visible(&self.overlays,overlay,feature)
+                &&seen.insert((overlay,feature)));
+        let Some(&(overlay,feature))=members.first() else {
+            self.dxf_selection=None;
+            self.message="Geen kabelobjecten in deze groep meer beschikbaar.".into();
+            return;
+        };
+        if members.len()==1 {
+            self.select_dxf(overlay,feature);
+            return;
+        }
+        let path=self.overlays[overlay].path.clone();
+        if self.project_view.selected_dxf.as_ref()!=Some(&path) {
+            self.project_view.selected_dxf=Some(path);
+            self.dirty=true;
+        }
+        let mut layers=Vec::<(String,usize)>::new();
+        for &(overlay,feature) in &members {
+            if let Some(object)=self.overlays[overlay].inspect_feature(feature) {
+                if let Some((_,count))=layers.iter_mut().find(|(layer,_)|layer.as_str()==object.layer) {
+                    *count+=1;
+                } else {
+                    layers.push((object.layer.to_owned(),1));
+                }
+            }
+        }
+        let layer_summary=layers.into_iter().map(|(layer,count)|format!("{count}× {}",
+            if layer.is_empty(){"(geen laagnaam)"}else{layer.as_str()}))
+            .collect::<Vec<_>>().join("\n");
+        self.message=format!("Kabelgroep geselecteerd: {} kabelobjecten.",members.len());
+        let details=vec![
+            ("Kabelgroep".into(),format!("{} kabelobjecten geselecteerd",members.len())),
+            ("Lagen".into(),layer_summary),
+            ("Objectinformatie".into(),
+                "Klap de groep uit met het pijltje en klik op een kabel voor de bijbehorende informatie.".into()),
+        ];
+        self.dxf_selection=Some(DxfSelection{overlay,feature,members,details});
     }
 
     fn poll_raster_previews(&mut self,ctx:&egui::Context) {
@@ -1701,6 +1754,10 @@ impl SleufBaseApp {
         if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         if self.template_dialog.is_some() {self.show_template_dialog(ctx);}
         if self.project_template_dialog.is_some() {self.show_project_template_dialog(ctx);}
+        // A dialog can transfer the drawings to an export worker in this
+        // frame. Do not prune cable groups against those temporary empty lists.
+        if self.template_job.is_some(){self.show_template_progress(ctx);return;}
+        if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         self.show_original_sidebar(ctx);
 
         if self.file_intent.is_some(){self.show_file_loading(ctx);return;}

@@ -47,7 +47,7 @@ pub(super) struct State {
     tiff_height: Option<f32>,
     klic_height: Option<f32>,
     last_sidebar_height: Option<f32>,
-    last_cable_selection: Option<(u64, usize, usize)>,
+    last_cable_selection: Option<(u64, usize, usize, usize)>,
     cable_list: cable_list::State,
 }
 
@@ -607,7 +607,7 @@ impl SleufBaseApp {
                     ctx.request_repaint();
                 }
                 let selection_key = self.dxf_selection.as_ref()
-                    .map(|selection| (self.project_generation, selection.overlay, selection.feature));
+                    .map(|selection| (self.project_generation, selection.overlay, selection.feature, selection.members.len()));
                 let reset_cable_scroll = self.shell.last_cable_selection != selection_key;
                 self.shell.last_cable_selection = selection_key;
                 let height = (ui.available_height() - 30.).max(40.);
@@ -1131,11 +1131,11 @@ impl SleufBaseApp {
     pub(super) fn show_original_map(&mut self, ctx: &egui::Context) {
         if self.shell.cable_list.open && !self.browser_ui.web_visible {
             let candidates = cable_list::visible_matches(&self.overlays, &self.found_layers);
-            let selected = self.dxf_selection.as_ref().map(|selection| (selection.overlay, selection.feature));
-            if let Some((overlay, feature)) = cable_list::show(ctx, &mut self.shell.cable_list,
+            let selected = self.dxf_selection.as_ref().map_or(&[][..], |selection| selection.members.as_slice());
+            if let Some(members) = cable_list::show(ctx, &mut self.shell.cable_list,
                 self.project_generation, &self.overlays, &candidates, selected)
             {
-                self.select_dxf(overlay, feature);
+                self.select_dxf_group(members);
                 self.shell.last_cable_selection = None;
                 ctx.request_repaint();
             }

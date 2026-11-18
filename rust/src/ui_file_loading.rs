@@ -228,7 +228,7 @@ impl SleufBaseApp {
                     if self
                         .dxf_selection
                         .as_ref()
-                        .is_some_and(|s| s.overlay == index)
+                        .is_some_and(|s| s.members.iter().any(|(overlay, _)| *overlay == index))
                     {
                         self.dxf_selection = None;
                     }

@@ -53,7 +53,7 @@ De menubalk bovenaan bevat **Locatie**, **Acties**, **KickTheMap**, **Instelling
 | --- | --- |
 | Proefsleuven | GeoTIFFs, virtuele proefsleuven en marXact-sleuven kiezen, tonen en bewerken. |
 | Overlays | Geladen meetobjecten en tekeningen kiezen en tonen. |
-| Kabelinformatie | De gegevens van de geselecteerde kabel of het geselecteerde tekenobject lezen. |
+| Kabelinformatie | De gegevens van één geselecteerd object lezen, of het aantal objecten en de lagen van een geselecteerde kabelgroep bekijken. |
 | Kaart | Navigeren, selecteren en de actieve kaartbewerking uitvoeren. |
 
 ### Zoomen en verschuiven
@@ -121,7 +121,7 @@ Klik nogmaals op **Lijst** om het rechterpaneel te sluiten. De compacte regels t
 2. Klik in de kaart op het beginpunt van de selectielijn.
 3. Klik op het eindpunt.
 4. Bekijk rechts de zichtbare lijnobjecten die de lijn raken of kruisen.
-5. Klap eventuele groepen open en klik op een kabelregel, of gebruik de wisselknop om de bijbehorende informatie te lezen.
+5. Klik op een groepsnaam om alle kabels in die groep te selecteren. Gebruik het pijltje om de groep open te klappen en kies een kabelregel als je één kabel wilt bekijken. De wisselknop kiest telkens één gevonden kabel.
 
 Tijdens het tekenen zie je een voorbeeldlijn. Escape, rechtsklikken of opnieuw op de lijnknop klikken annuleert de handeling; de vorige kandidatenlijst blijft dan behouden. De selectielijn dient om objecten te vinden en wordt geen nieuwe kabel in je project.
 
@@ -136,7 +136,11 @@ Na een lijnselectie staan kabels die de selectielijn op vrijwel dezelfde plek ra
 
 Alle lagen blijven zichtbaar; de groepskop groeit mee met het aantal regels. Staat er maar één object op die plek, dan blijft het een losse regel.
 
-Klik op de groepskop om de losse kabelobjecten te tonen. Klik vervolgens op de gewenste kabelregel om die kabel op de kaart en onder **Kabelinformatie** te bekijken. De groepskop wordt oranje als de geselecteerde kabel in die groep zit, ook wanneer de groep is ingeklapt. Klik opnieuw op de kop om de losse regels weer te verbergen. De wisselknop blijft tussen de afzonderlijke gevonden kabels wisselen.
+Klik op de **groepsnaam of het groepsvak** om alle kabelobjecten in de groep te selecteren. De geselecteerde groep en de geselecteerde kabelregels worden oranje. Alle geselecteerde kabels krijgen tegelijkertijd een markering op de kaart. Onder **Kabelinformatie** zie je het totale aantal geselecteerde objecten en de aantallen per laag.
+
+Klik alleen op het **pijltje** om de losse kabelobjecten te tonen of weer te verbergen. Uit- en inklappen verandert de selectie niet. Je kunt een groep dus ingeklapt laten terwijl alle kabels daarin geselecteerd blijven.
+
+Klik op een afzonderlijk kabelkaartje om alleen die kabel te selecteren. De kaartmarkering en **Kabelinformatie** horen dan weer bij dat ene object. De wisselknop blijft tussen de afzonderlijke gevonden kabels wisselen.
 
 In- of uitzoomen verandert de groepen niet. Een object dat de selectielijn meermaals raakt of kruist, staat één keer in de lijst, bij het eerste raak- of kruispunt vanaf het beginpunt.
 

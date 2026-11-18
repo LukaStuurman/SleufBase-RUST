@@ -485,6 +485,7 @@ fn large_cad_values_are_bounded_in_the_visible_information_panel() {
         dxf_selection: Some(DxfSelection {
             overlay: 0,
             feature: 0,
+            members: vec![(0, 0)],
             details: vec![("Data".into(), "x".repeat(200000))],
         }),
         ..Default::default()

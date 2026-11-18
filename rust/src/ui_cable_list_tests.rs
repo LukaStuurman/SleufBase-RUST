@@ -72,7 +72,8 @@ impl ListHarness {
             // real candidate panel at the application's supported window sizes.
             egui::SidePanel::left("test-sidebar").resizable(false).exact_width(360.)
                 .show(ctx, |_| {});
-            choice = show(ctx, &mut self.state, 1, &self.overlays, &self.candidates, self.selected);
+            choice = show(ctx, &mut self.state, 1, &self.overlays, &self.candidates, self.selected.as_slice())
+                .and_then(|members| members.first().copied());
         });
         (output, choice)
     }

@@ -533,7 +533,7 @@ impl SleufBaseApp {
                 ui.heading("DXF-lagen");
                 let mut choose_dxf = None;
                 let mut replace_dxf = None;
-                let selected_dxf = self.dxf_selection.as_ref().map(|s| (s.overlay, s.feature));
+                let selected_dxf = self.dxf_selection.as_ref().map_or(&[][..], |s| s.members.as_slice());
                 egui::ScrollArea::vertical()
                     .max_height(150.0)
                     .show(ui, |ui| {
@@ -605,8 +605,7 @@ impl SleufBaseApp {
                                                     );
                                                     if ui
                                                         .selectable_label(
-                                                            selected_dxf
-                                                                == Some((overlay_index, index)),
+                                                            selected_dxf.contains(&(overlay_index, index)),
                                                             label,
                                                         )
                                                         .clicked()
