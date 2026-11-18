@@ -854,9 +854,9 @@ impl SleufBaseApp {
             response.context_menu(|ui| {
                 if row < self.geotiffs.len() {
                     self.show_raster_trench_context(ui, row);
-                } else if let Some((index, _)) = self.virtual_trenches.iter().enumerate()
+                } else if let Some(index) = self.virtual_trenches.iter().enumerate()
                     .filter(|(_, trench)| !layer_visibility_ui::cloud_trench(trench))
-                    .nth(row - self.geotiffs.len()) {
+                    .nth(row - self.geotiffs.len()).map(|(index, _)|index) {
                     self.show_virtual_tiff_context(ui, index);
                 }
                 ui.separator();
