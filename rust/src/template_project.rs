@@ -476,9 +476,12 @@ fn build_sources_with_provider(opts:&Options,sources:Sources<'_>,rules:&[Rule],c
                 }
             }
         }
-        if !extra_polyline.is_empty() && virtual_source.is_none() {
-            // A synthetic raster already draws its own boundary. Only add the
-            // outline over an external TIFF, without a blue selection halo.
+        if !extra_polyline.is_empty() && virtual_source.is_none() && !linked_cloud {
+            // Ordinary virtual / MarXact trenches use a black boundary over
+            // an external TIFF. A Potree/LAS trench already has its own
+            // georeferenced orthophoto and must not acquire a black rectangle
+            // in the map-with-legend pane. Reference markers and original
+            // utility polylines are handled independently and remain intact.
             append_stroke(&mut overlays, &mut points, bounds, extra_polyline,
                 [0,0,0], false)?;
         }

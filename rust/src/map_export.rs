@@ -481,7 +481,13 @@ impl Renderer {
         overlays(&mut map, source, &layout, !template_detail, cancel)?;
         if template_detail {
             if let Some(Raster::Virtual(virtual_source)) = tiff.as_ref() {
-                paint_virtual_outline(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;
+                // Also protect older saved export manifests which contain a
+                // synthetic LAS/LAZ fallback. Only actual virtual/MarXact
+                // sources get this additional black outline.
+                if virtual_source.trench.metadata.get("pointcloud_source_id")
+                    .and_then(serde_json::Value::as_str).is_none() {
+                    paint_virtual_outline(&mut map, &layout, &virtual_source.trench, source.tiff_opacity, cancel)?;
+                }
             }
         }
         let mut image = crate::raster_rotation::allocate(layout.page_size[0], layout.page_size[1])?;
