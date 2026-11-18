@@ -668,6 +668,33 @@ function cancelDrawing() {
   updateButtons(); renderInspector();
 }
 
+// Potree 1.8.2's OrbitControls registers one drag listener for left=rotate,
+// right=pan. Rebind only that listener's mouse-button interpretation, without
+// synthesizing DOM events or disturbing the InputHandler marker-drag flow.
+// Buttons arrive as the browser's bitmask: left 1, right 2, middle 4.
+function installNavigationButtons() {
+  const controls = state.viewer.orbitControls;
+  const handlers = controls?._listeners?.drag;
+  if (!Array.isArray(handlers) || handlers.length !== 1) {
+    throw new Error("De Potree-muisbediening heeft een onbekende indeling.");
+  }
+  const original = handlers[0];
+  controls.removeEventListener("drag", original);
+  controls.addEventListener("drag", (event) => {
+    const drag = event.drag;
+    if (!drag || drag.object != null) return original.call(controls, event);
+    const mouse = drag.mouse;
+    // left -> right (pan), right -> left (rotate), middle -> right (pan).
+    if (mouse === 1 || mouse === 4) drag.mouse = 2;
+    else if (mouse === 2) drag.mouse = 1;
+    try {
+      return original.call(controls, event);
+    } finally {
+      drag.mouse = mouse;
+    }
+  });
+}
+
 function installDrawingCapture() {
   const canvas = state.viewer.renderer.domElement;
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -719,8 +746,8 @@ function setCamera(mode, bounds = null) {
     $id(id).setAttribute("aria-pressed", String(mode === candidate));
   }
   $id("canvas-hint").textContent = mode === "top"
-    ? "Rechts slepen: verplaatsen · Scrollen: zoomen · Klik op een bol om een object te selecteren"
-    : "Slepen: draaien · Rechts slepen: verplaatsen · Scrollen: zoomen";
+    ? "Links of midden slepen: verplaatsen · Rechts slepen: draaien · Scrollen: zoomen"
+    : "Links of midden slepen: verplaatsen · Rechts slepen: draaien · Scrollen: zoomen";
 }
 function focusItem(id) {
   const item = state.items.get(id);
@@ -988,6 +1015,7 @@ async function boot() {
     state.viewer.setPointBudget(2_000_000);
     state.viewer.setBackground("gradient");
     state.viewer.setControls(state.viewer.orbitControls);
+    installNavigationButtons();
     state.viewer.measuringTool.showLabels = false;
     state.viewer.addEventListener("update", updateEndpointLabels);
     installDrawingCapture();

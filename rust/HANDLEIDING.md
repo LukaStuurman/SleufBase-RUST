@@ -541,3 +541,8 @@ Selecteer meerdere scans via **Puntenwolk → LAS/LAZ openen**. De bestanden kom
 Voor een scan in RD New maakt SleufBase een GeoTIFF-bovenaanzicht uit de echte puntkleuren of intensiteit/hoogte. Alleen de scan vormt het raster: getekende punten, lijnmarkeringen en labels worden niet gefotografeerd. Dit GeoTIFF wordt bij het inladen als kaartlaag gebruikt en kan bij de DXF-sjabloonexport als raster dienen.
 
 Bij LAS/LAZ-bovenaanzichten wordt de GeoTIFF-richting bepaald door de lijn van **Beginpunt** naar **Eindpunt** in Potree. De GeoTIFF blijft op RD-coördinaten liggen; na het verplaatsen van een eindpunt wordt de GeoTIFF bij opnieuw inladen vernieuwd. Typekleuren van punten en lijnen veranderen direct tijdens bewerken.
+
+
+### Potree-muisbediening
+
+Met **links slepen** of **midden slepen** verschuif je de puntenwolk, met **rechts slepen** draai je het 3D-beeld. Een gewone linksklik plaatst nog steeds een meetpunt wanneer een tekengereedschap actief is.

@@ -1,13 +1,10 @@
-# SleufBase Rust 1.0.36 — GeoTIFF-oriëntatie en directe Potree-typekleuren
+# SleufBase Rust 1.0.37 — Potree-muisbediening
 
-## Verbeteringen
+- **Linkermuisknop ingedrukt slepen:** de puntenwolk verplaatsen.
+- **Rechtermuisknop ingedrukt slepen:** 3D-beeld draaien.
+- **Middelste muisknop ingedrukt slepen:** de puntenwolk verplaatsen, net als links.
+- De bestaande Potree-meetpuntselectie en verslepen van meetpunten blijven apart werken. Een gewone linksklik op de puntenwolk blijft een punt kunnen plaatsen wanneer tekenen actief is.
+- De hint in de editor toont de nieuwe bediening in zowel bovenaanzicht als perspectief.
+- De wijzigingen uit 1.0.35 en 1.0.36 blijven beschikbaar: volledige polylijnen in DXF/kaart, direct laden, meerdere LAS/LAZ-imports, GeoTIFF op basis van begin/eind en directe typekleuren.
 
-- Een GeoTIFF-bovenaanzicht van een LAS/LAZ-puntenwolk krijgt zijn kijkrichting van het geplaatste **beginpunt naar eindpunt**. Die richting loopt naar rechts in het beeld. De GeoTIFF gebruikt een volledige affine RD New (EPSG:28992) transformatiematrix, zodat het beeld geografisch correct blijft op de SleufBase-kaart en in de DXF-sjabloonexport.
-- Een opgeslagen bovenaanzicht wordt alleen hergebruikt als de begin-/eindcoördinaten nog overeenkomen. Verplaats je begin of eind later, dan wordt het beeld bij opnieuw inladen opnieuw opgebouwd. Het bestaande raster wordt bij voltooiing met bijgewerkte transformatie en textuur herladen.
-- Zonder geldig begin-/eindpaar blijft het bovenaanzicht voorlopig noordgericht. Een later toegevoegd paar bepaalt de nieuwe richting. Er worden geen editorannotaties in de scanachtergrond gefotografeerd.
-- In de Potree-editor krijgen een **punt en polylijn onmiddellijk hun gekozen typekleur** wanneer het type wordt aangepast. De geselecteerde oranje markeerkleur maskeert de typekleur niet meer; de objectlijst houdt de selectie zichtbaar. Ook bestaande Potree-marker- en lijnmaterialen worden bijgewerkt.
-- De verbeteringen van 1.0.35 blijven aanwezig: originele polylijnen in dwarsprofiel, TIFF-detail en kaart, directe inlaadfunctie, meerdere LAS/LAZ-scans in het overzicht en GeoTIFF uit bronpunten.
-
-## Controle
-
-GitHub bouwt de Windows-app en controleert de portable ZIP en installer voor publicatie. De volledige testset blijft volgens afspraak uitgeschakeld. Interactieve controle met het oorspronkelijke Windows-scanbestand is niet uitgevoerd.
+**Controle:** Windows-build en pakketverificatie via GitHub. Volledige geautomatiseerde tests volgens afspraak overgeslagen. De grafische bediening is niet interactief met een lokale Windows-scan getest.
