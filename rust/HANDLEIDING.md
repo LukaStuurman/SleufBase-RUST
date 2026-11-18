@@ -24,6 +24,7 @@ Zie [Installeren en bijwerken](PORTABLE.md) als je het programma nog moet instal
 10. [Handmatig een GeoTIFF vastleggen](#10-handmatig-een-geotiff-vastleggen)
 11. [marXact-metingen importeren](#11-marxact-metingen-importeren)
 12. [Virtuele proefsleuven maken en bewerken](#12-virtuele-proefsleuven-maken-en-bewerken)
+    [LAS- en LAZ-puntenwolken verwerken](#12a-las--en-laz-puntenwolken-verwerken)
 13. [Kabels en leidingen in de doorsnede](#13-kabels-en-leidingen-in-de-doorsnede)
 14. [Beginpunten, referenties, maaiveld en opmerkingen](#14-beginpunten-referenties-maaiveld-en-opmerkingen)
 15. [DXF-sjabloonexport](#15-dxf-sjabloonexport)
@@ -266,6 +267,24 @@ Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of ver
 In **Sleufgegevens** kun je bij een handmatige sleuf begin- en eindcoördinaten wijzigen, begin en einde omkeren en de hele sleuf verschuiven. Via het contextmenu op de kaart zijn ook verplaatsen, interactief draaien, een hoek invullen en een virtuele kopie beschikbaar.
 
 Het bewerkvenster werkt met een **concept**. **Opslaan in project** neemt de sleuf en de invoer over in het geopende project. **Sluiten zonder opslaan** verwerpt het concept. Sla daarna met **Acties → Project opslaan** ook het projectbestand op schijf op.
+
+## 12a. LAS- en LAZ-puntenwolken verwerken
+
+Met **Puntenwolk → LAS/LAZ openen** verwerk je scans van KickTheMap of andere leveranciers. Een online account is hiervoor niet nodig. Je kunt LAS/LAZ ook naar het hoofdvenster slepen.
+
+1. Kies het bestand en geef de scan een herkenbare naam. Kies **Onbekend / uit bestand lezen** om beschikbare coördinateninformatie te gebruiken. Bevestig **RD New (EPSG:28992), meters** alleen wanneer de bron daadwerkelijk in RD staat. Een andere keuze verplaatst of herprojecteert de scan niet.
+2. Laat SleufBase de puntenwolk voorbereiden. Dit gebeurt lokaal. Bij grote bestanden kan dit even duren; je kunt de import annuleren. Het originele bestand blijft de bron.
+3. Gebruik in de editor **Punt** of **Lijn**. Klik op zichtbare scanpunten. Sluit een lijn met rechts klikken af. Je kunt objecten selecteren, verplaatsen, verwijderen en wijzigingen ongedaan maken of herstellen.
+4. Vul per object de naam, het materiaal, de diameter en de bundel/omschrijving in. Gebruik herkenbare kabelnamen, zoals LS, MS, gas of water.
+5. Sluit de editor nadat de opslagstatus aangeeft dat de wijzigingen zijn verwerkt. Kies vervolgens **Acties → Project opslaan**. Tekenobjecten en broninformatie worden in het Rust-project bewaard.
+
+**Een proefsleuf maken.** Teken een rechte lijn met precies twee punten als sleufas. Plaats de twee eindpunten op het maaiveld: hun hoogtes worden als basis voor het profiel gebruikt. Open daarna **Puntenwolk → Puntenwolken beheren → Maak proefsleuf**. Kies de sleufas, naam, breedte en de meetobjecten die bij deze sleuf horen. Punten binnen de sleuf worden overgenomen. Van kabelpolylijnen worden de echte kruisingen met de sleufas gebruikt, inclusief geïnterpoleerde hoogte en schuinte. Het venster toont hoeveel objecten worden meegenomen of overgeslagen. Lijnen die vrijwel evenwijdig aan de sleufas lopen moet je buiten het dwarsprofiel laten.
+
+Controleer de nieuwe sleuf in de gewone sleufbewerker. Vul ontbrekende gegevens aan en gebruik daarna **Acties → Proefsleuven sjabloon DXF**. De volledige getekende lijnen blijven daarnaast beschikbaar in de puntenwolk en object-DXF-export.
+
+**Andere coördinatenstelsels.** Je kunt scans met lokale of andere coördinaten gewoon bekijken en daarin tekenen. **Objecten naar DXF** bewaart de originele XYZ. Voor plaatsing op de RD-kaart en het maken van een proefsleuf moeten de gegevens RD in meters zijn. Er wordt geen automatische herprojectie of hoogtecorrectie uitgevoerd.
+
+**Verder werken of verplaatsen.** Open de editor opnieuw via Puntenwolken beheren. Neem bij verplaatsing naar een andere computer ook de originele LAS/LAZ mee. Gebruik **Bronbestand opnieuw kiezen** en **Weergave opnieuw opbouwen** als de bron of lokale weergave ontbreekt. SleufBase controleert of het opnieuw gekozen bestand dezelfde scan is; bestaande tekenobjecten blijven bewaard.
 
 ## 13. Kabels en leidingen in de doorsnede
 

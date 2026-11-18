@@ -88,6 +88,7 @@ const ACTIONS: &[(&str, &str)] = &[
     ("", ""),
     ("Laad GeoTIFF(s)", "tiff"),
     ("Laad KLIC DXF", "dxf"),
+    ("LAS/LAZ puntenwolk openen…", "pointcloud_import"),
     ("Zoom naar extent", "zoom"),
     ("Toon TIFF-adressen", "addresses"),
     ("", ""),
@@ -298,6 +299,7 @@ impl SleufBaseApp {
                     }
                     action = action.or(menu(ui, "Acties", ACTIONS));
                     action = action.or(menu(ui, "KickTheMap", KICKTHEMAP));
+                    action = action.or(menu(ui, "Puntenwolk", &[("LAS/LAZ openen…","pointcloud_import"),("Puntenwolken beheren…","pointcloud_manager")]));
                     let settings = ui.button("Instellingen");
                     if settings.clicked() {
                         self.open_settings();
@@ -331,6 +333,8 @@ impl SleufBaseApp {
 
     fn run_shell_action(&mut self, action: &str, ctx: &egui::Context) {
         match action {
+            "pointcloud_import" => self.choose_pointcloud_files(),
+            "pointcloud_manager" => self.pointcloud_ui.open=true,
             "load" => {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("SleufBase-project", &["json", "klicproject"])
@@ -874,7 +878,7 @@ impl SleufBaseApp {
                                 }
                                 let response = tiff_row(ui, self.shell.overlay_selection.contains(index),
                                     &format!("Job: {} ({} objecten)", job.title, job.features.len()))
-                                    .on_hover_text(format!("KickTheMap-objecten uit {}", job.source_path.display()));
+                                    .on_hover_text(format!("Objecten uit {}", job.source_path.display()));
                                 if response.clicked() || response.secondary_clicked() {
                                     response.request_focus();
                                     clicked = Some((index, response.secondary_clicked(), ui.input(|i| i.modifiers)));

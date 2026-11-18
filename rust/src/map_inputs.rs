@@ -5,6 +5,7 @@ use std::{collections::BTreeSet, path::PathBuf};
 pub struct Plan {
     pub project: Option<PathBuf>,
     pub maps: Vec<PathBuf>,
+    pub point_clouds: Vec<PathBuf>,
     pub ignored: Vec<PathBuf>,
 }
 pub fn plan(paths: Vec<PathBuf>) -> Result<Plan, String> {
@@ -15,6 +16,7 @@ pub fn plan(paths: Vec<PathBuf>) -> Result<Plan, String> {
     let mut out = Plan::default();
     let mut tiffs = Vec::new();
     let mut dxfs = Vec::new();
+    let mut clouds = Vec::new();
     for path in paths {
         if path.as_os_str().is_empty() || !seen.insert(path.clone()) {
             continue;
@@ -35,14 +37,17 @@ pub fn plan(paths: Vec<PathBuf>) -> Result<Plan, String> {
             }
             "tif" | "tiff" => tiffs.push(path),
             "dxf" => dxfs.push(path),
+            "las" | "laz" => clouds.push(path),
             _ => out.ignored.push(path),
         }
     }
     tiffs.extend(dxfs);
     if out.project.is_some() {
         out.ignored.extend(tiffs);
+        out.ignored.extend(clouds);
     } else {
         out.maps = tiffs;
+        out.point_clouds=clouds;
     }
     Ok(out)
 }

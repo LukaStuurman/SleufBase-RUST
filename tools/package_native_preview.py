@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "SleufBase-Rust-portable-preview"
 LOGOS = ("apk.png", "bgm.png", "brabant_water.png", "enexis.png", "hanab.jpg", "hurkmans.png", "techbase_full.png", "wml.jpg")
-NOTICES = ("Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt")
+NOTICES = ("Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt", "Potree-NOTICES.txt")
 
 def digest(path: Path) -> str:
     with path.open("rb") as file:
@@ -28,6 +28,12 @@ def build(binary: Path, output: Path, revision: str, support: Path, logos: Path)
     files = {"sleufbase-rust.exe": binary, "README.md": ROOT / "rust/PORTABLE.md"}
     files.update({name: support / name for name in NOTICES})
     files.update({"assets/template_logos/" + name: logos / name for name in LOGOS})
+    from prepare_pointcloud_runtime import existing_is_complete, SOURCE_MANIFEST, DEFAULT_OUTPUT
+    sources = json.loads(SOURCE_MANIFEST.read_text(encoding="utf-8"))
+    if not existing_is_complete(DEFAULT_OUTPUT, sources, require_msvc=True):
+        raise ValueError("Prepare the complete offline point-cloud runtime first: python tools/prepare_pointcloud_runtime.py")
+    files.update({"pointcloud-runtime/" + path.relative_to(DEFAULT_OUTPUT).as_posix(): path
+                  for path in DEFAULT_OUTPUT.rglob("*") if path.is_file()})
     for relative, source in files.items():
         if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
             raise ValueError("Missing, linked or empty required payload: " + relative)

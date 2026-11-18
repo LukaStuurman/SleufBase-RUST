@@ -29,6 +29,8 @@ use sleufbase_rust::project::{
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[path="ui_pointcloud.rs"]
+mod pointcloud_ui;
 #[path="ui_file_loading.rs"]
 mod file_loading;
 #[path="ui_marxact_mapping.rs"]
@@ -181,6 +183,8 @@ fn live_refresh_fallback_error(original:String,fallback:String)->String {
 }
 
 pub struct SleufBaseApp {
+    point_clouds: Vec<sleufbase_rust::pointcloud::PointCloudSource>,
+    pointcloud_ui: pointcloud_ui::State,
     maaiveld_ui:maaiveld_ui::State,
     shell:shell_ui::State,
     busy_backdrop:busy_backdrop_ui::State,
@@ -294,6 +298,7 @@ impl Default for SleufBaseApp {
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
         let app = Self {
+            point_clouds:Vec::new(),pointcloud_ui:Default::default(),
             maaiveld_ui:Default::default(),
             shell:Default::default(),
             busy_backdrop:Default::default(),
@@ -393,7 +398,7 @@ impl Default for SleufBaseApp {
 }
 
 impl SleufBaseApp {
-    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.overview_ui.busy()||self.marxact_mapping.is_some()}
+    fn project_sources_owned(&self)->bool{self.project_exchange_busy()||self.overview_ui.busy()||self.marxact_mapping.is_some()||self.pointcloud_ui.busy()}
     fn snapshot(&self) -> NativeProject {
         NativeProject {
             view:Some(self.project_view.clone()),project_settings:self.project_settings.clone(),
@@ -401,6 +406,7 @@ impl SleufBaseApp {
             legacy_archive:self.legacy_archive.clone(),
             template_preferences:self.template_preferences.clone(),
             datasets:self.datasets.clone(),
+            point_clouds:self.point_clouds.clone(),
             rasters:self.geotiffs.clone(),
             overlays:self.overlays.clone(),
             bgt_layers:self.bgt_layers.clone(),
@@ -413,6 +419,7 @@ impl SleufBaseApp {
     }
 
     fn clear_project_requests(&mut self) {
+        self.pointcloud_ui.reset();
         if let Some(worker)=&mut self.pending_ahn {worker.cancel();}
         self.recovery_dialog=None;
         self.overview_ui=Default::default();
@@ -462,6 +469,8 @@ impl SleufBaseApp {
         self.background_restore_pending=self.project_view.use_background&&self.project_view.camera.is_some();
         self.project_settings=doc.project_settings;
         self.datasets=doc.datasets; self.geotiffs=doc.rasters;
+        self.point_clouds=doc.point_clouds;
+        self.sync_pointcloud_datasets();
         self.template_state=doc.template_export;
         self.raster_textures=vec![None;self.geotiffs.len()]; self.overlays=doc.overlays;
         self.dxf_selection=None;
@@ -482,6 +491,7 @@ impl SleufBaseApp {
     }
 
     fn request_project_action(&mut self,action:ProjectAction,ctx:&egui::Context) {
+        if self.pointcloud_blocks_action(){return;}
         if self.defer_for_project_exchange(&action)||self.defer_for_overview(&action){return;}
         if self.defer_action_for_export(&action)||self.defer_action_for_template(&action){return;}
         if self.pending_project_action.is_some() {return;}
@@ -497,6 +507,7 @@ impl SleufBaseApp {
     }
 
     fn execute_project_action(&mut self,action:ProjectAction,ctx:&egui::Context) {
+        if self.pointcloud_blocks_action(){return;}
         if self.defer_for_project_exchange(&action)||self.defer_for_overview(&action){return;}
         if self.defer_action_for_export(&action)||self.defer_action_for_template(&action){return;}
         match action {
@@ -540,6 +551,7 @@ impl SleufBaseApp {
     }
 
     fn save_project_file(&mut self, save_as: bool) -> bool {
+        if self.pointcloud_blocks_action(){return false;}
         if self.project_sources_owned(){self.message="Wacht tot de lopende taak is afgerond".into();return false;}
         if self.export_intent.is_some() || self.template_job.is_some(){self.message="Wacht tot de export is afgerond".into();return false;}
         let path = if !save_as {
@@ -553,6 +565,7 @@ impl SleufBaseApp {
     }
 
     fn save_project_to_path(&mut self,path:PathBuf) -> bool {
+        if self.pointcloud_blocks_action(){return false;}
         if self.project_sources_owned(){self.message="Wacht tot de lopende taak is afgerond".into();return false;}
         if self.export_intent.is_some() || self.template_job.is_some(){self.message="Wacht tot de export is afgerond".into();return false;}
         match save_project(&path,&self.snapshot()) {
@@ -566,7 +579,10 @@ impl SleufBaseApp {
     }
 
     fn try_autosave(&mut self) {
-        if self.project_sources_owned(){return;}
+        // The cloud editor sends validated snapshots back to the main thread;
+        // it does not move project sources out of this app. Keep periodic
+        // backups active during a long drawing session.
+        if self.project_exchange_busy()||self.overview_ui.busy()||self.marxact_mapping.is_some()||self.pointcloud_ui.importing(){return;}
         if self.export_intent.is_some() || self.template_job.is_some(){return;}
         if self.file_intent.is_some(){return;}
         if !self.backup_settings.enabled ||
@@ -1661,6 +1677,11 @@ impl eframe::App for SleufBaseApp {
 impl SleufBaseApp {
     fn render(&mut self,ctx:&egui::Context) {
         if !self.shell.installed { theme::install(ctx); self.shell.installed=true; }
+        self.poll_pointcloud(ctx);
+        if self.pointcloud_ui.busy() && ctx.input(|i|i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.pointcloud_blocks_action();
+        }
         self.poll_cable_line_selection(ctx);
         if self.maaiveld_ui.preloading() {
             if ctx.input(|i| i.viewport().close_requested()) {
@@ -1773,6 +1794,7 @@ impl SleufBaseApp {
         }
         if self.export_intent.is_some(){self.show_export_progress(ctx);return;}
         self.show_extended_tools(ctx);
+        self.show_pointcloud_manager(ctx);
 
         if self.show_trench_dialog {
             let mut open=self.show_trench_dialog;

@@ -8,7 +8,7 @@ import re
 import struct
 import zipfile
 
-REQUIRED = {"sleufbase-rust.exe", "README.md", "Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt"}
+REQUIRED = {"sleufbase-rust.exe", "README.md", "Pillow-LICENSE.txt", "ezdxf-LICENSE.txt", "proj4rs-NOTICES.txt", "wry-LICENSE.txt", "RustCrypto-NOTICES.txt", "Potree-NOTICES.txt"}
 REQUIRED |= {"assets/template_logos/" + name for name in ("apk.png", "bgm.png", "brabant_water.png", "enexis.png", "hanab.jpg", "hurkmans.png", "techbase_full.png", "wml.jpg")}
 
 def verify(archive: Path, checksum: Path) -> dict:
@@ -19,7 +19,14 @@ def verify(archive: Path, checksum: Path) -> dict:
     with zipfile.ZipFile(archive) as zipped:
         entries = zipped.infolist()
         names = [entry.filename for entry in entries]
-        if len(names) != len(set(name.casefold() for name in names)) or set(names) != REQUIRED | {"build-info.json"}:
+        from prepare_pointcloud_runtime import REQUIRED as RUNTIME_REQUIRED, WINDOWS_REQUIRED
+        runtime_names = {name for name in names if name.startswith("pointcloud-runtime/")}
+        payload = REQUIRED | runtime_names
+        if not {"pointcloud-runtime/" + name for name in (*RUNTIME_REQUIRED, *WINDOWS_REQUIRED)}.issubset(runtime_names):
+            raise ValueError("The offline point-cloud runtime is incomplete")
+        if "pointcloud-runtime/runtime-manifest.json" not in runtime_names:
+            raise ValueError("The point-cloud runtime manifest is missing")
+        if len(names) != len(set(name.casefold() for name in names)) or set(names) != payload | {"build-info.json"}:
             raise ValueError("Missing, extra or duplicate package entries")
         if sum(entry.file_size for entry in entries) > 2 * 1024**3:
             raise ValueError("Package exceeds the unpacked byte budget")
@@ -38,8 +45,26 @@ def verify(archive: Path, checksum: Path) -> dict:
             raise ValueError("Invalid application version")
         if manifest["revision"] != "working-tree" and not re.fullmatch(r"[0-9a-f]{40}", str(manifest["revision"])):
             raise ValueError("Invalid build revision")
+        runtime_manifest_path = "pointcloud-runtime/runtime-manifest.json"
+        if zipped.getinfo(runtime_manifest_path).file_size > 1024 * 1024:
+            raise ValueError("Point-cloud runtime manifest is too large")
+        runtime = json.loads(zipped.read(runtime_manifest_path))
+        if (runtime.get("format") != "sleufbase-pointcloud-runtime" or runtime.get("version") != 1
+                or runtime.get("windows_runtime_complete") is not True):
+            raise ValueError("Point-cloud runtime is not complete for Windows")
+        runtime_records = runtime.get("files", [])
+        if (not isinstance(runtime_records, list)
+                or len(runtime_records) != len(runtime_names) - 1
+                or {"pointcloud-runtime/" + r.get("path", "") for r in runtime_records}
+                    != runtime_names - {runtime_manifest_path}):
+            raise ValueError("Incomplete point-cloud runtime manifest")
+        packaged_records = {r["path"]: r for r in manifest["files"]}
+        for record in runtime_records:
+            packaged = packaged_records.get("pointcloud-runtime/" + record["path"], {})
+            if record.get("size") != packaged.get("size") or record.get("sha256") != packaged.get("sha256"):
+                raise ValueError("Point-cloud runtime and package manifests disagree")
         records = manifest["files"]
-        if not isinstance(records, list) or len(records) != len(REQUIRED) or {r.get("path") for r in records} != REQUIRED:
+        if not isinstance(records, list) or len(records) != len(payload) or {r.get("path") for r in records} != payload:
             raise ValueError("Incomplete manifest payload list")
         for record in records:
             if set(record) != {"path", "size", "sha256"} or type(record["size"]) is not int or record["size"] <= 0 or not re.fullmatch(r"[0-9a-f]{64}", str(record["sha256"])):

@@ -206,7 +206,7 @@ impl SleufBaseApp {
         }
     }
     pub(super) fn clear_map_layers(&mut self, ctx: &egui::Context) {
-        let changed = !self.datasets.is_empty()
+        let changed = !self.point_clouds.is_empty() || !self.datasets.is_empty()
             || !self.geotiffs.is_empty()
             || !self.overlays.is_empty()
             || !self.virtual_trenches.is_empty()
@@ -224,6 +224,7 @@ impl SleufBaseApp {
         self.browser_ui.downloaded_tiffs.clear();
         self.browser_ui.batch_mode = false;
         self.datasets.clear();
+        self.point_clouds.clear();
         self.geotiffs.clear();
         self.raster_textures.clear();
         self.raster_errors.clear();

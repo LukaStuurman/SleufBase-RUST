@@ -77,6 +77,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_native_preview_package.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare bundled offline LAS/LAZ viewer and converter
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vsRoot = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsRoot) { throw 'Visual C++ redistributable source installation not found' }
+          $redistRoot = Join-Path $vsRoot 'VC/Redist/MSVC'
+          $crt = Get-ChildItem -Path "$redistRoot/*/x64/Microsoft.VC*.CRT" -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'msvcp140_atomic_wait.dll') } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'Complete x64 Visual C++ redistributable directory not found' }
+          python tools/prepare_pointcloud_runtime.py --msvc-runtime-dir "$($crt.FullName)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package and verify portable app
         shell: pwsh
         run: |

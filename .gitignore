@@ -1,3 +1,5 @@
+/.cache/pointcloud-runtime/
+/rust/assets/pointcloud-runtime/
 /rust/target/
 /rust/dist/
 /rust/dist-installer/

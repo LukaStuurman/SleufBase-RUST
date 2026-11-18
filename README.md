@@ -1,6 +1,6 @@
 # SleufBase Rust
 
-SleufBase Rust is een Windows-app voor proefsleuven, kabels en leidingen. Je brengt KickTheMap-jobs, GeoTIFF-beelden, KLIC-tekeningen, marXact-metingen en zelf getekende proefsleuven samen op één kaart. Daarna maak je kaarten, DXF-sjabloontekeningen en discipline-overzichten. De desktopapp heeft geen Python-installatie nodig.
+SleufBase Rust is een Windows-app voor proefsleuven, kabels en leidingen. Je brengt KickTheMap-jobs, GeoTIFF-beelden, KLIC-tekeningen, lokale LAS/LAZ-puntenwolken, marXact-metingen en zelf getekende proefsleuven samen op één kaart. Daarna maak je kaarten, DXF-sjabloontekeningen en discipline-overzichten. De desktopapp heeft geen Python-installatie nodig.
 
 ## Downloaden
 
@@ -34,6 +34,14 @@ De **[gebruikershandleiding](rust/HANDLEIDING.md)** beschrijft de bediening stap
 
 Het KickTheMap-jobvenster heeft kabel- en leidingvelden **in de webpagina zelf**. Sla je wijzigingen op in KickTheMap en gebruik daarna **Objecten opnieuw laden** in Jobs om de lokale projectgegevens bij te werken. Dubbelklikken op een jobregel laadt de gegevens; dubbelklikken op een punt in de jobskaart opent het jobvenster. De handleiding legt deze bediening verder uit.
 
+## Puntenwolken van andere leveranciers
+
+Open **Puntenwolk → LAS/LAZ openen** voor een lokale scan van KickTheMap of een andere leverancier. SleufBase bereidt de scan lokaal voor en opent een eigen Potree-editor. Teken punten en polylijnen, vul naam, materiaal, diameter en omschrijving in en sluit de editor om verder te werken in het project.
+
+Met **Puntenwolken beheren → Maak proefsleuf** kies je een gemeten lijn met twee eindpunten als sleufas. Geselecteerde meetpunten en werkelijke kruisingen van kabelpolylijnen worden overgenomen in de bestaande sleufbewerker en DXF-sjabloonexport. Kaart- en proefsleufintegratie vereisen bevestigde RD-coördinaten in meters. Bij andere stelsels blijven de originele XYZ behouden en kun je getekende objecten rechtstreeks naar DXF exporteren.
+
+De installer en portable ZIP bevatten de viewer en converter; import en tekenen vereisen geen online account. Bewaar het Rust-project én de originele LAS/LAZ als je het werk naar een andere computer verplaatst. De lokale weergave kan daar opnieuw worden opgebouwd.
+
 ## Voor ontwikkeling
 
 [Technische documentatie en historische migratienotities](rust/README.md) beschrijven de opbouw en eerdere vergelijkingen. De gedateerde rapporten leggen resultaten van hun eigen bronrevisie vast; ze vervangen de actuele gebruikershandleiding niet.
@@ -44,6 +52,8 @@ Zelf bouwen op Windows met Rust stable en de C++-buildtools:
 cargo build --locked --release --manifest-path rust/Cargo.toml --bin sleufbase-rust
 .\rust\target\release\sleufbase-rust.exe
 ```
+
+Voor lokaal gebruik tijdens ontwikkeling: voer `python tools/prepare_pointcloud_runtime.py --msvc-runtime-dir "<pad-naar-x64-Microsoft.VC143.CRT>"` uit. Gebruik de releasebibliotheken onder de Visual Studio-map `VC/Redist/MSVC/<versie>/x64`; de Windows-workflow zoekt die map automatisch op. Dit haalt de vastgelegde upstream-versies op, controleert hun SHA-256 en bundelt de vereiste converterbibliotheken. De applicatie downloadt tijdens gebruik geen viewer of converter.
 
 Voor een compleet pakket zijn ook de meegeleverde logo's en licentiebestanden nodig. De Windows-workflow maakt de installer en de portable ZIP. Ontwikkelbuilds staan bij [Actions](https://github.com/LukaStuurman/SleufBase-RUST/actions).
 

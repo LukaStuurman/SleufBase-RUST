@@ -129,6 +129,8 @@ impl Default for Options {
 pub fn suggest(datasets: &[Dataset], rasters: &[GeoTiffInfo], trenches: &[VirtualTrench]) -> Vec<Choice> {
     let mut choices = Vec::with_capacity(datasets.len()+trenches.len());
     for (i, job) in datasets.iter().enumerate() {
+        // Cloud drawings are map/object layers; an explicitly created trench supplies its profile.
+        if crate::pointcloud::is_cloud_dataset(job) { continue; }
         let raster=crate::template_match::for_job(job,rasters).raster;
         choices.push(Choice {
             manual_scale:raster.and_then(|i|crate::template_scale::coerce(rasters[i].metadata.get(crate::template_scale::METADATA_KEY))),

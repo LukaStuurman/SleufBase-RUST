@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Puntenwolk bewerken · SleufBase</title>
+  <link rel="stylesheet" href="./vendor/build/potree/potree.css">
+  <link rel="stylesheet" href="./editor.css">
+</head>
+<body>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="icon-point" viewBox="0 0 24 24"><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="icon-line" viewBox="0 0 24 24"><path d="m5 17 7-10 7 8"/><circle cx="5" cy="17" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="19" cy="15" r="2"/></symbol>
+      <symbol id="icon-hand" viewBox="0 0 24 24"><path d="M8 12V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8c0 4-3 6-6 6h-1c-2 0-4-1-5-3l-4-5a2 2 0 0 1 3-2l1 1"/></symbol>
+      <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 3h12l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8"/></symbol>
+      <symbol id="icon-undo" viewBox="0 0 24 24"><path d="m9 4-5 5 5 5M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+      <symbol id="icon-redo" viewBox="0 0 24 24"><path d="m15 4 5 5-5 5m5-5H10a6 6 0 0 0 0 12h3"/></symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
+      <symbol id="icon-fit" viewBox="0 0 24 24"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="icon-top" viewBox="0 0 24 24"><path d="M4 5h16v15H4zM9 2h6m-3 0v5"/></symbol>
+      <symbol id="icon-cube" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7zM3 7l9 5 9-5M12 12v10"/></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+      <symbol id="icon-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 8a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4m0 3v1"/></symbol>
+    </defs>
+  </svg>
+  <div id="editor-app" class="editor-app">
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true"><svg><use href="#icon-cube"/></svg></div>
+      <div class="header-title"><span class="eyebrow">SLEUFBASE <span>· PUNTENWOLK</span></span><h1 id="source-title">Puntenwolk openen</h1></div>
+      <span class="local-badge">Lokaal bestand</span>
+      <div class="header-actions">
+        <button id="help-button" class="icon-button" title="Uitleg en sneltoetsen" aria-label="Uitleg en sneltoetsen"><svg><use href="#icon-help"/></svg></button>
+        <button id="save-button" class="primary-button" disabled><svg><use href="#icon-save"/></svg><span>Opslaan</span></button>
+        <button id="close-button" class="quiet-button">Opslaan en sluiten</button>
+      </div>
+    </header>
+    <nav class="toolbar" aria-label="Puntenwolk gereedschap">
+      <div class="tool-group" aria-label="Tekenen">
+        <button id="navigate-button" class="tool-button active" aria-pressed="true" disabled title="Bekijken en verplaatsen (V)"><svg><use href="#icon-hand"/></svg>Bekijken</button>
+        <button id="point-button" class="tool-button" aria-pressed="false" disabled title="Punt plaatsen (P)"><svg><use href="#icon-point"/></svg>Punt</button>
+        <button id="line-button" class="tool-button" aria-pressed="false" disabled title="Polylijn tekenen (L)"><svg><use href="#icon-line"/></svg>Polylijn</button>
+      </div>
+      <div class="toolbar-divider"></div>
+      <div class="tool-group">
+        <button id="undo-button" class="icon-button" disabled title="Ongedaan maken (Ctrl+Z)" aria-label="Ongedaan maken"><svg><use href="#icon-undo"/></svg></button>
+        <button id="redo-button" class="icon-button" disabled title="Opnieuw (Ctrl+Shift+Z)" aria-label="Opnieuw"><svg><use href="#icon-redo"/></svg></button>
+        <button id="delete-button" class="icon-button" disabled title="Geselecteerd object verwijderen (Delete)" aria-label="Geselecteerd object verwijderen"><svg><use href="#icon-trash"/></svg></button>
+      </div>
+      <div class="toolbar-divider"></div>
+      <div class="tool-group">
+        <button id="fit-button" class="icon-button" disabled title="Hele puntenwolk in beeld (F)" aria-label="Hele puntenwolk in beeld"><svg><use href="#icon-fit"/></svg></button>
+        <button id="top-button" class="tool-button" disabled aria-pressed="false"><svg><use href="#icon-top"/></svg>Boven</button>
+        <button id="perspective-button" class="tool-button active" disabled aria-pressed="true"><svg><use href="#icon-cube"/></svg>3D</button>
+      </div>
+      <div class="display-controls">
+        <label for="color-mode">Kleur</label><select id="color-mode" disabled><option value="rgba">RGB</option><option value="elevation">Hoogte</option><option value="intensity">Intensiteit</option></select>
+        <label for="point-size">Puntgrootte</label><input id="point-size" type="range" min="0.5" max="5" step="0.25" value="1" disabled><output id="point-size-value" for="point-size">1</output>
+      </div>
+    </nav>
+    <div id="error-banner" class="error-banner" role="alert" hidden><span id="error-message"></span><button id="retry-save-button" hidden>Opnieuw opslaan</button><button id="dismiss-error-button" class="icon-button" aria-label="Melding sluiten"><svg><use href="#icon-close"/></svg></button></div>
+    <main class="editor-main">
+      <aside class="sidebar" aria-label="Objecten en eigenschappen">
+        <section class="objects-section">
+          <div class="section-heading"><h2>Getekende objecten</h2><span id="object-count" class="count-badge">0</span></div>
+          <input id="object-filter" class="search-field" type="search" placeholder="Zoeken op naam…" aria-label="Objecten zoeken" disabled>
+          <div id="object-list" class="object-list" role="listbox" aria-label="Getekende objecten"></div>
+          <p id="empty-list" class="empty-state">Plaats een punt of teken een lijn op de puntenwolk. Je objecten verschijnen hier.</p>
+        </section>
+        <section class="properties-section">
+          <div class="section-heading"><h2>Eigenschappen</h2><button id="focus-object-button" class="icon-button small" disabled title="Naar geselecteerd object" aria-label="Naar geselecteerd object"><svg><use href="#icon-fit"/></svg></button></div>
+          <p id="no-selection" class="muted">Selecteer een object om de naam, kenmerken en coördinaten te bekijken.</p>
+          <fieldset id="properties-fields" disabled hidden>
+            <label for="object-name">Naam</label><input id="object-name" type="text" maxlength="512" autocomplete="off">
+            <label for="attribute-0">Materiaal</label><input id="attribute-0" type="text" maxlength="2048" placeholder="Bijvoorbeeld PVC of koper" autocomplete="off">
+            <label for="attribute-1">Diameter</label><input id="attribute-1" type="text" maxlength="2048" placeholder="Bijvoorbeeld 110 mm" autocomplete="off">
+            <label for="attribute-2">Bundel / omschrijving</label><input id="attribute-2" type="text" maxlength="2048" placeholder="Aanvullende informatie" autocomplete="off">
+            <div id="object-summary" class="object-summary"></div>
+            <div class="coordinate-heading">Coördinaten in het bronbestand</div>
+            <div class="coordinate-table-wrap"><table class="coordinate-table"><thead><tr><th>Punt</th><th>X</th><th>Y</th><th>Z</th></tr></thead><tbody id="coordinate-rows"></tbody></table></div>
+            <p class="field-hint">Sleep een oranje bol om een vertex op de puntenwolk te verplaatsen. Z is de bronhoogte.</p>
+          </fieldset>
+        </section>
+        <details class="source-details"><summary>Over deze puntenwolk</summary><dl><dt>Bestand</dt><dd id="source-path">—</dd><dt>Bronpunten</dt><dd id="source-points">—</dd><dt>Coördinatenstelsel</dt><dd id="source-crs">—</dd></dl><p>De oorspronkelijke XYZ-coördinaten blijven behouden.</p></details>
+        <div class="engine-credit">3D-weergave met <strong>Potree 1.8.2</strong></div>
+      </aside>
+      <section id="viewport" class="viewport" aria-label="Interactieve 3D-puntenwolk">
+        <div id="potree_render_area" class="render-area"></div>
+        <div id="loading-overlay" class="loading-overlay" role="status"><div class="loading-card"><div id="loading-spinner" class="spinner"></div><h2 id="loading-title">Puntenwolk laden</h2><p id="loading-message">Je lokale puntenwolk wordt klaargezet.</p><button id="reload-button" class="primary-button" hidden>Opnieuw openen</button></div></div>
+        <div id="drawing-hint" class="drawing-hint" hidden><span id="drawing-message"></span><button id="finish-button" class="primary-button"><svg><use href="#icon-check"/></svg>Afronden</button><button id="cancel-button" class="quiet-button">Annuleren</button></div>
+        <div class="canvas-hint" id="canvas-hint">Slepen: draaien <span>·</span> Rechts slepen: verplaatsen <span>·</span> Scrollen: zoomen</div>
+        <div id="coordinate-readout" class="coordinate-readout" hidden></div>
+      </section>
+    </main>
+    <footer class="statusbar"><span id="save-status" class="save-status" role="status" aria-live="polite">Puntenwolk laden…</span><span id="cloud-status"></span><span id="coordinate-system-status">Broncoördinaten</span></footer>
+  </div>
+  <dialog id="help-dialog" class="help-dialog"><div class="section-heading"><h2>Tekenen op je puntenwolk</h2><button id="close-help-button" class="icon-button" aria-label="Uitleg sluiten"><svg><use href="#icon-close"/></svg></button></div><p>Kies <strong>Punt</strong> of <strong>Polylijn</strong> en klik op zichtbare punten in de scan. De getekende objecten gebruiken de oorspronkelijke XYZ-coördinaten.</p><dl class="help-keys"><dt>P / L / V</dt><dd>Punt, polylijn of bekijken</dd><dt>Enter / rechtermuisknop</dt><dd>Polylijn afronden</dd><dt>Esc</dt><dd>De actieve tekening annuleren</dd><dt>Ctrl+Z / Ctrl+Shift+Z</dt><dd>Ongedaan maken / opnieuw</dd><dt>Delete</dt><dd>Geselecteerd object verwijderen</dd><dt>F</dt><dd>Hele puntenwolk in beeld</dd><dt>Ctrl+S</dt><dd>Wijzigingen opslaan in SleufBase</dd></dl><p>Selecteer een object in de lijst of klik op een bol in het beeld. Sleep een bol naar een ander punt in de scan om de geometrie aan te passen. Dubbelklik op een object in de lijst om erop in te zoomen.</p><p>Afgeronde objecten en wijzigingen worden automatisch doorgegeven aan SleufBase. De knop <strong>Opslaan en sluiten</strong> wacht totdat die wijzigingen zijn bewaard. Sla daarna je SleufBase-project op om het projectbestand bij te werken.</p></dialog>
+  <script>
+    // If a packaged dependency is missing, there cannot be new edits yet.
+    // Keep the native close contract available even before the module loads.
+    window.sleufbaseBeforeClose = async function () {
+      if (window.ipc) window.ipc.postMessage('close');
+    };
+    window.addEventListener('error', function (event) {
+      if (window.sleufbaseReportError) return;
+      document.getElementById('loading-title').textContent = 'De editor kon niet starten';
+      document.getElementById('loading-message').textContent = 'Een lokaal onderdeel ontbreekt of kon niet worden geladen. Sluit dit venster en controleer de installatie van SleufBase.';
+      document.getElementById('loading-spinner').hidden = true;
+    }, true);
+  </script>
+  <script src="./vendor/libs/jquery/jquery-3.1.1.min.js"></script>
+  <script src="./vendor/libs/spectrum/spectrum.js"></script>
+  <script src="./vendor/libs/jquery-ui/jquery-ui.min.js"></script>
+  <script src="./vendor/libs/other/BinaryHeap.js"></script>
+  <script src="./vendor/libs/tween/tween.min.js"></script>
+  <script src="./vendor/libs/d3/d3.js"></script>
+  <script src="./vendor/libs/proj4/proj4.js"></script>
+  <script src="./vendor/libs/openlayers3/ol.js"></script>
+  <script src="./vendor/libs/i18next/i18next.js"></script>
+  <script src="./vendor/libs/jstree/jstree.js"></script>
+  <script src="./vendor/build/potree/potree.js"></script>
+  <script type="module" src="./editor.js"></script>
+</body>
+</html>

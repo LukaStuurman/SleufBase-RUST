@@ -133,6 +133,7 @@ pub fn legacy_payload(project:&NativeProject,ui:&ProjectUiState)->Result<Value,S
 fn legacy_payload_with_cancel(project:&NativeProject,ui:&ProjectUiState,cancel:&AtomicBool)->Result<Value,String>{
     crate::input::check(cancel)?;
     project.validate()?;ui.validate()?;
+    if !project.point_clouds.is_empty(){return Err("Python-projectexport ondersteunt geen puntenwolken of bijbehorende tekenobjecten; sla deze gegevens op als SleufBase Rust-project".into());}
     if !project.datasets.is_empty()||!project.bgt_layers.is_empty()||project.cadastral.is_some(){return Err("Python-projectexport ondersteunt nog geen losse jobdatasets/BGT/Kadasterlagen; sla deze gegevens eerst in het Rust-project op".into());}
     let archive=project.legacy_archive.as_ref();
     let mut output=archive.map(|a|object(&a.original)).unwrap_or_default();

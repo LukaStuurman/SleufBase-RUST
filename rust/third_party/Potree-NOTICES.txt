@@ -1,0 +1,58 @@
+SleufBase point-cloud editor: third-party notices
+================================================
+
+Potree 1.8.2
+Copyright (c) 2011-2020, Markus Schuetz / Markus Schütz and contributors.
+Source: https://github.com/potree/potree/tree/1.8.2
+Release: https://github.com/potree/potree/releases/tag/1.8.2
+
+The point-cloud renderer, picking, navigation, measurement geometry and
+streaming workers are the original Potree implementation. SleufBase provides
+its own editor interface and project persistence around this implementation.
+Potree is distributed under its two-condition BSD license. The unmodified
+license text is included at assets/pointcloud-runtime/LICENSE and
+assets/pointcloud-runtime/build/potree/LICENSE.
+
+PotreeConverter 2.1.5 (Windows x64)
+Copyright Markus Schuetz / Markus Schütz and contributors.
+Source: https://github.com/potree/PotreeConverter/tree/2.1.5
+Release: https://github.com/potree/PotreeConverter/releases/tag/2.1.5
+
+PotreeConverter and its supplied laszip.dll are distributed together with
+their original license files in assets/pointcloud-runtime/converter/licenses.
+These include the PotreeConverter BSD license, LASzip Apache 2.0 license,
+Brotli MIT license and nlohmann/json MIT license.
+
+The converter also requires the Microsoft Visual C++ x64 runtime. Windows
+packages contain unmodified app-local release DLLs from the build machine's
+Visual Studio VC/Redist directory, including msvcp140, msvcp140_atomic_wait,
+vcruntime140 and vcruntime140_1. Their original filenames are retained.
+Microsoft copyright, licensing references and exact file provenance are in:
+  assets/pointcloud-runtime/converter/licenses/Microsoft-VCRuntime-NOTICES.txt
+  assets/pointcloud-runtime/converter/licenses/Microsoft-VCRuntime-PROVENANCE.json
+When supplied at build time, the original Microsoft license terms file is
+included in that directory as Microsoft-VCRuntime-LICENSE with its extension.
+The Microsoft files remain subject to the applicable Microsoft Software
+License Terms; they are not licensed under Potree's BSD license.
+
+Bundled viewer dependencies
+---------------------------
+The original Potree release's build/potree and libs directories are retained,
+including original copyright/license files and copyright headers. They include
+Three.js, jQuery, jQuery UI, Tween.js, BinaryHeap, D3, Proj4js, OpenLayers,
+Spectrum, jsTree, i18next, plas.io/LAZ decoding, COPC/laz-perf, Brotli, JSON5,
+and the additional resources and optional modules shipped by that release.
+Their individual licenses remain in their respective directories. Texture
+and other resource licenses are also included under build/potree/resources.
+
+Source provenance and reproduction
+---------------------------------
+tools/pointcloud-runtime-manifest.json pins both official archive URLs,
+versions, byte sizes and SHA256 checksums. tools/prepare_pointcloud_runtime.py
+verifies those archives before extracting them. The generated runtime contains
+PROVENANCE.json and runtime-manifest.json, including source versions and a
+SHA256 record for every extracted file.
+
+The runtime is prepared during development/packaging. Opening and editing
+local point clouds in SleufBase does not download or upload these resources,
+does not contact a CDN and does not require a KickTheMap account.

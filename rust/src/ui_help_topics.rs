@@ -3,6 +3,17 @@ use super::Topic;
 
 pub(super) const TOPICS: &[Topic] = &[
     Topic {
+        title: "LAS/LAZ-puntenwolken",
+        summary: "Scans van verschillende leveranciers openen en punten of lijnen tekenen.",
+        keywords: "potree las laz puntenwolk pointcloud 3d import leverancier scan meten lijn punt",
+        sections: &[
+            ("Bestand openen", "Kies Puntenwolk > LAS/LAZ openen of sleep het bestand naar de app. Kies een naam en controleer het coördinatenstelsel. SleufBase bereidt de scan lokaal voor. De viewer en converter worden met het programma meegeleverd."),
+            ("Tekenen en bewaren", "Klik in de editor op Punt of Lijn en vervolgens op de zichtbare puntenwolk. Rechts klikken rondt een lijn af. Vul naam, materiaal, diameter en omschrijving in. Sluit de editor na het opslaan en bewaar daarna het Rust-project via Acties > Project opslaan."),
+            ("Proefsleuf maken", "Teken een rechte lijn met twee maaiveldpunten als sleufas. Kies in Puntenwolken beheren de actie Maak proefsleuf. Selecteer as, breedte en kabelobjecten. Punten binnen de sleuf en echte kruisingen van kabelpolylijnen worden overgenomen. Controleer hoogtes en eigenschappen in de sleufbewerker; daarna kun je de DXF-sjabloonexport gebruiken."),
+            ("Coördinaten en andere computers", "Alle XYZ blijven in het oorspronkelijke stelsel. Alleen bevestigde RD-coördinaten in meters worden op de kaart overgenomen. Objecten naar DXF gebruikt de originele coördinaten. Bewaar het oorspronkelijke LAS/LAZ samen met het project. Bij verplaatsing kun je het bronbestand opnieuw kiezen en de weergave opnieuw opbouwen."),
+        ],
+    },
+    Topic {
         title: "Snel beginnen",
         summary: "Laad je bronnen, vul de sleuven aan en maak een tekening.",
         keywords: "start eerste stappen workflow handleiding uitleg beginner project",

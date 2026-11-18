@@ -1,0 +1,34 @@
+{
+  "format": "sleufbase-pointcloud-runtime-sources",
+  "version": 1,
+  "platform": "windows-x86_64",
+  "windows_runtime_requirements": {
+    "provider": "Microsoft Visual C++ x64 redistributable files from the build machine's licensed Visual Studio installation",
+    "source": "VC/Redist/MSVC/<version>/x64/Microsoft.VC*.CRT",
+    "required_dlls": ["msvcp140.dll", "msvcp140_atomic_wait.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
+    "redistribution_url": "https://learn.microsoft.com/visualstudio/releases/2022/redistribution",
+    "license_directory_url": "https://visualstudio.microsoft.com/license-terms/"
+  },
+  "sources": [
+    {
+      "id": "potree",
+      "version": "1.8.2",
+      "filename": "Potree_1.8.2.zip",
+      "url": "https://github.com/potree/potree/releases/download/1.8.2/Potree_1.8.2.zip",
+      "source_url": "https://github.com/potree/potree/tree/1.8.2",
+      "archive_root": "Potree_1.8.2",
+      "size": 59387644,
+      "sha256": "c140a8bce0ce129de762fbc0fd3ba7c21120ffd36d423dd2755abb39f32aebe5"
+    },
+    {
+      "id": "converter",
+      "version": "2.1.5",
+      "filename": "PotreeConverter_2.1.5_x64_windows.zip",
+      "url": "https://github.com/potree/PotreeConverter/releases/download/2.1.5/PotreeConverter_2.1.5_x64_windows.zip",
+      "source_url": "https://github.com/potree/PotreeConverter/tree/2.1.5",
+      "archive_root": "PotreeConverter_2.1.5_x64_windows",
+      "size": 14407178,
+      "sha256": "a05bc3a936e41705649dc41b9ae4300ee5273ed23a3f1845e94690ca142e6248"
+    }
+  ]
+}

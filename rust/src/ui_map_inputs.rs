@@ -59,7 +59,8 @@ impl SleufBaseApp {
             };
             self.request_project_action(ProjectAction::OpenInput(path), ctx);
         } else {
-            self.load_map_inputs(plan.maps, plan.ignored.len());
+            if !plan.point_clouds.is_empty(){self.queue_pointcloud_files(plan.point_clouds);}
+            if !plan.maps.is_empty() || plan.ignored.len()>0 {self.load_map_inputs(plan.maps, plan.ignored.len());}
         }
     }
 }

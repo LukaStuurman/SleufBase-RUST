@@ -1,41 +1,27 @@
-## SleufBase Rust 1.0.29 voor Windows
+# SleufBase Rust 1.0.30 — lokale LAS/LAZ-puntenwolkeditor
 
-### Kabelgroepen samen selecteren
+Scans van andere leveranciers kunnen rechtstreeks in SleufBase worden verwerkt met een eigen Potree-editor. De installer en portable ZIP bevatten de viewer en converter; een KickTheMap-account is hiervoor niet nodig.
 
-- Klik in **Kabelobjecten** op de groepsnaam of het groepsvak om alle kabels in die groep te selecteren.
-- Alleen het **pijltje** klapt een groep uit of in. Dit verandert de selectie niet.
-- De geselecteerde groep en alle geselecteerde kabelregels worden oranje; alle geselecteerde kabels krijgen ook een markering op de kaart.
-- **Kabelinformatie** toont bij een groepsselectie het totale aantal objecten en de aantallen per laag.
-- Klik op een afzonderlijk kabelkaartje om alleen die kabel te selecteren. De wisselknop blijft telkens één kabel kiezen.
-- De uitleg in **Info en handleiding** en de handleiding zijn bijgewerkt.
+## Nieuw
 
-### Publicatie zonder tests
+- LAS- en LAZ-bestanden openen via het menu Puntenwolk of slepen naar het hoofdvenster.
+- Lokale conversie met voortgang en annuleren, gevolgd door een ingebouwde WebView2/Potree-editor.
+- Punten en polylijnen op de puntenwolk tekenen, verplaatsen, benoemen en verwijderen, met ongedaan maken en opnieuw uitvoeren.
+- Materiaal, diameter en bundel/omschrijving per getekend object bewaren.
+- Getekende objecten opslaan in het Rust-project en exporteren naar DXF met de originele XYZ-coördinaten.
+- RD-meetobjecten opnemen op de kaart. Andere coördinatenstelsels blijven in hun oorspronkelijke stelsel en worden niet automatisch als RD behandeld.
+- Een gemeten sleufas kiezen en geselecteerde meetpunten/kabelkruisingen overnemen naar de bestaande proefsleufbewerker en DXF-sjabloonexport.
+- Hetzelfde bronbestand opnieuw koppelen en de lokale weergave opnieuw opbouwen zonder de opgeslagen tekenobjecten te verliezen.
 
-Op verzoek zijn geen tests, Clippy-controles of applicatietests uitgevoerd. De releaseworkflow bouwt de Windows-toepassing, maakt de installer en portable ZIP en controleert de pakketinhoud, versie, bronrevisie en SHA-256-controlesommen. De teststappen en Clippy worden overgeslagen.
+## Gebruik
 
-### Downloaden en bijwerken
+1. Open **Puntenwolk → LAS/LAZ openen** en controleer naam en coördinatenstelsel.
+2. Teken in de editor punten en lijnen en vul hun eigenschappen in.
+3. Sluit de editor en bewaar het project via **Acties → Project opslaan**.
+4. Gebruik **Puntenwolken beheren → Maak proefsleuf** voor verwerking in een proefsleuf, of **Objecten naar DXF** voor de volledige getekende geometrie.
 
-Gebruik **SleufBase-Rust-Setup.exe** voor installatie of bijwerken, of pak **SleufBase-Rust-portable.zip** volledig uit. Sluit SleufBase voordat je bijwerkt. Bij beide downloads staat een SHA-256-controlebestand.
+Bewaar bij het overzetten van een project ook de oorspronkelijke LAS/LAZ. De puntenwolkeditor wijzigt het bronbestand niet. Kaart- en proefsleufintegratie vereisen RD New in meters; er vindt geen automatische herprojectie plaats.
 
-## SleufBase Rust 1.0.28 voor Windows
+## Controle
 
-### Locatie openen en sluiten
-
-- Klik nogmaals op **Locatie** om het zoekpaneel te sluiten.
-- Bij sluiten worden een lopende zoekopdracht en nog geplande zoeksuggesties geannuleerd. De zoektekst blijft bewaard voor wanneer je het paneel weer opent.
-- **Ctrl+L** blijft het zoekpaneel openen en zet de cursor in het zoekveld, ook als het paneel al openstaat.
-
-### TIFF-adressen passen zich aan het venster aan
-
-- De adressenlijst gebruikt de beschikbare vensterhoogte, zodat een groter venster meer regels toont.
-- Kolommen passen zich aan de breedte aan. In een smal venster staan bestandsnaam en adres onder elkaar.
-- Kopieerknoppen en **Vernieuwen** blijven onderaan beschikbaar en gaan bij weinig ruimte naar een volgende regel.
-- De uitleg in **Info en handleiding** is bijgewerkt.
-
-### Publicatie zonder tests
-
-Op verzoek zijn geen tests, Clippy-controles of applicatietests uitgevoerd. De releaseworkflow bouwt de Windows-toepassing, maakt de installer en portable ZIP en controleert de pakketinhoud, versie, bronrevisie en SHA-256-controlesommen. De teststappen en Clippy worden overgeslagen.
-
-### Downloaden en bijwerken
-
-Gebruik **SleufBase-Rust-Setup.exe** voor installatie of bijwerken, of pak **SleufBase-Rust-portable.zip** volledig uit. Sluit SleufBase voordat je bijwerkt. Bij beide downloads staat een SHA-256-controlebestand.
+Deze release wordt gebouwd en verpakt met de vastgelegde Potree- en PotreeConverter-versies en SHA-256-controles. De geautomatiseerde tests worden op verzoek overgeslagen. Praktijkcontrole met eigen LAS/LAZ-bestanden en WebView2 op Windows blijft nodig.

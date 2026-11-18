@@ -157,6 +157,7 @@ impl SleufBaseApp {
         }false
     }
     pub(super) fn choose_python_project_export(&mut self){
+        if !self.point_clouds.is_empty(){self.message="Bewaar dit project als SleufBase Rust-project om de puntenwolken en tekenobjecten te behouden.".into();return;}
         if self.project_sources_owned()||self.export_intent.is_some()||self.template_job.is_some()||self.file_intent.is_some()||self.pending_project_action.is_some()||self.trench_editor.is_some(){
             self.message="Rond de lopende taak of het sleufconcept eerst af".into();return;
         }
@@ -167,6 +168,7 @@ impl SleufBaseApp {
     pub(super) fn take_project_sources(&mut self)->NativeProject{
         NativeProject{
             name:self.project_name.clone(),view:Some(self.project_view.clone()),project_settings:self.project_settings.take(),
+            point_clouds:std::mem::take(&mut self.point_clouds),
             datasets:std::mem::take(&mut self.datasets),rasters:std::mem::take(&mut self.geotiffs),overlays:std::mem::take(&mut self.overlays),
             bgt_layers:std::mem::take(&mut self.bgt_layers),cadastral:self.cadastral.take(),virtual_trenches:std::mem::take(&mut self.virtual_trenches),comments:std::mem::take(&mut self.comments),
             template_export:self.template_state.take(),template_preferences:self.template_preferences.take(),legacy_archive:self.legacy_archive.take(),
@@ -174,12 +176,14 @@ impl SleufBaseApp {
         }
     }
     pub(super) fn restore_project_sources(&mut self,project:NativeProject){
+        self.point_clouds=project.point_clouds;
         self.datasets=project.datasets;self.geotiffs=project.rasters;self.overlays=project.overlays;self.bgt_layers=project.bgt_layers;
         self.cadastral=project.cadastral;self.virtual_trenches=project.virtual_trenches;self.comments=project.comments;
         self.template_state=project.template_export;self.template_preferences=project.template_preferences;self.legacy_archive=project.legacy_archive;
         self.project_settings=project.project_settings;if let Some(view)=project.view{self.project_view=view;}
     }
     pub(super) fn start_python_project_export(&mut self,path:PathBuf){
+        if !self.point_clouds.is_empty(){self.message="Puntenwolken vereisen het SleufBase Rust-projectformaat.".into();return;}
         if self.project_sources_owned()||self.export_intent.is_some()||self.template_job.is_some()||self.file_intent.is_some()||self.pending_project_action.is_some()||self.trench_editor.is_some(){self.message="Rond de lopende taak of het sleufconcept eerst af".into();return;}
         if self.project_exchange.as_ref().is_none_or(|w|w.is_closed()) {
             match sleufbase_rust::project_exchange_worker::Worker::new(){Ok(worker)=>self.project_exchange=Some(worker),Err(error)=>{self.message=error;return;}}

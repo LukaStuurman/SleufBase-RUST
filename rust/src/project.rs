@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 pub const MAX_PROJECT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,6 +46,8 @@ pub struct NativeProject {
     pub cadastral: Option<CadastralLayer>,
     #[serde(default)]
     pub virtual_trenches: Vec<VirtualTrench>,
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub point_clouds: Vec<crate::pointcloud::PointCloudSource>,
     pub comments: Vec<Comment>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub template_export:Option<crate::template_order::State>,
@@ -69,6 +71,7 @@ impl Default for NativeProject {
             bgt_layers: Vec::new(),
             cadastral: None,
             virtual_trenches: Vec::new(),
+            point_clouds: Vec::new(),
             comments: Vec::new(),
             template_export:None,
             template_preferences:None,
@@ -106,6 +109,19 @@ impl NativeProject {
             }
             Ok(())
         };
+        if self.point_clouds.len() > crate::pointcloud::MAX_SOURCES {
+            return Err("Te veel puntenwolkbronnen in het project".into());
+        }
+        let mut cloud_ids = std::collections::HashSet::new();
+        for source in &self.point_clouds {
+            source.validate()?;
+            if !cloud_ids.insert(&source.id) {
+                return Err("Dubbele puntenwolkidentiteit in het project".into());
+            }
+            for annotation in &source.annotations {
+                vertices(&annotation.vertices)?;
+            }
+        }
         for trench in &self.virtual_trenches {
             trench.validate()?;
             vertices(std::slice::from_ref(&trench.start))?;
@@ -236,7 +252,7 @@ pub fn read_project_with_cancel(path:&Path,cancel:&std::sync::atomic::AtomicBool
     drop(reader);
     // V3 stores source block/curve definitions separately from derived WCS
     // caches. V1/V2 remain readable; opening never rewrites their source bytes.
-    if matches!(project.version,1..=4) {project.version=FORMAT_VERSION;}
+    if matches!(project.version,1..=5) {project.version=FORMAT_VERSION;}
     if project.view.is_none(){project.view=crate::project_view::ProjectView::from_legacy(&project)?;}
     if let Some(view)=&mut project.view{view.normalize_removed_provider();}
     let mut used=0;
