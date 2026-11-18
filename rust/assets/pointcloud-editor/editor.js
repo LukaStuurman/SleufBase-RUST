@@ -70,7 +70,10 @@ function endpointFor(purpose) {
   for (const item of state.items.values()) if (item.purpose === purpose) return item;
   return null;
 }
-function sourceUnit() { return state.source?.crs === "rd_new" ? "m" : "broneenheden"; }
+function sourceUnit() {
+  return state.source?.crs === "rd_new" ? "m"
+    : state.source?.crs === "wgs84" ? "°" : "broneenheden";
+}
 function itemColor(item) {
   const endpoint = ENDPOINTS.find((entry) => entry.purpose === item.purpose);
   if (endpoint) return endpoint.color;
@@ -173,7 +176,11 @@ function refreshTrench() {
     const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
     const horizontal = Math.hypot(dx, dy), spatial = Math.hypot(dx, dy, dz), unit = sourceUnit();
     $id("trench-length").textContent = `${number.format(horizontal)} ${unit}`;
-    $id("trench-height").textContent = `3D-afstand ${number.format(spatial)} ${unit} · hoogteverschil ${number.format(dz)} ${unit}`;
+    // Geographic horizontal units are angular degrees while Z may be a
+    // height in metres. Do not calculate a meaningless 3D distance by mixing.
+    $id("trench-height").textContent = state.source?.crs === "wgs84"
+      ? `Hoogteverschil (Z uit bron) ${number.format(dz)} · geen metrische 3D-afstand`
+      : `3D-afstand ${number.format(spatial)} ${unit} · hoogteverschil ${number.format(dz)} ${unit}`;
     $id("trench-axis-text").textContent = `Sleufas · ${number.format(horizontal)} ${unit} horizontaal`;
     $id("trench-status").textContent = horizontal > 0
       ? "Begin- en eindpunt staan klaar. Je kunt nu kabels en leidingen vastleggen."
@@ -552,12 +559,14 @@ function renderCoordinates(item) {
   let length = 0;
   for (let index = 1; index < item.vertices.length; index += 1) {
     const a = item.vertices[index - 1], b = item.vertices[index];
-    length += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+    length += state.source?.crs === "wgs84"
+      ? Math.hypot(b.x - a.x, b.y - a.y)
+      : Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
   }
   const endpoint = ENDPOINTS.find((entry) => entry.purpose === item.purpose);
   $id("object-summary").textContent = endpoint ? `${endpoint.name} van de proefsleuf · maaiveld`
     : item.kind === "point" ? "Punt met X-, Y- en Z-coördinaat"
-    : `${integer.format(item.vertices.length)} punten · 3D-lengte ${number.format(length)} ${sourceUnit()}${item.vertices.length > 200 ? " · eerste 200 coördinaten getoond" : ""}`;
+    : `${integer.format(item.vertices.length)} punten · ${state.source?.crs === "wgs84" ? "horizontaal hoekverloop" : "3D-lengte"} ${number.format(length)} ${sourceUnit()}${item.vertices.length > 200 ? " · eerste 200 coördinaten getoond" : ""}`;
 }
 
 function renderInspector() {
@@ -1006,8 +1015,11 @@ async function boot() {
     $id("source-path").textContent = source.source_path || "Lokaal bestand";
     $id("source-points").textContent = integer.format(source.point_count);
     $id("source-crs").textContent = source.crs === "rd_new" ? "RD New (EPSG:28992)"
+      : source.crs === "wgs84" ? "WGS 84 (EPSG:4326/4979)"
       : source.projection || (source.crs === "unknown" ? "Niet vastgelegd in het bestand" : "Coördinatenstelsel uit het bronbestand");
-    $id("coordinate-system-status").textContent = source.crs === "rd_new" ? "RD New · originele XYZ" : "Originele XYZ · broncoördinaten";
+    $id("coordinate-system-status").textContent = source.crs === "rd_new" ? "RD New · originele XYZ"
+      : source.crs === "wgs84" ? "WGS 84 · lengte-/breedtegraad (°) · Z uit bron"
+      : "Originele XYZ · broncoördinaten";
     window.sleufbaseDiagnostics?.setStage("3D-viewer initialiseren");
     state.viewer = new Potree.Viewer($id("potree_render_area"));
     state.viewer.setEDLEnabled(true);

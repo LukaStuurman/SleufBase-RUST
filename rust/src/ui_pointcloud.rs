@@ -132,15 +132,17 @@ fn count(value: u64) -> String {
 }
 fn crs_label(crs: &CloudCrs) -> &'static str {
     match crs { CloudCrs::Unknown => "Onbekend / uit bestand lezen", CloudCrs::RdNew => "RD New (EPSG:28992), meters",
+        CloudCrs::Wgs84 => "WGS 84 (EPSG:4326 / 4979), graden",
         CloudCrs::Other => "Ander / lokaal coördinatenstelsel" }
 }
 fn crs_short(crs: CloudCrs) -> &'static str {
-    match crs { CloudCrs::RdNew => "RD New · m", CloudCrs::Unknown => "Onbekend", CloudCrs::Other => "Ander / lokaal" }
+    match crs { CloudCrs::RdNew => "RD New · m", CloudCrs::Wgs84 => "WGS 84 · °",
+        CloudCrs::Unknown => "Onbekend", CloudCrs::Other => "Ander / lokaal" }
 }
 fn crs_combo(ui: &mut egui::Ui, id: impl std::hash::Hash, crs: &mut CloudCrs) -> bool {
     let before = *crs;
     egui::ComboBox::from_id_salt(id).selected_text(crs_label(crs)).show_ui(ui, |ui| {
-        for value in [CloudCrs::Unknown, CloudCrs::RdNew, CloudCrs::Other] {
+        for value in [CloudCrs::Unknown, CloudCrs::RdNew, CloudCrs::Wgs84, CloudCrs::Other] {
             if ui.selectable_label(*crs == value, crs_label(&value)).clicked() { *crs = value; }
         }
     });
@@ -648,7 +650,7 @@ impl SleufBaseApp {
             ui.heading("Puntenwolk toevoegen"); ui.label(form.path.display().to_string());
             ui.label("Naam"); ui.add(egui::TextEdit::singleline(&mut form.title).char_limit(1024));
             ui.label("Coördinatenstelsel"); crs_combo(ui, "import-crs", &mut form.crs);
-            ui.label("Kies RD alleen als de bron daadwerkelijk RD New in meters gebruikt. De originele XYZ-coördinaten blijven behouden.");
+            ui.label("RD New gebruikt meters; WGS 84 gebruikt geografische lengte-/breedtegraad. SleufBase herprojecteert de originele XYZ niet. Alleen RD New kan op de Nederlandse kaart worden ingeladen.");
             ui.small("De scan wordt bewaard in het puntenwolkoverzicht en opent daarna in de editor. Met Inladen neem je hem over in een project.");
             let valid = !form.title.trim().is_empty() && form.title.len() <= 1024 && !form.title.chars().any(char::is_control);
             ui.horizontal(|ui| {
@@ -1006,7 +1008,13 @@ fn show_source_details(ui: &mut egui::Ui, source: &PointCloudSource, title: &mut
     });
     let path = source.source_path.display().to_string();
     ui.add(egui::Label::new(egui::RichText::new(&path).small()).truncate()).on_hover_text(&path);
-    if source.crs != CloudCrs::RdNew { ui.small("Bewerken en DXF-export behouden de broncoördinaten. Inladen en de kaart vereisen RD New in meters."); }
+    if source.crs != CloudCrs::RdNew {
+        ui.small(if source.crs == CloudCrs::Wgs84 {
+            "WGS 84: X/Y zijn geografische graden. Bekijken, tekenen en object-DXF behouden de broncoördinaten. Inladen op de RD-kaart vereist omzetting naar RD New buiten deze keuze."
+        } else {
+            "Bewerken en DXF-export behouden de broncoördinaten. Inladen en de kaart vereisen RD New in meters."
+        });
+    }
 }
 
 // The cloud catalog shares the compact job-list visual grammar: responsive

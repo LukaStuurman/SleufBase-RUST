@@ -558,3 +558,10 @@ De DXF-sjabloonexport gebruikt voor een LAS/LAZ-proefsleuf **alleen deze orthofo
 ### Eén LAS/LAZ-proefsleuf in de kaart en het linkerpaneel
 
 Een ingeladen puntenwolk wordt op de werkkaart alleen getoond via haar eigen gegeorefereerde orthofoto. Het programma tekent daar geen tweede zwarte virtuele sleuf met dwarslijnen overheen. Onder **Proefsleuven** staat per gekoppelde scan één orthofotoregel, niet ook een apart virtueel proefsleufbestand. Het afgeleide meetmodel blijft intern behouden voor het dwarsprofiel, kabels, leidingen en DXF-export. Tijdens het maken van de orthofoto kan de nieuwe kaartlaag nog ontbreken; de proefsleuf is dan al ingeladen en de afbeelding verschijnt na voltooiing. Als je de orthofoto uit de projectlijst verwijdert, worden ook de gekoppelde proefsleufgegevens uit het project verwijderd, maar niet de scan uit **Puntenwolken beheren**.
+
+
+### WGS 84-puntenwolken
+
+In **Puntenwolken beheren → Coördinatenstelsel** en bij het toevoegen van LAS/LAZ kun je **WGS 84 (EPSG:4326 / EPSG:4979)** kiezen. Dit is een geografisch coördinatenstelsel: de horizontale coördinaten zijn lengte- en breedtegraad in graden, geen RD-meters. SleufBase herkent deze twee EPSG-codes automatisch als het bestand die informatie bevat. In Potree worden graden en hoogteverschil afzonderlijk aangeduid zodat er geen ongeldige 3D-lengte uit twee verschillende eenheden ontstaat.
+
+Een coördinatenstelsel kiezen **zet de coördinaten niet automatisch om**. Je kunt WGS 84-scans bekijken, punten en lijnen intekenen en de oorspronkelijke XYZ naar object-DXF exporteren. Voor het inladen als proefsleuf op de Nederlandse RD-kaart en het maken van een gegeorefereerde RD-orthofoto moeten de bronpunten eerst werkelijk in RD New (EPSG:28992, meters) staan.

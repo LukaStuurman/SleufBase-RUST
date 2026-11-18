@@ -29,6 +29,8 @@ pub enum CloudCrs {
     #[default]
     Unknown,
     RdNew,
+    /// Geographic longitude/latitude in degrees (EPSG:4326 or WGS 84 3D / 4979).
+    Wgs84,
     Other,
 }
 
@@ -196,7 +198,10 @@ impl PointCloudSource {
             return Err("De coördinateninformatie van de puntenwolk is ongeldig".into());
         }
         if self.crs == CloudCrs::RdNew && projection_epsg(&self.projection).is_some_and(|code| code != 28992) {
-            return Err("De bron vermeldt een ander coördinatenstelsel dan RD (EPSG:28992). Kies Ander / lokaal; een CRS kiezen verplaatst de scan niet.".into());
+            return Err("De bron vermeldt een ander coördinatenstelsel dan RD (EPSG:28992). Kies de werkelijke broncoördinaten; een CRS kiezen verplaatst de scan niet.".into());
+        }
+        if self.crs == CloudCrs::Wgs84 && projection_epsg(&self.projection).is_some_and(|code| !matches!(code, 4326 | 4979)) {
+            return Err("De bron vermeldt een ander coördinatenstelsel dan WGS 84 (EPSG:4326/4979). Kies de werkelijke broncoördinaten; een CRS kiezen herprojecteert de scan niet.".into());
         }
         validate_annotations(&self.annotations)
     }
@@ -803,7 +808,10 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
     check_cancel(cancel)?;
     let inspected = inspect_las(path)?;
     if crs == CloudCrs::RdNew && inspected.epsg.is_some_and(|code| code != 28992) {
-        return Err(format!("Het bestand noemt EPSG:{}, geen RD (EPSG:28992). Open het in het oorspronkelijke coördinatenstelsel; de bron wordt niet automatisch getransformeerd.", inspected.epsg.unwrap()));
+        return Err(format!("Het bestand noemt EPSG:{}, geen RD (EPSG:28992). Kies het juiste bronstelsel; er vindt geen automatische omzetting plaats.", inspected.epsg.unwrap()));
+    }
+    if crs == CloudCrs::Wgs84 && inspected.epsg.is_some_and(|code| !matches!(code, 4326 | 4979)) {
+        return Err(format!("Het bestand noemt EPSG:{}, geen WGS 84 (EPSG:4326/4979). Kies het juiste bronstelsel; er vindt geen automatische omzetting plaats.", inspected.epsg.unwrap()));
     }
     let fingerprint = fingerprint_file(&inspected.path, cancel, &mut *progress)?;
     if previous.is_some_and(|source| source.source_fingerprint != fingerprint || source.source_size != inspected.size) {
@@ -825,6 +833,7 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
     }
     let crs = match (crs, inspected.epsg) {
         (CloudCrs::Unknown, Some(28992)) => CloudCrs::RdNew,
+        (CloudCrs::Unknown, Some(4326 | 4979)) => CloudCrs::Wgs84,
         (CloudCrs::Unknown, Some(_)) => CloudCrs::Other,
         (value, _) => value,
     };

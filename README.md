@@ -71,3 +71,5 @@ Voor een compleet pakket zijn ook de meegeleverde logo's en licentiebestanden no
 De oorspronkelijke Python-bron staat in [SleufBase](https://github.com/LukaStuurman/SleufBase). SleufBase Rust heeft eigen projectopslag en een eigen installatie. Ondersteuning van een oudere projectindeling betekent niet dat iedere functie van beide apps identiek is.
 
 Bij het inladen van een LAS/LAZ-sleuf gebruikt de werkkaart de orthofoto als enige zichtbare proefsleuflaag. De virtual-trench-geometrie blijft alleen intern beschikbaar voor profiel en DXF; er komt niet langer een tweede zwarte omtrek of dubbele rij in **Proefsleuven**. Na het maken van een orthofoto worden kaarttextures vernieuwd, zodat de afbeelding zichtbaar wordt zonder de app opnieuw te starten.
+
+Puntenwolken ondersteunen in de coördinatenstelselkeuze naast RD New ook **WGS 84 (EPSG:4326 / EPSG:4979)**. De 3D-editor behoudt de broncoördinaten en toont WGS 84-graden correct. Een keuzelijst verandert de broncoördinaten niet; plaatsing op de RD-werkkaart vereist nog steeds brongegevens in RD New. De DXF-kaart met legenda tekent bij echte LAS/LAZ-orthofoto's geen extra zwarte sleufgrens.
