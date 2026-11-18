@@ -195,8 +195,14 @@ function bindMeasure(measure, id) {
   measure.userData.sleufbaseId = id;
   const bindSphere = (sphere) => {
     sphere.userData.sleufbaseId = id;
-    sphere.addEventListener("click", () => { if (!state.drawing) selectItem(id); });
-    sphere.addEventListener("select", () => { if (!state.drawing) selectItem(id); });
+    // Measurement markers use our annotation selection. A native "select"
+    // listener makes Potree pass this mesh to TransformationTool, which expects
+    // a volume boundingBox and blacklists the marker from ordinary vertex drags.
+    sphere.addEventListener("click", (event) => {
+      if (state.drawing) return;
+      event.consume?.();
+      selectItem(id);
+    });
   };
   for (const sphere of measure.spheres) bindSphere(sphere);
   measure.addEventListener("marker_added", (event) => bindSphere(event.sphere));
@@ -462,14 +468,16 @@ function installDrawingCapture() {
     drawing.measure.setPosition(drawing.measure.points.length - 1, hit.location);
     drawing.confirmed += 1;
     showCoordinate(hit.location);
-    // Potree's own mouseup/drop handlers run first; the polyline then has one
-    // temporary marker beyond the confirmed vertices. Never persist that one.
-    queueMicrotask(() => {
-      if (state.drawing !== drawing) return;
-      if (drawing.kind === "point") finishDrawing();
-      else updateButtons();
-    });
+    updateButtons();
   }, true);
+  // Potree's InputHandler registered its bubble listener in the Viewer
+  // constructor, before this one. Finish a point after its drop/drag handling;
+  // a microtask in the capture listener can run before those handlers.
+  // Polylines keep their own later insertion listener and preview marker.
+  canvas.addEventListener("mouseup", (event) => {
+    const drawing = state.drawing;
+    if (event.button === 0 && drawing?.kind === "point" && drawing.confirmed === 1) finishDrawing();
+  });
 }
 
 function setCamera(mode, bounds = null) {

@@ -1,27 +1,18 @@
-# SleufBase Rust 1.0.30 — lokale LAS/LAZ-puntenwolkeditor
+# SleufBase Rust 1.0.31 — punten plaatsen in de Potree-editor hersteld
 
-Scans van andere leveranciers kunnen rechtstreeks in SleufBase worden verwerkt met een eigen Potree-editor. De installer en portable ZIP bevatten de viewer en converter; een KickTheMap-account is hiervoor niet nodig.
+Deze versie verhelpt de Potree-fout `Cannot read properties of undefined (reading getCenter)` bij het plaatsen of selecteren van een meetpunt.
 
-## Nieuw
+## Hersteld
 
-- LAS- en LAZ-bestanden openen via het menu Puntenwolk of slepen naar het hoofdvenster.
-- Lokale conversie met voortgang en annuleren, gevolgd door een ingebouwde WebView2/Potree-editor.
-- Punten en polylijnen op de puntenwolk tekenen, verplaatsen, benoemen en verwijderen, met ongedaan maken en opnieuw uitvoeren.
-- Materiaal, diameter en bundel/omschrijving per getekend object bewaren.
-- Getekende objecten opslaan in het Rust-project en exporteren naar DXF met de originele XYZ-coördinaten.
-- RD-meetobjecten opnemen op de kaart. Andere coördinatenstelsels blijven in hun oorspronkelijke stelsel en worden niet automatisch als RD behandeld.
-- Een gemeten sleufas kiezen en geselecteerde meetpunten/kabelkruisingen overnemen naar de bestaande proefsleufbewerker en DXF-sjabloonexport.
-- Hetzelfde bronbestand opnieuw koppelen en de lokale weergave opnieuw opbouwen zonder de opgeslagen tekenobjecten te verliezen.
+- Meetpunten en de hoekpunten van polylijnen gebruiken de eigen objectselectie van SleufBase. Zij worden niet meer onbedoeld aangemeld bij Potrees gereedschap voor het verplaatsen en schalen van volumes.
+- Een klik op een meetpunt selecteert het bijbehorende object zonder dezelfde klik opnieuw aan de algemene Potree-selectie door te geven.
+- Het plaatsen van een punt wordt pas afgerond nadat Potree de muisklik en het neerzetten van de marker heeft afgehandeld.
+- Dezelfde markerafhandeling geldt voor nieuw getekende, opnieuw geopende en via ongedaan maken/opnieuw herstelde objecten.
 
-## Gebruik
+## Bijwerken
 
-1. Open **Puntenwolk → LAS/LAZ openen** en controleer naam en coördinatenstelsel.
-2. Teken in de editor punten en lijnen en vul hun eigenschappen in.
-3. Sluit de editor en bewaar het project via **Acties → Project opslaan**.
-4. Gebruik **Puntenwolken beheren → Maak proefsleuf** voor verwerking in een proefsleuf, of **Objecten naar DXF** voor de volledige getekende geometrie.
-
-Bewaar bij het overzetten van een project ook de oorspronkelijke LAS/LAZ. De puntenwolkeditor wijzigt het bronbestand niet. Kaart- en proefsleufintegratie vereisen RD New in meters; er vindt geen automatische herprojectie plaats.
+Sluit SleufBase en installeer versie 1.0.31. Open daarna je bestaande project of LAS/LAZ-bestand opnieuw. Het projectformaat en de voorbereide puntenwolken blijven compatibel met versie 1.0.30; opnieuw converteren is voor deze correctie niet nodig.
 
 ## Controle
 
-Deze release wordt gebouwd en verpakt met de vastgelegde Potree- en PotreeConverter-versies en SHA-256-controles. De geautomatiseerde tests worden op verzoek overgeslagen. Praktijkcontrole met eigen LAS/LAZ-bestanden en WebView2 op Windows blijft nodig.
+De correctie is beoordeeld tegen de meegeleverde Potree 1.8.2-code. JavaScript-syntax, Rust-compilatie en de Windows-pakketten worden gecontroleerd. Geautomatiseerde tests blijven volgens afspraak overgeslagen. De interactieve Windows-bediening met eigen scanbestanden is niet uitgevoerd.
