@@ -293,6 +293,14 @@ Het overzicht wordt apart van het geopende project bewaard. **Bewerken** past de
 
 **Verder werken of verplaatsen.** Open de editor opnieuw via Puntenwolken beheren. Neem bij verplaatsing naar een andere computer ook de originele LAS/LAZ mee. Gebruik **Bronbestand opnieuw kiezen** en **Weergave opnieuw opbouwen** als de bron of lokale weergave ontbreekt. SleufBase controleert of het opnieuw gekozen bestand dezelfde scan is; bestaande tekenobjecten blijven bewaard.
 
+### Scannen op iPhone of iPad en RTK gebruiken
+
+Met een **iPhone Pro of iPad Pro met LiDAR** kun je zelf een 3D-scan of puntenwolk van een proefsleuf maken. Gebruik een geschikte scan- of exportapp om deze scan om te zetten naar een **.las**- of **.laz**-bestand. Importeer dat bestand via **Puntenwolk → LAS/LAZ openen** in SleufBase.
+
+De app **[OpenSurvey3D](https://opensurvey3d.com/)** biedt op iPhone en iPad een veldmeetworkflow, gegeorefereerde 3D-scans en een koppeling met een **externe GNSS/RTK-ontvanger**. Ondersteunde ontvangers leveren posities via NMEA; via een NTRIP-correctiedienst kan RTK-nauwkeurigheid worden bereikt. Zonder geschikte ontvanger en correcties is de nauwkeurigheid van de ingebouwde telefoon-GPS doorgaans veel lager. **Een rechtstreekse LAS-export vanuit OpenSurvey3D is niet bevestigd**: gebruik zo nodig een geschikte aparte exportstap.
+
+**Belangrijk:** de RTK-positie en de LiDAR-scan zijn niet automatisch hetzelfde als een gegeorefereerde puntenwolk in **RD New (EPSG:28992)**. Controleer vóór import het coördinatenstelsel, de positionering en de hoogtes van je LAS/LAZ. SleufBase herprojecteert de scan niet automatisch.
+
 ## 13. Kabels en leidingen in de doorsnede
 
 ### Een object toevoegen

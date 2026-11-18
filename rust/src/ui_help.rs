@@ -143,7 +143,12 @@ fn topic_content(ui: &mut egui::Ui, index: usize, height: f32, reset_scroll: boo
                     ui.separator();
                     for (heading, body) in topic.sections {
                         theme::strong(ui, *heading);
-                        ui.label(*body);
+                        if let Some((explanation, _)) = body.split_once("https://opensurvey3d.com/") {
+                            ui.label(explanation);
+                            ui.hyperlink_to("OpenSurvey3D openen", "https://opensurvey3d.com/");
+                        } else {
+                            ui.label(*body);
+                        }
                         ui.add_space(6.);
                     }
                 });
