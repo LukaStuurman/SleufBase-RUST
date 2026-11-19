@@ -82,9 +82,12 @@ impl Viewport {
     /// Stable world-grid requests retain neighbouring pixels and share WMS
     /// tiles across pans. Quarter-octave levels keep detail within 19%.
     pub fn buffered(self) -> Self {
-        // OSM already caches reusable world tiles. A WMS overscan buffer both
-        // fetches unseen tiles and forces a coarser level under its tile budget.
-        if matches!(self.source, Provider::Osm | Provider::OsmCadastral) { return self; }
+        // OSM and the PDOK aerial viewer use persistent world-aligned tile
+        // pyramids. Overscanning a WMS-style request forces a coarser WMTS
+        // level and unnecessary tile downloads on every scroll or zoom.
+        // Keep WMS buffering only for standalone cadastral raster maps.
+        if matches!(self.source, Provider::Osm | Provider::OsmCadastral
+            | Provider::Aerial | Provider::AerialCadastral) { return self; }
         let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
             .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
         let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
