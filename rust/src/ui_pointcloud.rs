@@ -292,6 +292,11 @@ impl SleufBaseApp {
             self.message = "Bewaar eerst de eerder geïmporteerde puntenwolk met Opnieuw bewaren.".into();
             return;
         }
+        if self.pointcloud_ui.batch.stopped
+            && self.pointcloud_ui.worker.as_ref().is_some_and(|worker| worker.queued) {
+            self.message = "De vorige import wordt nog gestopt. Voeg de nieuwe bestanden daarna toe.".into();
+            return;
+        }
         self.pointcloud_ui.open = true;
         self.ensure_pointcloud_catalog();
         if self.pointcloud_ui.catalog.is_none() {
