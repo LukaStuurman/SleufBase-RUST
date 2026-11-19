@@ -216,8 +216,8 @@ pub(super) fn improve(
     });
     // A larger group can use more nearby lanes, but bounded search prevents
     // huge profiles from blocking the application for minutes.
-    let steps=if count<=20 {11} else if count<=80 {17} else {22};
-    let levels=if count<=20 {10} else if count<=80 {15} else {19};
+    let steps: i32=if count<=20 {11} else if count<=80 {17} else {22};
+    let levels: i32=if count<=20 {10} else if count<=80 {15} else {19};
     let margin=0.018;
     for pass in 0..3 {
         let mut improved=0;
