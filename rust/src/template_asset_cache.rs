@@ -127,8 +127,8 @@ impl Persistent {
                         serde_json::json!({"tiff": self.physical(src,control)?})
                     } else {
                         self.map_raster(match fallback.as_ref()? {
-                            map_export::Raster::Tiff(t) => map_export::Raster::Tiff(t),
-                            map_export::Raster::Virtual(v) => map_export::Raster::Virtual(v)
+                            map_export::Raster::Tiff(t) => map_export::Raster::Tiff(*t),
+                            map_export::Raster::Virtual(v) => map_export::Raster::Virtual(*v)
                         },control)?
                     }
                 } else { serde_json::Value::Null };
@@ -166,7 +166,9 @@ impl Persistent {
         let path = self.path(key);
         if !self.valid(&path) {return Ok(false);}
         // The usual quota accounting and post-copy PNG validation still apply.
-        copy_asset(&path,dest,control,budget,true)?;
+        // The cache file was fully decoded above. A second PNG decode after
+        // copying would needlessly double the cost of a cache hit.
+        copy_asset(&path,dest,control,budget,false)?;
         Ok(true)
     }
     pub(super) fn remember(&self,key:&str,asset:&Path,control:&Control){
