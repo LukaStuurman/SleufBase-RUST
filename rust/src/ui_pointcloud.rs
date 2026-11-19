@@ -629,6 +629,13 @@ impl SleufBaseApp {
         let loaded = self.point_clouds.iter().map(|source| source.id.clone()).collect::<HashSet<_>>();
         let mut state = std::mem::take(&mut self.pointcloud_ui);
         let enabled = can_work && state.pending_catalog.is_none();
+        // Adding more files is safe during an existing conversion: the
+        // pending queue stores only paths and the converter stays sequential.
+        let can_enqueue = self.trench_editor.is_none() && state.editor.is_none()
+            && state.pending_catalog.is_none() && !self.project_sources_owned()
+            && self.file_intent.is_none() && self.export_intent.is_none()
+            && self.template_job.is_none()
+            && !(state.batch.stopped && state.worker.as_ref().is_some_and(|w| w.queued));
         let query = state.search.trim().to_lowercase();
         let mut rows = state.sources().iter().map(|source| Row::new(source, loaded.contains(&source.id)))
             .filter(|row| !state.only_loaded || row.loaded)
@@ -757,7 +764,7 @@ impl SleufBaseApp {
                     if ui.add_enabled(enabled, egui::Button::new("Vernieuwen")).clicked() {
                         action = Some(("refresh", String::new()));
                     }
-                    if cloud_action_button(ui, "LAS/LAZ toevoegen…", enabled, true).clicked() {
+                    if cloud_action_button(ui, "LAS/LAZ toevoegen…", can_enqueue, true).clicked() {
                         action = Some(("choose", String::new()));
                     }
                 });
