@@ -1688,6 +1688,7 @@ fn canvas(
         }
     }
     if let Some(kad)=cadastral.filter(|l|l.visible) {
+        let visible = navigation.as_ref().and_then(|nav|nav.viewport.as_ref());
         for layer in &kad.linework {
             let color=match layer.layer_name.as_str() {
                 "KAD_GRENS"=>Color32::from_rgb(65,74,84),
@@ -1696,6 +1697,12 @@ fn canvas(
             };
             for path in &layer.paths {
                 for pair in path.windows(2) {
+                    if let Some(b) = visible {
+                        let (x0,y0) = pair[0];
+                        let (x1,y1) = pair[1];
+                        if x0.max(x1) < b.min_x || x0.min(x1) > b.max_x
+                            || y0.max(y1) < b.min_y || y0.min(y1) > b.max_y {continue;}
+                    }
                     painter.line_segment([
                         project(pair[0].0,pair[0].1),
                         project(pair[1].0,pair[1].1)
@@ -1706,6 +1713,10 @@ fn canvas(
         // The rotation is preserved in the model, but egui text rendering
         // here is not rotation-aware yet.
         for label in &kad.labels {
+            if let Some(b) = visible {
+                if label.position.0 < b.min_x || label.position.0 > b.max_x
+                    || label.position.1 < b.min_y || label.position.1 > b.max_y {continue;}
+            }
             painter.text(project(label.position.0,label.position.1),
                 egui::Align2::CENTER_CENTER,&label.text,
                 egui::FontId::proportional(11.0),INK);
