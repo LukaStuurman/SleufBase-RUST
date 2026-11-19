@@ -306,6 +306,21 @@ pub struct Worker {
     pending: Option<Task>,
     busy: bool,
 }
+// Preparing the parcel overlay in parallel with the aerial/OSM base avoids
+// waiting for TWO sequential network phases on ordinary screens. The PDOK
+// client still enforces its existing global four-request limit. Very large
+// canvases use the old sequential path to avoid doubling peak RGBA memory.
+const PARALLEL_PARCEL_MAX_PIXELS: u64 = 12_000_000;
+fn parallel_parcel_overlay(view: Viewport) -> bool {
+    u64::from(view.size[0]) * u64::from(view.size[1]) <= PARALLEL_PARCEL_MAX_PIXELS
+}
+fn parcel_overlay(view: Viewport, cancel: &AtomicBool) -> Result<image::RgbaImage, String> {
+    let mut check = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
+    crate::pdok_wms::request_tiled_with_progress(
+        crate::pdok_wms::Source::CadastralOverlay,
+        view.bounds, view.size[0], view.size[1], cancel, Some(&mut check))
+}
+
 impl Worker {
     pub fn new(osm_cache: PathBuf) -> Result<Self, String> {
         let mut osm = crate::osm_tiles::ViewportRenderer::default();
@@ -313,77 +328,89 @@ impl Worker {
             let v = request.view;
             match v.source {
                 Provider::Osm | Provider::OsmCadastral => {
-                    let mut update = |p: crate::osm_tiles::ViewportProgress<'_>| {
-                        preview(Pixels {
-                            bounds: p.bounds,
-                            width: p.width,
-                            height: p.height,
-                            rgba: p.rgba.to_vec(),
-                            stale_cache: p.stale_cache,
-                        }, p.completed, p.total)
-                    };
-                    let raster = osm.request(
-                        v.bounds, v.size[0], v.size[1], &osm_cache, cancel, &mut update,
-                    )?;
-                    if v.source == Provider::OsmCadastral {
-                        // Publish the complete base first. An empty, still-loading
-                        // parcel layer must never replace it with a grey image.
-                        preview(Pixels {
-                            bounds: raster.bounds,
-                            width: raster.width,
-                            height: raster.height,
-                            rgba: raster.rgba.clone(),
-                            stale_cache: raster.stale_cache,
-                        }, 1, 1)?;
-                        let mut image = image::RgbaImage::from_raw(
-                            raster.width, raster.height, raster.rgba,
-                        ).ok_or("OpenStreetMap gaf ongeldige pixels terug")?;
-                        crate::pdok_wms::add_cadastral_overlay_for_view(
-                            &mut image, raster.bounds, cancel,
+                    std::thread::scope(|scope| -> Result<Pixels, String> {
+                        // Start collecting cadastral linework while OSM tiles
+                        // are fetched and progressively painted. Both sources
+                        // use their own existing network and cache limits.
+                        let is_combined = v.source == Provider::OsmCadastral;
+                        let overlay = (is_combined && parallel_parcel_overlay(v))
+                            .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
+                        let mut update = |p: crate::osm_tiles::ViewportProgress<'_>| {
+                            preview(Pixels {
+                                bounds: p.bounds,
+                                width: p.width,
+                                height: p.height,
+                                rgba: p.rgba.to_vec(),
+                                stale_cache: p.stale_cache,
+                            }, p.completed, p.total)
+                        };
+                        let raster = osm.request(
+                            v.bounds, v.size[0], v.size[1], &osm_cache, cancel, &mut update,
                         )?;
+                        if is_combined {
+                            // The complete base stays visible while waiting
+                            // for parcels; no partial transparent overlay is
+                            // ever placed on top of the road map.
+                            preview(Pixels {
+                                bounds: raster.bounds,
+                                width: raster.width,
+                                height: raster.height,
+                                rgba: raster.rgba.clone(),
+                                stale_cache: raster.stale_cache,
+                            }, 1, 1)?;
+                            let mut image = image::RgbaImage::from_raw(
+                                raster.width, raster.height, raster.rgba,
+                            ).ok_or("OpenStreetMap gaf ongeldige pixels terug")?;
+                            let layer = if let Some(job) = overlay {
+                                job.join().map_err(|_| "Perceelwerker is gestopt")??
+                            } else { parcel_overlay(v, cancel)? };
+                            crate::pdok_wms::composite_rgba(&mut image, &layer, cancel)?;
+                            Ok(Pixels {
+                                bounds: raster.bounds,
+                                width: image.width(),
+                                height: image.height(),
+                                rgba: image.into_raw(),
+                                stale_cache: raster.stale_cache,
+                            })
+                        } else {
+                            Ok(Pixels {
+                                bounds: raster.bounds,
+                                width: raster.width,
+                                height: raster.height,
+                                rgba: raster.rgba,
+                                stale_cache: raster.stale_cache,
+                            })
+                        }
+                    })
+                }
+                Provider::AerialCadastral => {
+                    std::thread::scope(|scope| -> Result<Pixels, String> {
+                        let overlay = parallel_parcel_overlay(v)
+                            .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
+                        // Keep the existing PDOK grid and network limits.
+                        let mut progress = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
+                        let mut image = crate::pdok_wms::request_tiled_with_progress(
+                            crate::pdok_wms::Source::Aerial,
+                            v.bounds, v.size[0], v.size[1], cancel, Some(&mut progress),
+                        )?;
+                        preview(Pixels {
+                            bounds: v.bounds,
+                            width: image.width(),
+                            height: image.height(),
+                            rgba: image.as_raw().clone(),
+                            stale_cache: false,
+                        }, 1, 2)?;
+                        let layer = if let Some(job) = overlay {
+                            job.join().map_err(|_| "Perceelwerker is gestopt")??
+                        } else { parcel_overlay(v, cancel)? };
+                        crate::pdok_wms::composite_rgba(&mut image, &layer, cancel)?;
                         Ok(Pixels {
-                            bounds: raster.bounds,
+                            bounds: v.bounds,
                             width: image.width(),
                             height: image.height(),
                             rgba: image.into_raw(),
-                            stale_cache: raster.stale_cache,
+                            stale_cache: false,
                         })
-                    } else {
-                        Ok(Pixels {
-                            bounds: raster.bounds,
-                            width: raster.width,
-                            height: raster.height,
-                            rgba: raster.rgba,
-                            stale_cache: raster.stale_cache,
-                        })
-                    }
-                }
-                Provider::AerialCadastral => {
-                    // Keep the aerial visible while fetching parcels. Use the
-                    // normal bounded worker grid without publishing empty tiles.
-                    let mut progress = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
-                    let mut image = crate::pdok_wms::request_tiled_with_progress(
-                        crate::pdok_wms::Source::Aerial,
-                        v.bounds,
-                        v.size[0],
-                        v.size[1],
-                        cancel,
-                        Some(&mut progress),
-                    )?;
-                    preview(Pixels {
-                        bounds: v.bounds,
-                        width: image.width(),
-                        height: image.height(),
-                        rgba: image.as_raw().clone(),
-                        stale_cache: false,
-                    }, 1, 2)?;
-                    crate::pdok_wms::add_cadastral_overlay_for_view(&mut image, v.bounds, cancel)?;
-                    Ok(Pixels {
-                        bounds: v.bounds,
-                        width: image.width(),
-                        height: image.height(),
-                        rgba: image.into_raw(),
-                        stale_cache: false,
                     })
                 }
                 Provider::Aerial | Provider::Cadastral => {
