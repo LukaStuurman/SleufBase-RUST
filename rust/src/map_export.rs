@@ -155,7 +155,7 @@ fn background(
         Background::Osm | Background::OsmCadastral => {
             let map = crate::osm_tiles::request_export_map_with_cancel(
                 layout.bounds, layout.map_size[0], layout.map_size[1],
-                &crate::project::app_data_directory().join("osm-tiles"), cancel,
+                &crate::osm_tiles::common_cache_dir(), cancel,
             )?;
             if map.stale_cache {
                 return Err("OSM-achtergrond gebruikt verlopen cache; probeer de export opnieuw met netwerk".into());
