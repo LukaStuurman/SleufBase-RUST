@@ -274,9 +274,13 @@ pub fn prepare(
             };
             (target - bearing + 180.).rem_euclid(360.) - 180.
         });
-    let mut image = raster_rotation::rotate(image, rotation, cancel)?;
+    let rotated = raster_rotation::rotate_window(image, rotation, cancel)?;
+    let mut image = rotated.image;
     let (w, h) = image.dimensions();
-    let rotated_size = [w, h];
+    // Output crop remains relative to the full Pillow-compatible rotated
+    // canvas, even when transparent margins were never rasterized.
+    let rotated_size = rotated.full_size;
+    let rotation_origin = rotated.origin;
     let mut bounds = [w, h, 0, 0];
     let mut visible = false;
     for y in 0..h {
@@ -320,7 +324,12 @@ pub fn prepare(
             vector,
             rotation,
             rotated_size,
-            crop,
+            crop: [
+                crop[0] + rotation_origin[0],
+                crop[1] + rotation_origin[1],
+                crop[2] + rotation_origin[0],
+                crop[3] + rotation_origin[1],
+            ],
         },
     })
 }
