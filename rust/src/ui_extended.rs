@@ -744,16 +744,12 @@ impl SleufBaseApp {
             let parcel_provider = if self.project_view.use_background {
                 self.project_view.provider()
             } else { B::Unknown };
-            let visible = sleufbase_rust::map_request::Viewport {
-                source: sleufbase_rust::map_request::Provider::Cadastral,
-                bounds: Bounds {
-                    min_x: view.world(view.rect.left_top())[0],
-                    max_y: view.world(view.rect.left_top())[1],
-                    max_x: view.world(view.rect.right_bottom())[0],
-                    min_y: view.world(view.rect.right_bottom())[1],
-                },
-                size: [1,1], logical_meters_per_pixel: None,
-            }.bounds;
+            let top_left=view.world(view.rect.left_top());
+            let bottom_right=view.world(view.rect.right_bottom());
+            let visible=Bounds {
+                min_x:top_left[0], max_y:top_left[1],
+                max_x:bottom_right[0], min_y:bottom_right[1],
+            };
             self.cadastral_vectors.update(parcel_provider, visible, ui.ctx());
             self.update_map_background(&view);
             if self.project_view.camera.as_ref() != Some(&camera)
