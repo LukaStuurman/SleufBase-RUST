@@ -274,6 +274,9 @@ pub struct Raster {
 pub struct Progress<'a> {
     pub bounds:Bounds, pub width:u32, pub height:u32, pub rgba:&'a [u8],
     pub completed:usize, pub total:usize, pub stale_cache:bool,
+    /// Updated rectangle in full viewport pixels, [left,top,right,bottom].
+    /// None means a full-frame preview (needed to initialize a GPU texture).
+    pub changed_region:Option<[u32;4]>,
 }
 #[derive(Default)]
 pub struct ViewportRenderer {
@@ -526,7 +529,7 @@ impl ViewportRenderer {
         let mut completed=total-missing.len();
         if preview_source {
             progress(Progress{bounds,width,height,rgba:&rgba,
-                completed,total,stale_cache:false})?;
+                completed,total,stale_cache:false,changed_region:None})?;
             previews=1;
             last_preview=Instant::now();
         }
@@ -542,6 +545,7 @@ impl ViewportRenderer {
             };
             d(a).total_cmp(&d(b))
         });
+        let mut dirty:Option<[u32;4]>=None;
         let preview_budget=if u64::from(width)*u64::from(height)>6_000_000{
             2usize
         }else if u64::from(width)*u64::from(height)>2_000_000{
@@ -558,11 +562,22 @@ impl ViewportRenderer {
             let region=Self::tile_region(bounds,width,height,id);
             Self::paint_region(bounds,width,height,target.zoom,
                 &high,&mut rgba,region,cancel)?;
+            if region[0]<region[2] && region[1]<region[3] {
+                dirty=Some(match dirty {
+                    Some(old)=>[old[0].min(region[0]),old[1].min(region[1]),
+                        old[2].max(region[2]),old[3].max(region[3])],
+                    None=>region,
+                });
+            }
             if completed<total && previews<preview_budget
                 && (previews==0 || last_preview.elapsed()>=PREVIEW_INTERVAL)
             {
+                // The first frame always contains the full map. Every later
+                // frame may upload just the union of touched tile rectangles.
+                let changed_region=if previews==0 {None} else {dirty.take()};
                 progress(Progress{bounds,width,height,rgba:&rgba,
-                    completed,total,stale_cache:stale})?;
+                    completed,total,stale_cache:stale,changed_region})?;
+                dirty=None;
                 previews+=1;
                 last_preview=Instant::now();
             }
