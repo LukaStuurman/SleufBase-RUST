@@ -146,7 +146,7 @@ impl Persistent {
             }
         };
         if control.check().is_err() { return None; }
-        let input = serde_json::to_vec(&(CACHE_FORMAT, data)).ok()?;
+        let input = serde_json::to_vec(&(CACHE_FORMAT, env!("CARGO_PKG_VERSION"), data)).ok()?;
         Some(Self::hex(digest::digest(&SHA256,&input).as_ref()))
     }
     fn path(&self, key: &str) -> PathBuf { self.root.join(format!("{key}.png")) }
@@ -196,7 +196,7 @@ impl Persistent {
         let mut total=0u64;
         for entry in entries.flatten(){
             let path=entry.path();
-            if path.extension().is_none_or(|v|v!="png"){continue;}
+            if path.extension().and_then(|v|v.to_str()) != Some("png"){continue;}
             let Ok(m)=fs::symlink_metadata(&path) else {continue;};
             if !m.file_type().is_file(){continue;}
             total=total.saturating_add(m.len());
