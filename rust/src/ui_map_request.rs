@@ -130,7 +130,7 @@ impl SleufBaseApp {
                 return;
             }
             if self.map_requests.worker.is_none() {
-                match map_request::Worker::new(project::app_data_directory().join("osm-tiles")) {
+                match map_request::Worker::new(sleufbase_rust::osm_tiles::common_cache_dir()) {
                     Ok(w) => self.map_requests.worker = Some(w),
                     Err(error) => {
                         self.message = error;
