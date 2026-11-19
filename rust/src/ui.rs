@@ -85,6 +85,8 @@ mod recovery_ui;
 mod ahn_pending_ui;
 #[path="ui_map_request.rs"]
 mod map_request_ui;
+#[path="ui_cadastral_vector.rs"]
+mod cadastral_vector_ui;
 #[path="ui_settings_flow.rs"]
 mod settings_flow_ui;
 #[path="ui_settings.rs"]
@@ -237,6 +239,7 @@ pub struct SleufBaseApp {
     pdok_texture:Option<egui::TextureHandle>,
     pdok_bounds:Option<Bounds>,
     map_requests:map_request_ui::State,
+    cadastral_vectors:cadastral_vector_ui::State,
     pdok_busy:bool,
     osm_texture:Option<egui::TextureHandle>,
     osm_bounds:Option<Bounds>,
@@ -348,6 +351,7 @@ impl Default for SleufBaseApp {
             pdok_texture:None,
             pdok_bounds:None,
             map_requests:Default::default(),
+            cadastral_vectors:Default::default(),
             pdok_busy:false,
             osm_texture:None,
             osm_bounds:None,
@@ -456,6 +460,7 @@ impl SleufBaseApp {
             self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         }
         self.map_requests.invalidate();
+        self.cadastral_vectors.reset();
         self.pdok_busy=false;self.osm_busy=false;
         self.osm_texture=None; self.osm_bounds=None; self.osm_visible=false;
         if let Some(loader)=&mut self.raster_loader {loader.replace(Vec::new(),Default::default());}
@@ -1852,6 +1857,7 @@ impl SleufBaseApp {
         self.poll_raster_previews(ctx);
         self.poll_viewport_previews(ctx);
         self.poll_map_background(ctx);
+        self.cadastral_vectors.poll(ctx);
         self.poll_live_jobs();
         self.poll_live_download(ctx);
         self.poll_kickthemap_browser(ctx);
