@@ -1,7 +1,7 @@
 //! Full-resolution template TIFF orientation, cropping and background alpha.
 use crate::{geo::GeoTransform, input, profile::XY, raster_rotation};
 use image::RgbaImage;
-use std::{path::Path, sync::atomic::AtomicBool};
+use std::{collections::HashMap, path::{Path,PathBuf}, sync::{Arc,Mutex,OnceLock,atomic::AtomicBool}};
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
@@ -33,6 +33,56 @@ pub struct Prepared {
 }
 /// Native-world linework drawn on a physical TIFF before its rotation and crop.
 pub struct LineOverlay { pub vertices:Vec<XY>, pub color:[u8;3] }
+
+// An export owns one decoder cache. Its use counts cover BOTH detail directions
+// and every map pane so a source is decoded once, then released after its final
+// consumer. Concurrent workers wait on the same OnceLock instead of decoding
+// the same potentially enormous TIFF concurrently.
+#[derive(Default)]
+pub(crate) struct DecodeCache {
+    entries: Mutex<HashMap<PathBuf, CachedDecode>>,
+}
+struct CachedDecode {
+    remaining: usize,
+    image: Arc<OnceLock<Result<Arc<RgbaImage>,String>>>,
+}
+impl DecodeCache {
+    pub(crate) fn new(uses: HashMap<PathBuf, usize>) -> Self {
+        Self { entries: Mutex::new(uses.into_iter().map(|(path, remaining)| {
+            (path, CachedDecode { remaining, image: Arc::new(OnceLock::new()) })
+        }).collect()) }
+    }
+    fn decode(path: &Path, cancel: &AtomicBool) -> Result<RgbaImage,String> {
+        let raster = crate::raster::decode_full_with_cancel(path, cancel)?;
+        RgbaImage::from_raw(raster.width, raster.height, raster.rgba)
+            .ok_or_else(|| "Ongeldige TIFF-pixelbuffer".into())
+    }
+    pub(crate) fn load(&self, path: &Path, cancel: &AtomicBool) -> Result<RgbaImage,String> {
+        input::check(cancel)?;
+        let cell = self.entries.lock().map_err(|_| "TIFF-cache niet beschikbaar")?
+            .get(path).map(|entry| Arc::clone(&entry.image));
+        let Some(cell) = cell else { return Self::decode(path, cancel); };
+        let loaded = cell.get_or_init(|| Self::decode(path, cancel).map(Arc::new));
+        input::check(cancel)?;
+        // Each render owns its pixel modifications; the shared original never
+        // gets whitened, cropped, rotated or altered by one of its consumers.
+        let result = loaded.as_ref().map(|image| image.as_ref().clone())
+            .map_err(Clone::clone);
+        self.release(path);
+        result
+    }
+    // A persistent PNG hit consumes one planned physical source user without
+    // decoding anything. Otherwise later sources could remain cached too long.
+    pub(crate) fn skip(&self, path: &Path) { self.release(path); }
+    fn release(&self, path: &Path) {
+        if let Ok(mut entries) = self.entries.lock() {
+            if let Some(entry) = entries.get_mut(path) {
+                entry.remaining = entry.remaining.saturating_sub(1);
+                if entry.remaining == 0 { entries.remove(path); }
+            }
+        }
+    }
+}
 fn nearest(point: XY, paths: &[Vec<XY>], cancel: &AtomicBool) -> Result<Option<(XY, f64)>, String> {
     let mut best = None;
     let mut distance = f64::INFINITY;
@@ -231,9 +281,13 @@ pub fn prepare(
             };
             (target - bearing + 180.).rem_euclid(360.) - 180.
         });
-    let mut image = raster_rotation::rotate(image, rotation, cancel)?;
+    let rotated = raster_rotation::rotate_window(image, rotation, cancel)?;
+    let mut image = rotated.image;
     let (w, h) = image.dimensions();
-    let rotated_size = [w, h];
+    // Output crop remains relative to the full Pillow-compatible rotated
+    // canvas, even when transparent margins were never rasterized.
+    let rotated_size = rotated.full_size;
+    let rotation_origin = rotated.origin;
     let mut bounds = [w, h, 0, 0];
     let mut visible = false;
     for y in 0..h {
@@ -277,7 +331,12 @@ pub fn prepare(
             vector,
             rotation,
             rotated_size,
-            crop,
+            crop: [
+                crop[0] + rotation_origin[0],
+                crop[1] + rotation_origin[1],
+                crop[2] + rotation_origin[0],
+                crop[3] + rotation_origin[1],
+            ],
         },
     })
 }
@@ -297,9 +356,17 @@ pub fn from_tiff_with_lines(
     source:&Source, roads:&[Vec<XY>], terrain:&[Vec<XY>],
     axis:Option<[XY;2]>, lines:&[LineOverlay], cancel:&AtomicBool,
 )->Result<Prepared,String>{
-    let raster=crate::raster::decode_full_with_cancel(&source.path,cancel)?;
-    let mut image=RgbaImage::from_raw(raster.width,raster.height,raster.rgba)
-        .ok_or("Ongeldige TIFF-pixelbuffer")?;
+    from_tiff_with_lines_cached(source, roads, terrain, axis, lines, None, cancel)
+}
+pub(crate) fn from_tiff_with_lines_cached(
+    source:&Source, roads:&[Vec<XY>], terrain:&[Vec<XY>],
+    axis:Option<[XY;2]>, lines:&[LineOverlay],
+    cache:Option<&DecodeCache>, cancel:&AtomicBool,
+)->Result<Prepared,String>{
+    let mut image=match cache {
+        Some(cache) => cache.load(&source.path, cancel)?,
+        None => DecodeCache::decode(&source.path, cancel)?,
+    };
     let mut budget=150_000_000_u64;
     for (index,line) in lines.iter().enumerate() {
         if index%128==0 { input::check(cancel)?; }

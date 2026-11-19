@@ -30,7 +30,7 @@ pub enum Background {
     #[default]
     Pdok,
 }
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stroke {
     pub points: Vec<[f64; 2]>,
@@ -363,7 +363,7 @@ impl Renderer {
         profile_reference: Option<[f64; 2]>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
-        self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, &[], cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, 82, false, &[], None, cancel)
     }
     /// Leave room for coordinates around the DXF template map, including
     /// their resolution-scaled labels on high-DPI pages.
@@ -389,6 +389,19 @@ impl Renderer {
         rules: &[crate::Rule],
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
+        self.render_template_with_raster_and_rules_cached(
+            source, bounds, fallback, profile_reference, rules, None, cancel)
+    }
+    pub(crate) fn render_template_with_raster_and_rules_cached(
+        &mut self,
+        source: &Source,
+        bounds: Bounds,
+        fallback: Option<Raster<'_>>,
+        profile_reference: Option<[f64; 2]>,
+        rules: &[crate::Rule],
+        cache: Option<&template_raster::DecodeCache>,
+        cancel: &AtomicBool,
+    ) -> Result<Page, String> {
         // A supplied PNG map is already rasterized for the legacy A4 layout.
         // Do not change its expected dimensions or silently resample it.
         let margin = if matches!(&source.background, Background::Png { .. }) {
@@ -396,7 +409,7 @@ impl Renderer {
         } else {
             (82. * f64::from(source.settings.dpi) / 300.).round_ties_even().max(82.) as u32
         };
-        self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, rules, cancel)
+        self.render_with_margin(source, bounds, fallback, profile_reference, margin, true, rules, cache, cancel)
     }
     fn render_with_margin(
         &mut self,
@@ -407,6 +420,7 @@ impl Renderer {
         margin: u32,
         template_detail: bool,
         rules: &[crate::Rule],
+        cache: Option<&template_raster::DecodeCache>,
         cancel: &AtomicBool,
     ) -> Result<Page, String> {
         input::check(cancel)?;
@@ -453,9 +467,14 @@ impl Renderer {
         if let Some(tiff) = tiff.as_ref() {
             let (image, transform) = match tiff {
                 Raster::Tiff(tiff) => {
-                    let raster = crate::raster::decode_full_with_cancel(&tiff.path, cancel)?;
-                    let image = RgbaImage::from_raw(raster.width, raster.height, raster.rgba)
-                        .ok_or("Ongeldige kaart-TIFF-pixelbuffer")?;
+                    let image = match cache {
+                        Some(cache) => cache.load(&tiff.path, cancel)?,
+                        None => {
+                            let raster = crate::raster::decode_full_with_cancel(&tiff.path, cancel)?;
+                            RgbaImage::from_raw(raster.width, raster.height, raster.rgba)
+                                .ok_or("Ongeldige kaart-TIFF-pixelbuffer")?
+                        }
+                    };
                     (image, tiff.transform)
                 }
                 Raster::Virtual(source) => {

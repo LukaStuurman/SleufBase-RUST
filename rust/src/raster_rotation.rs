@@ -68,6 +68,150 @@ fn sample(image: &RgbaImage, x: f64, y: f64) -> [u8; 4] {
     }
     p
 }
+/// Exact global output dimensions and inverse sampling transform for the
+/// established Pillow-compatible rotation. Both full and sparse variants use
+/// the same arithmetic, retaining subpixel alignment and output coordinates.
+fn expanded_transform(w: u32, h: u32, angle: f64) -> Result<([u32;2],[f64;6]),String> {
+    let a = -angle.to_radians();
+    let cosine = rounded(a.cos());
+    let sine = rounded(a.sin());
+    let mut matrix = [cosine, sine, 0., -sine, cosine, 0.];
+    let offset = mapped(matrix, -(w as f64) / 2., -(h as f64) / 2.);
+    matrix[2] = offset[0] + w as f64 / 2.;
+    matrix[5] = offset[1] + h as f64 / 2.;
+    let corners = [
+        [0., 0.],
+        [w as f64, 0.],
+        [w as f64, h as f64],
+        [0., h as f64],
+    ]
+    .map(|[x, y]| mapped(matrix, x, y));
+    let minx = corners
+        .iter()
+        .map(|p| p[0])
+        .fold(f64::INFINITY, f64::min)
+        .floor();
+    let miny = corners
+        .iter()
+        .map(|p| p[1])
+        .fold(f64::INFINITY, f64::min)
+        .floor();
+    let maxx = corners
+        .iter()
+        .map(|p| p[0])
+        .fold(f64::NEG_INFINITY, f64::max)
+        .ceil();
+    let maxy = corners
+        .iter()
+        .map(|p| p[1])
+        .fold(f64::NEG_INFINITY, f64::max)
+        .ceil();
+    if maxx - minx > u32::MAX as f64 || maxy - miny > u32::MAX as f64 {
+        return Err("Rotatieafmetingen buiten bereik".into());
+    }
+    let (nw, nh) = ((maxx - minx) as u32, (maxy - miny) as u32);
+    let offset = mapped(
+        matrix,
+        -(nw as f64 - w as f64) / 2.,
+        -(nh as f64 - h as f64) / 2.,
+    );
+    matrix[2] = offset[0];
+    matrix[5] = offset[1];
+    Ok(([nw,nh],matrix))
+}
+
+/// Rotating an alpha-sparse raster need not interpolate huge transparent
+/// gutters. The returned origin remains in the ORIGINAL full rotated canvas.
+pub(crate) struct RotatedRegion {
+    pub image: RgbaImage,
+    pub full_size: [u32;2],
+    pub origin: [u32;2],
+}
+pub(crate) fn rotate_window(image:RgbaImage,degrees:f64,cancel:&AtomicBool)
+    ->Result<RotatedRegion,String>
+{
+    input::check(cancel)?;
+    if !degrees.is_finite(){return Err("Ongeldige rasterrotatie".into());}
+    let angle=degrees.rem_euclid(360.);
+    let (w,h)=image.dimensions();
+    let full=|image| rotate(image,degrees,cancel).map(|image| {
+        let full_size=[image.width(),image.height()];
+        RotatedRegion{image,full_size,origin:[0,0]}
+    });
+    if w==0 || h==0 || angle==0. || angle==90. || angle==180. || angle==270. {
+        return full(image);
+    }
+    // All four opaque corners imply a full source bounding box.
+    if [(0,0),(w-1,0),(0,h-1),(w-1,h-1)].iter()
+        .all(|&(x,y)|image.get_pixel(x,y)[3]>0) {return full(image);}
+    let mut bounds=[w,h,0,0];
+    let mut seen=false;
+    let mut high_alpha=false;
+    for (i,p) in image.as_raw().chunks_exact(4).enumerate(){
+        if i%16384==0{input::check(cancel)?;}
+        if p[3]>0 {
+            let x=i as u32%w;let y=i as u32/w;
+            bounds[0]=bounds[0].min(x);bounds[1]=bounds[1].min(y);
+            bounds[2]=bounds[2].max(x+1);bounds[3]=bounds[3].max(y+1);
+            seen=true;
+            high_alpha|=p[3]>32;
+        }
+    }
+    if !seen || !high_alpha{return full(image);}
+    if u64::from(bounds[2]-bounds[0])*u64::from(bounds[3]-bounds[1])*4
+        >=u64::from(w)*u64::from(h)*3 {return full(image);}
+    let ([nw,nh],matrix)=expanded_transform(w,h,angle)?;
+    let determinant=matrix[0]*matrix[4]-matrix[1]*matrix[3];
+    if !determinant.is_finite()||determinant.abs()<1e-10{return full(image);}
+    // Bicubic sampling visits a 4x4 source neighborhood. The conservative
+    // six-pixel source and ten-pixel target gutters exceed its full support.
+    let src=[[bounds[0] as f64-6.,bounds[1] as f64-6.],
+        [bounds[2] as f64+6.,bounds[1] as f64-6.],
+        [bounds[2] as f64+6.,bounds[3] as f64+6.],
+        [bounds[0] as f64-6.,bounds[3] as f64+6.]];
+    let dst=src.map(|[x,y]|{
+        let x=x-matrix[2];let y=y-matrix[5];
+        [(matrix[4]*x-matrix[1]*y)/determinant-0.5,
+         (-matrix[3]*x+matrix[0]*y)/determinant-0.5]
+    });
+    let minx=dst.iter().map(|p|p[0]).fold(f64::INFINITY,f64::min);
+    let miny=dst.iter().map(|p|p[1]).fold(f64::INFINITY,f64::min);
+    let maxx=dst.iter().map(|p|p[0]).fold(f64::NEG_INFINITY,f64::max);
+    let maxy=dst.iter().map(|p|p[1]).fold(f64::NEG_INFINITY,f64::max);
+    let left=((minx.floor() as i64)-10).clamp(0,nw as i64) as u32;
+    let top=((miny.floor() as i64)-10).clamp(0,nh as i64) as u32;
+    let right=((maxx.ceil() as i64)+11).clamp(0,nw as i64) as u32;
+    let bottom=((maxy.ceil() as i64)+11).clamp(0,nh as i64) as u32;
+    if right<=left||bottom<=top{return full(image);}
+    if u64::from(right-left)*u64::from(bottom-top)*5
+        >=u64::from(nw)*u64::from(nh)*4 {return full(image);}
+    // Preserve a clean original for the rare degenerate case in which every
+    // output sample is below the historical alpha threshold.
+    let original=image.clone();
+    let mut image=image;
+    for (i,p) in image.as_mut().as_chunks_mut::<4>().0.iter_mut().enumerate(){
+        if i%16384==0{input::check(cancel)?;}
+        let alpha=u32::from(p[3]);
+        for c in &mut p[..3]{
+            let tmp=u32::from(*c)*alpha+128;
+            *c=((tmp+(tmp>>8))>>8) as u8;
+        }
+    }
+    let mut output=allocate(right-left,bottom-top)?;
+    let mut visible=false;
+    for y in top..bottom{
+        input::check(cancel)?;
+        for x in left..right{
+            let p=mapped(matrix,x as f64+0.5,y as f64+0.5);
+            let pixel=sample(&image,p[0],p[1]);
+            visible|=pixel[3]>15;
+            output.put_pixel(x-left,y-top,Rgba(pixel));
+        }
+    }
+    if !visible {return full(original);}
+    Ok(RotatedRegion{image:output,full_size:[nw,nh],origin:[left,top]})
+}
+
 pub(crate) fn rotate(
     mut image: RgbaImage,
     degrees: f64,
@@ -110,52 +254,8 @@ pub(crate) fn rotate(
         }
         return Ok(output);
     }
-    let a = -angle.to_radians();
-    let cosine = rounded(a.cos());
-    let sine = rounded(a.sin());
-    let mut matrix = [cosine, sine, 0., -sine, cosine, 0.];
-    let offset = mapped(matrix, -(w as f64) / 2., -(h as f64) / 2.);
-    matrix[2] = offset[0] + w as f64 / 2.;
-    matrix[5] = offset[1] + h as f64 / 2.;
-    let corners = [
-        [0., 0.],
-        [w as f64, 0.],
-        [w as f64, h as f64],
-        [0., h as f64],
-    ]
-    .map(|[x, y]| mapped(matrix, x, y));
-    let minx = corners
-        .iter()
-        .map(|p| p[0])
-        .fold(f64::INFINITY, f64::min)
-        .floor();
-    let miny = corners
-        .iter()
-        .map(|p| p[1])
-        .fold(f64::INFINITY, f64::min)
-        .floor();
-    let maxx = corners
-        .iter()
-        .map(|p| p[0])
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil();
-    let maxy = corners
-        .iter()
-        .map(|p| p[1])
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil();
-    if maxx - minx > u32::MAX as f64 || maxy - miny > u32::MAX as f64 {
-        return Err("Rotatieafmetingen buiten bereik".into());
-    }
-    let (nw, nh) = ((maxx - minx) as u32, (maxy - miny) as u32);
-    let mut output = allocate(nw, nh)?;
-    let offset = mapped(
-        matrix,
-        -(nw as f64 - w as f64) / 2.,
-        -(nh as f64 - h as f64) / 2.,
-    );
-    matrix[2] = offset[0];
-    matrix[5] = offset[1];
+    let ([nw,nh],matrix) = expanded_transform(w,h,angle)?;
+    let mut output = allocate(nw,nh)?;
     // Consume the source buffer in place rather than allocate a second full
     // premultiplied copy. The destination is unpremultiplied while sampling.
     for (i, p) in image.as_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
@@ -176,4 +276,38 @@ pub(crate) fn rotate(
         }
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod sparse_rotation_regressions {
+    use super::*;
+    #[test]
+    fn sparse_pixels_match_full_bicubic_rotation_at_global_positions() {
+        let cancel=AtomicBool::new(false);
+        let image=RgbaImage::from_fn(720,500,|x,y|{
+            if (230..470).contains(&x)&&(155..345).contains(&y) {
+                Rgba([((x*7+y)%255) as u8,((x+y*5)%255) as u8,78,220])
+            } else {Rgba([244,250,252,0])}
+        });
+        for degrees in [13.25,43.,122.,-32.5] {
+            let complete=rotate(image.clone(),degrees,&cancel).unwrap();
+            let sparse=rotate_window(image.clone(),degrees,&cancel).unwrap();
+            assert_eq!(sparse.full_size,[complete.width(),complete.height()]);
+            assert!(sparse.image.width() < complete.width());
+            for y in 0..complete.height(){
+                for x in 0..complete.width(){
+                    let inside=x>=sparse.origin[0] && y>=sparse.origin[1]
+                        && x<sparse.origin[0]+sparse.image.width()
+                        && y<sparse.origin[1]+sparse.image.height();
+                    if inside {
+                        assert_eq!(*complete.get_pixel(x,y),
+                            *sparse.image.get_pixel(x-sparse.origin[0],y-sparse.origin[1]));
+                    } else {
+                        assert!(complete.get_pixel(x,y)[3]<=15,
+                            "visible output was omitted at ({x},{y})");
+                    }
+                }
+            }
+        }
+    }
 }
