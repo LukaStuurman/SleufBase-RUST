@@ -270,6 +270,8 @@ Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of ver
 
 In **Sleufgegevens** kun je bij een handmatige sleuf begin- en eindcoördinaten wijzigen, begin en einde omkeren en de hele sleuf verschuiven. Via het contextmenu op de kaart zijn ook verplaatsen, interactief draaien, een hoek invullen en een virtuele kopie beschikbaar.
 
+De knoppen onderaan zijn in één compacte werkbalk geplaatst. In een breed venster staan invoeracties en projectacties naast elkaar; op kleinere schermen staan ze onder elkaar. **Diameter** wordt direct als een gekleurde cirkel in de doorsnede getoond. Zolang de diepte niet is ingevuld, wordt die cirkel als **voorbeeld** weergegeven en wordt er geen diepte automatisch opgeslagen.
+
 Het bewerkvenster werkt met een **concept**. **Opslaan in project** neemt de sleuf en de invoer over in het geopende project. **Sluiten zonder opslaan** verwerpt het concept. Sla daarna met **Acties → Project opslaan** ook het projectbestand op schijf op.
 
 ## 12a. LAS- en LAZ-puntenwolken verwerken
