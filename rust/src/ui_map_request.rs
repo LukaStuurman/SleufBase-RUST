@@ -176,6 +176,38 @@ impl SleufBaseApp {
         let Some(event) = event else {
             return;
         };
+        // WMTS sends small texture patches once the base frame is visible.
+        // A stale zoom/pan generation or a patch for a different texture size
+        // is ignored; a complete final image is still delivered normally.
+        if let Event::Patches {request,patches,completed,total}=&event {
+            if !self.map_requests.scheduler.accepts(*request) {return;}
+            let mut applied=false;
+            for patch in patches {
+                let width=(patch.rect[2]-patch.rect[0]) as usize;
+                let height=(patch.rect[3]-patch.rect[1]) as usize;
+                let valid=width>0 && height>0
+                    && patch.rect[2]<=patch.size[0]
+                    && patch.rect[3]<=patch.size[1]
+                    && patch.rgba.len()==width*height*4
+                    && self.pdok_bounds==Some(patch.bounds);
+                if !valid {continue;}
+                if let Some(texture)=self.pdok_texture.as_mut()
+                    .filter(|tex|tex.size()==[patch.size[0] as usize,patch.size[1] as usize])
+                {
+                    let image=egui::ColorImage::from_rgba_unmultiplied(
+                        [width,height],&patch.rgba);
+                    texture.set_partial([patch.rect[0] as usize,patch.rect[1] as usize],
+                        image,egui::TextureOptions::LINEAR);
+                    applied=true;
+                }
+            }
+            if applied {
+                self.map_requests.scheduler.preview(*request);
+                self.message=format!("Luchtfoto laden: {completed}/{total} tegels");
+                ctx.request_repaint();
+            }
+            return;
+        }
         let (request, result, terminal, progress) = match event {
             Event::Preview {
                 request,
@@ -184,6 +216,7 @@ impl SleufBaseApp {
                 total,
             } => (request, Ok(pixels), false, Some((completed, total))),
             Event::Complete { request, result } => (request, result, true, None),
+            Event::Patches { .. } => unreachable!("PDOK patches handled above"),
         };
         if !self.map_requests.scheduler.accepts(request) {
             return;
