@@ -584,10 +584,10 @@ impl ViewportRenderer {
             Ok(())
         })?;
         input::check(cancel)?;
-        // Exact final bilinear raster: repaint one last time to ensure
-        // cross-tile edges are identical regardless of download order.
-        rgba.fill(255);
-        Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
+        // Every incoming tile was painted into its exact RD rectangle with
+        // a two-pixel halo, so the final image is already pixel-identical
+        // to a complete resample. Do not recompute millions of pixels again.
+        // See tile_regions_compose_the_same_bilinear_pixels_as_full_frame.
         let raster=Raster{bounds,width,height,rgba,stale_cache:stale};
         if u64::from(width)*u64::from(height)<=12_000_000 {
             self.previous=Some(raster.clone());
