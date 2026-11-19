@@ -1099,7 +1099,7 @@ fn cloud_columns_for_width(width: f32) -> Vec<(usize, f32)> {
             2 => 82., 3 => 72., 4 => if width < 540. { 114. } else { 138. },
             5 => 188., 6 => 94., _ => 0.,
         })).collect::<Vec<_>>();
-    let free = (width - 28. - CLOUD_COLUMN_GAP * (columns.len() - 1) as f32
+    let free = (width - 44. - CLOUD_COLUMN_GAP * (columns.len() - 1) as f32
         - columns.iter().map(|(_, value)| *value).sum::<f32>()).max(60.);
     let has_path = columns.iter().any(|(column, _)| *column == 1);
     for (column, column_width) in &mut columns {
@@ -1140,12 +1140,22 @@ fn cloud_action_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: b
         .corner_radius(8).min_size(egui::vec2(0., 30.)))
 }
 fn show_cloud_header(ui: &mut egui::Ui, width: f32, columns: &[(usize, f32)],
-    state: &mut State, inline_filters: bool) {
+    state: &mut State, visible_ids: &[String], inline_filters: bool) {
     let height = if inline_filters { 56. } else { 28. };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     ui.painter_at(rect).rect_filled(rect, 6., Color32::WHITE);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("cloud-column-headings"));
-    let mut x = rect.left() + 12.;
+    let mut all = !visible_ids.is_empty() && visible_ids.iter().all(|id| state.selection.ids.contains(id));
+    if child.put(egui::Rect::from_min_size(rect.min + egui::vec2(8., 3.), egui::vec2(22., 22.)),
+        egui::Checkbox::without_text(&mut all))
+        .on_hover_text("Alle zichtbare scans selecteren of deselecteren").changed() {
+        if all { state.selection.apply(visible_ids.iter().cloned(), true); }
+        else {
+            for id in visible_ids { state.selection.ids.remove(id); }
+            state.selection.reconcile();
+        }
+    }
+    let mut x = rect.left() + 36.;
     for &(column, column_width) in columns {
         let arrow = if state.sort_column == column {
             if state.descending { " ▼" } else { " ▲" }
@@ -1169,7 +1179,7 @@ fn show_cloud_header(ui: &mut egui::Ui, width: f32, columns: &[(usize, f32)],
     }
 }
 fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
-    striped: bool, width: f32, columns: &[(usize, f32)]) -> egui::Response {
+    striped: bool, width: f32, columns: &[(usize, f32)]) -> (egui::Response, Option<bool>) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CLOUD_ROW_HEIGHT), egui::Sense::hover());
     let response = ui.interact(rect, ui.make_persistent_id(("cloud-card", item.id.as_str())), egui::Sense::click());
     let fill = if selected { Color32::from_rgb(255, 239, 226) }
@@ -1182,15 +1192,13 @@ fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
     if selected {
         painter.rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(2., 8.), egui::vec2(3., 20.)), 2., ORANGE);
     }
-    // The small radio marker makes single-item selection clear without giving
-    // the false expectation of multi-selection from the KickTheMap checkbox.
-    let marker = egui::pos2(rect.left() + 16., rect.center().y);
-    painter.circle_stroke(marker, 7., Stroke::new(1.3, if selected { ORANGE } else { theme::MUTED }));
-    if selected { painter.circle_filled(marker, 3.8, ORANGE); }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect)
         .id_salt(("cloud-card-content", item.id.as_str()))
         .layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let mut x = rect.left() + 28.;
+    let mut checked = selected;
+    let check = child.put(egui::Rect::from_min_size(rect.min + egui::vec2(8., 7.), egui::vec2(22., 22.)),
+        egui::Checkbox::without_text(&mut checked));
+    let mut x = rect.left() + 36.;
     for &(column, column_width) in columns {
         let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 4.), egui::vec2(column_width, 28.));
         let value = cloud_column_value(item, column);
@@ -1218,16 +1226,17 @@ fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
         }
         x += column_width + CLOUD_COLUMN_GAP;
     }
-    response.on_hover_text(format!("{}\nBestand: {}\nX {:.3} · Y {:.3} · Z {:.3}\n{}\n{}",
+    (response.on_hover_text(format!("{}\nBestand: {}\nX {:.3} · Y {:.3} · Z {:.3}\n{}\n{}",
         item.title, item.path, item.center[0], item.center[1], item.center[2],
-        item.axis, if item.loaded { "In dit project" } else { "Bewaard in overzicht" }))
+        item.axis, if item.loaded { "In dit project" } else { "Bewaard in overzicht" })), check.changed().then_some(checked))
 }
 fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled: bool,
     action: &mut Option<(&'static str, String)>) {
     let width = (ui.available_width() - ui.spacing().scroll.allocated_width()).max(1.);
     let columns = cloud_columns_for_width(width);
     let inline_filters = width >= 680. && ui.available_height() >= 240.;
-    show_cloud_header(ui, width, &columns, state, inline_filters);
+    let ordered = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+    show_cloud_header(ui, width, &columns, state, &ordered, inline_filters);
     ui.spacing_mut().item_spacing.y = 2.;
     egui::ScrollArea::vertical().id_salt("pointcloud-catalog-vertical")
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
@@ -1235,15 +1244,42 @@ fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled
         .show_rows(ui, CLOUD_ROW_HEIGHT, rows.len(), |ui, range| {
             for index in range {
                 let item = &rows[index];
-                let response = show_cloud_card(ui, item,
-                    state.selected.as_deref() == Some(item.id.as_str()), index % 2 != 0, width, &columns);
-                if response.clicked() { state.selected = Some(item.id.clone()); }
+                let (response, checked) = show_cloud_card(ui, item,
+                    state.selection.ids.contains(&item.id), index % 2 != 0, width, &columns);
+                let extend = ui.input(|input| input.modifiers.ctrl || input.modifiers.command || input.modifiers.shift);
+                if let Some(checked) = checked {
+                    if checked && extend { state.selection.select_row(&ordered, index, true); }
+                    else { state.selection.set_checked(&item.id, checked); }
+                } else if response.clicked() { state.selection.select_row(&ordered, index, extend); }
                 if enabled && response.double_clicked() {
-                    state.selected = Some(item.id.clone());
+                    state.selection.apply([item.id.clone()], false);
                     *action = Some(("edit", item.id.clone()));
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod pointcloud_selection_tests {
+    use super::Selection;
+    #[test]
+    fn map_and_list_selection_share_additive_and_range_rules() {
+        let mut selection = Selection::default();
+        let ordered = ["one", "two", "three", "four"].map(str::to_owned);
+        selection.apply(["two".to_owned(), "three".to_owned()], false);
+        assert_eq!(selection.ids.len(), 2);
+        selection.apply(["four".to_owned()], true);
+        assert_eq!(selection.ids.len(), 3);
+        selection.select_row(&ordered, 0, false);
+        assert_eq!(selection.ids.len(), 1);
+        selection.select_row(&ordered, 2, true);
+        assert!(["one", "two", "three"].iter().all(|id| selection.ids.contains(*id)));
+        selection.set_checked("two", false);
+        assert!(!selection.ids.contains("two"));
+        selection.clear();
+        assert!(selection.ids.is_empty());
+        assert!(selection.focused.is_none());
+    }
 }
 
 fn same_source(trench: &VirtualTrench, id: &str) -> bool {
