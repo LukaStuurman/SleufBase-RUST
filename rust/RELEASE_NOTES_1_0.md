@@ -1,26 +1,25 @@
-# SleufBase Rust 1.0.46 — snellere kaarten, grote puntenwolkbatches en overzichtelijke knoppen
+# SleufBase Rust v1.0.47 — Google Maps-achtige PDOK-luchtfoto en scherpere perceelkaart
 
-## Kaartachtergronden sneller laden
-- **Gedeelde OpenStreetMap-kaarttegels:** de hoofdkaart, KickTheMap-jobkaart, puntenwolkenkaart en kaartuitvoer gebruiken één gezamenlijke cachemap. Dit beperkt dubbele downloads wanneer je tussen vensters wisselt.
-- **PDOK-cache na opnieuw starten:** gedownloade, gecontroleerde WMS-kaartbeelden worden veilig en automatisch op schijf bewaard. Luchtfoto's maximaal zes uur, perceel-/kadasterlagen maximaal vijftien minuten. De cache wordt begrensd op 256 MiB en 2.048 bestanden en bij gebruik opgeschoond.
-- **Geen onnodige dubbele PDOK-aanvragen:** hetzelfde gebied met dezelfde laag en resolutie hoeft bij gelijklopende aanvragen niet twee keer te worden opgehaald.
-- **Luchtfoto en percelen tegelijk:** bij normale kaartformaten kunnen de basiskaart en de perceelgrenzen parallel worden voorbereid. Bij grotere kaarten blijft het geheugenzuinige pad actief.
-- **Minder grote voorbeeldberekeningen:** OpenStreetMap tekent een al volledig opgeslagen kaartbeeld slechts één keer in plaats van nogmaals een tijdelijke afbeelding op te bouwen. Voor grote OSM- en PDOK-kaarten worden minder tussentijdse volledige previews samengesteld; de uiteindelijke resolutie verandert niet.
-- **DXF-sjabloonexport:** de PDOK-tegels voor grote exportkaarten kunnen ook wanneer geen tussentijdse voortgangsafbeelding gevraagd wordt met maximaal vier begrensde werkers worden opgehaald.
-- De bestaande beperkingen op parallelle netwerkverzoeken blijven gelden. Een eerste bezoek aan een gebied heeft nog steeds een netwerkverbinding nodig.
+## PDOK-luchtfoto laadt via WMTS-tegels
+- De interactieve PDOK-luchtfoto gebruikt de officiële WMTS-tegelpiramide van PDOK, met aparte 256-pixeltegels op meerdere zoomniveaus in RD New (EPSG:28992).
+- Eerst kan een grovere luchtfoto van het gebied verschijnen. Daarna worden scherpere tegels op het juiste zoomniveau opgehaald, bij voorkeur vanuit het midden van de kaart.
+- Bij verschuiven of zoomen blijven eerder getoonde beelden tijdelijk zichtbaar en kunnen reeds gedownloade tegels opnieuw worden gebruikt.
+- Eerder gedownloade luchtfototegels worden tijdelijk op schijf bewaard. De cache heeft een grens van 512 MiB en maximaal 4.096 bestanden, en oude bestanden worden zo nodig opgeruimd.
+- De kaart blijft de bestaande WMS-downloadmethode ondersteunen als WMTS niet beschikbaar is. DXF-sjabloonexport blijft WMS gebruiken voor de exacte geografische uitsnede.
 
-## Veel LAS/LAZ-bestanden tegelijk importeren
-- In **Puntenwolk → LAS/LAZ openen** kun je maximaal **2.048 bestanden tegelijk** selecteren, in plaats van 32. De gezamenlijke wachtrij heeft een grens van 4.096 bestanden.
-- Puntenwolken worden één voor één geconverteerd, zodat de importer geen honderden zware conversies tegelijk start.
-- In **Puntenwolken beheren** zijn voortgang, overgeslagen reeds bewaarde scans en fouten per bestand zichtbaar. Via **Wachtrij stoppen** beëindig je een actieve conversie en wis je de resterende opdrachten zonder al bewaarde scans te verwijderen.
-- De importwachtrij kan worden aangevuld tijdens verwerking. Bestaande bronidentiteiten en meetobjecten blijven behouden wanneer een lokale weergave opnieuw wordt opgebouwd.
-- Het puntenwolkoverzicht blijft begrensd op 4.096 bronrecords; het aantal bronnen in één project heeft een eigen grens.
+## Scherpere Kadaster-percelen
+- Bij ver inzoomen worden de echte kadastrale grenzen, gebouwcontouren en labels via PDOK WFS als vectorgeometrie opgehaald en getekend.
+- De automatische vectorlaag is los van handmatig ingeladen Kadaster-bestanden en wordt tijdelijk opgebouwd voor het huidige kaartgebied.
+- Op grote gebieden en wanneer de vectorbron niet beschikbaar is, gebruikt de kaart een raster-/tegelachtergrond van Kadaster (WMTS/WMS). Daardoor blijft ook bij uitzoomen de kaart bruikbaar.
+- Deze kaart is een visuele ondergrond en geen rechtsgeldige grensmeting.
 
-## Proefsleuf bewerken
-- Onderaan staat een vaste, gescheiden en responsieve actiebalk, vergelijkbaar met de KickTheMap-joblijst.
-- Kabel-/leidinginvoer is gegroepeerd. **Opslaan in project** en **Sluiten zonder opslaan** hebben een vaste plek; extra acties staan bij smalle vensters onder **Meer invoeracties**.
-- Fout- en statusmeldingen blijven in de onderbalk zichtbaar.
+## Virtuele proefsleuf bewerken
+- De knoppen onderaan zijn compacter en blijven in een vaste actiebalk dicht tegen de onderkant van het bewerkvenster staan.
+- Op brede schermen kunnen invoer- en projectacties naast elkaar staan; op kleinere vensters schakelt de indeling automatisch over.
+- Tijdens het aanpassen van de diameter verschijnt de gekozen maat meteen als schaalbare cirkel met Ø-label in de doorsnede, ook wanneer er nog geen diepte is ingevoerd.
+- Zonder gemeten of ingevoerde diepte staat duidelijk aangegeven dat het om een illustratief voorbeeld gaat; het programma slaat daardoor niet automatisch een verzonnen diepte op.
 
-## Build en controle
-- Deze versie wordt **zonder geautomatiseerde tests** gebouwd op verzoek. Windows-compilatie, bundelen van de portable ZIP en installer, pakketcontrole en SHA-256-verificatie blijven ingeschakeld.
-- Er is nog geen praktijkbenchmark die een bepaalde snelheidswinst garandeert; die hangt af van bestandsgroottes, kaartgebied, internetverbinding en een warme of lege cache.
+## Bouwen en valideren
+- Op verzoek zijn de geautomatiseerde tests en Clippy-controles voor deze release overgeslagen.
+- De Windows-releasecompilatie, het maken en controleren van de portable ZIP, de installer en de checksums blijven onderdeel van de publicatie.
+- De snelheid en werking van de nieuwe WMTS-lader moeten in de praktijk op verschillende internetverbindingen en kaartgebieden worden gecontroleerd.
