@@ -483,27 +483,33 @@ impl SleufBaseApp {
             || !self.pointcloud_ui.queue.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(40));
         }
-        if self.pointcloud_ui.form.is_none() && !self.pointcloud_ui.busy()
-            && self.pointcloud_ui.pending_catalog.is_none() && self.file_intent.is_none() {
-            if let Some(path) = self.pointcloud_ui.queue.pop_front() {
-                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-                let existing = self.pointcloud_ui.sources().iter()
-                    .find(|source| source.source_path == canonical).cloned();
-                if let Some(source) = existing.as_ref().filter(|source| source.validate_cache().is_ok()) {
-                    self.pointcloud_ui.selection.apply([source.id.clone()], false);
-                    self.pointcloud_ui.batch.completed += 1;
-                    self.pointcloud_ui.batch.skipped += 1;
-                    self.pointcloud_ui.status = format!("Scan al bewaard. {}", self.pointcloud_ui.batch.description());
-                } else {
-                    let title = existing.as_ref().map(|source| source.title.clone()).unwrap_or_else(||
-                        path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
-                    let crs = existing.as_ref().map(|source| source.crs).unwrap_or(CloudCrs::Unknown);
-                    // Rebuild a missing/invalid conversion under its existing
-                    // identity, retaining manually placed endpoints and cables.
-                    // A truly different file remains a visible error rather
-                    // than silently overwriting the saved scan.
-                    self.start_pointcloud_import(ImportForm { path, title, crs }, existing, ctx, true);
-                }
+        // Drain a handful of already-prepared sources per frame. Starting an
+        // actual LAS/LAZ conversion immediately stops this loop, keeping the
+        // expensive converter strictly single-threaded and the UI responsive.
+        for _ in 0..8 {
+            if self.pointcloud_ui.form.is_some() || self.pointcloud_ui.busy()
+                || self.pointcloud_ui.pending_catalog.is_some() || self.file_intent.is_some() {
+                break;
+            }
+            let Some(path) = self.pointcloud_ui.queue.pop_front() else { break; };
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let existing = self.pointcloud_ui.sources().iter()
+                .find(|source| source.source_path == canonical).cloned();
+            if let Some(source) = existing.as_ref().filter(|source| source.validate_cache().is_ok()) {
+                self.pointcloud_ui.selection.apply([source.id.clone()], false);
+                self.pointcloud_ui.batch.completed += 1;
+                self.pointcloud_ui.batch.skipped += 1;
+                self.pointcloud_ui.status = format!("Scan al bewaard. {}", self.pointcloud_ui.batch.description());
+            } else {
+                let title = existing.as_ref().map(|source| source.title.clone()).unwrap_or_else(||
+                    path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+                let crs = existing.as_ref().map(|source| source.crs).unwrap_or(CloudCrs::Unknown);
+                // Rebuild a missing/invalid conversion under its existing
+                // identity, retaining manually placed endpoints and cables.
+                // A truly different file remains a visible error rather
+                // than silently overwriting the saved scan.
+                self.start_pointcloud_import(ImportForm { path, title, crs }, existing, ctx, true);
+                break;
             }
         }
     }
