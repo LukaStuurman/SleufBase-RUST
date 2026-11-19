@@ -308,7 +308,9 @@ impl ViewportRenderer {
     )->Result<(),String>{
         if ids.is_empty(){return Ok(());}
         let index=AtomicUsize::new(0);
-        let workers=ids.len().min(3);
+        // Four bounded requests use the existing PDOK network limit without
+        // creating one thread per tile.
+        let workers=ids.len().min(4);
         let (tx,rx)=mpsc::sync_channel(workers);
         std::thread::scope(|scope| -> Result<(),String> {
             for _ in 0..workers{
