@@ -277,3 +277,37 @@ pub(crate) fn rotate(
     }
     Ok(output)
 }
+
+#[cfg(test)]
+mod sparse_rotation_regressions {
+    use super::*;
+    #[test]
+    fn sparse_pixels_match_full_bicubic_rotation_at_global_positions() {
+        let cancel=AtomicBool::new(false);
+        let image=RgbaImage::from_fn(720,500,|x,y|{
+            if (230..470).contains(&x)&&(155..345).contains(&y) {
+                Rgba([((x*7+y)%255) as u8,((x+y*5)%255) as u8,78,220])
+            } else {Rgba([244,250,252,0])}
+        });
+        for degrees in [13.25,43.,122.,-32.5] {
+            let complete=rotate(image.clone(),degrees,&cancel).unwrap();
+            let sparse=rotate_window(image.clone(),degrees,&cancel).unwrap();
+            assert_eq!(sparse.full_size,[complete.width(),complete.height()]);
+            assert!(sparse.image.width() < complete.width());
+            for y in 0..complete.height(){
+                for x in 0..complete.width(){
+                    let inside=x>=sparse.origin[0] && y>=sparse.origin[1]
+                        && x<sparse.origin[0]+sparse.image.width()
+                        && y<sparse.origin[1]+sparse.image.height();
+                    if inside {
+                        assert_eq!(*complete.get_pixel(x,y),
+                            *sparse.image.get_pixel(x-sparse.origin[0],y-sparse.origin[1]));
+                    } else {
+                        assert!(complete.get_pixel(x,y)[3]<=15,
+                            "visible output was omitted at ({x},{y})");
+                    }
+                }
+            }
+        }
+    }
+}
