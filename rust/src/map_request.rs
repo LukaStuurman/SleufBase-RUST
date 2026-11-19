@@ -408,9 +408,11 @@ fn parcel_overlay(view: Viewport, cancel: &AtomicBool) -> Result<image::RgbaImag
 impl Worker {
     pub fn new(osm_cache: PathBuf) -> Result<Self, String> {
         let mut osm = crate::osm_tiles::ViewportRenderer::default();
-        Self::with_fetcher(move |request, cancel, preview| {
+        let mut wmts:Option<crate::cadastral_tiles::Client> = None;
+        let mut last_pdok:Option<(Provider, Pixels)> = None;
+        let mut worker=Self::with_fetcher(move |request, cancel, preview| {
             let v = request.view;
-            match v.source {
+            let result=match v.source {
                 Provider::Osm | Provider::OsmCadastral => {
                     std::thread::scope(|scope| -> Result<Pixels, String> {
                         // Start collecting cadastral linework while OSM tiles
@@ -471,8 +473,12 @@ impl Worker {
                     std::thread::scope(|scope| -> Result<Pixels, String> {
                         let overlay = parallel_parcel_overlay(v)
                             .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
-                        // Keep the existing PDOK grid and network limits.
-                        let mut progress = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
+                        let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
+                            .map(|(_,image)|image);
+                        let mut buffer=ProgressivePdok::new(v,old,cancel)?;
+                        let mut progress = |p:crate::pdok_wms::Progress<'_>| {
+                            buffer.progress(p,cancel,preview)
+                        };
                         let mut image = crate::pdok_wms::request_tiled_with_progress(
                             crate::pdok_wms::Source::Aerial,
                             v.bounds, v.size[0], v.size[1], cancel, Some(&mut progress),
@@ -497,53 +503,47 @@ impl Worker {
                         })
                     })
                 }
-                Provider::Aerial | Provider::Cadastral => {
-                    let source = if v.source == Provider::Cadastral {
-                        crate::pdok_wms::Source::Cadastral
-                    } else {
-                        crate::pdok_wms::Source::Aerial
-                    };
-                    // Cloning and uploading the entire multi-megapixel
-                    // raster after EVERY individual 512px tile is expensive.
-                    // Keep two partial previews on regular screens and one
-                    // on very large screens, then the full-resolution result.
-                    let mut preview_count = 0usize;
-                    let pixels = u64::from(v.size[0]) * u64::from(v.size[1]);
-                    let preview_budget = if pixels > 4_000_000 { 1 } else { 2 };
-                    let mut update = |p: crate::pdok_wms::Progress<'_>| {
-                        crate::input::check(cancel)?;
-                        if p.completed < p.total && preview_count < preview_budget
-                            && (p.completed == 1 || p.completed >= p.total.div_ceil(2))
-                        {
-                            preview(Pixels {
-                                bounds: v.bounds,
-                                width: v.size[0],
-                                height: v.size[1],
-                                rgba: p.image.as_raw().clone(),
-                                stale_cache: false,
-                            }, p.completed, p.total)?;
-                            preview_count += 1;
-                        }
-                        Ok(())
-                    };
-                    let image = crate::pdok_wms::request_tiled_with_progress(
-                        source,
-                        v.bounds,
-                        v.size[0],
-                        v.size[1],
-                        cancel,
-                        Some(&mut update),
-                    )?;
-                    Ok(Pixels {
-                        bounds: v.bounds,
-                        width: image.width(),
-                        height: image.height(),
-                        rgba: image.into_raw(),
-                        stale_cache: false,
+                Provider::Cadastral => {
+                    // At broad zooms use the existing multiscale Kadaster WMTS
+                    // tile client instead of enlarging a single WMS PNG.
+                    // Close-up backgrounds switch to RD vector shapes in UI.
+                    if wmts.is_none() {
+                        wmts=Some(crate::cadastral_tiles::Client::new(
+                            crate::project::app_data_directory().join("cadastral-wmts"))?);
+                    }
+                    let image=wmts.as_ref().unwrap().request(v.bounds,v.size,cancel)?;
+                    Ok(Pixels{
+                        bounds:v.bounds,width:image.width(),height:image.height(),
+                        rgba:image.into_raw(),stale_cache:false,
                     })
                 }
+                Provider::Aerial => {
+                    let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
+                        .map(|(_,image)|image);
+                    let mut buffer=ProgressivePdok::new(v,old,cancel)?;
+                    let mut update=|p:crate::pdok_wms::Progress<'_>| {
+                        buffer.progress(p,cancel,preview)
+                    };
+                    let image=crate::pdok_wms::request_tiled_with_progress(
+                        crate::pdok_wms::Source::Aerial,
+                        v.bounds,v.size[0],v.size[1],cancel,Some(&mut update))?;
+                    Ok(Pixels{
+                        bounds:v.bounds,width:image.width(),height:image.height(),
+                        rgba:image.into_raw(),stale_cache:false,
+                    })
+                }
+            };
+            if matches!(v.source,Provider::Aerial|Provider::AerialCadastral)
+                && u64::from(v.size[0])*u64::from(v.size[1])<=12_000_000
+            {
+                if let Ok(image)=&result {
+                    last_pdok=Some((v.source,image.clone()));
+                }
             }
-        })
+            result
+        })?;
+        worker.progressive_pdok=true;
+        Ok(worker)
     }
     pub fn with_fetcher(
         mut fetch: impl FnMut(
