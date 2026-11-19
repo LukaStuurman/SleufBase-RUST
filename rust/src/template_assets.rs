@@ -39,6 +39,17 @@ pub(super) enum Kind<'a> {
     Photo(&'a template_photo::Photo),
 }
 impl Kind<'_> {
+    fn tiff_path(&self) -> Option<&Path> {
+        match self {
+            Self::Tiff {source,..} => Some(&source.path),
+            Self::Map {source,fallback,..} if source.include_tiff =>
+                source.tiff.as_ref().map(|s|s.path.as_path()).or_else(||match fallback {
+                    Some(map_export::Raster::Tiff(tiff)) => Some(tiff.path.as_path()),
+                    _ => None,
+                }),
+            _ => None,
+        }
+    }
     fn heavy(&self) -> bool {
         match self {
             Self::Map {
@@ -99,18 +110,8 @@ impl<'a> Batch<'a> {
         // the map fallback. Free decoded pixels after the last consumer.
         let mut tiff_uses = HashMap::<PathBuf,usize>::new();
         for job in &self.jobs {
-            let source = match &job.kind {
-                Kind::Tiff {source,..} => Some(*source),
-                Kind::Map {source,fallback,..} if source.include_tiff => {
-                    source.tiff.as_ref().or_else(|| match fallback {
-                        Some(map_export::Raster::Tiff(source)) => Some(*source),
-                        _ => None,
-                    })
-                }
-                _ => None,
-            };
-            if let Some(source) = source {
-                *tiff_uses.entry(source.path.clone()).or_insert(0) += 1;
+            if let Some(path) = job.kind.tiff_path() {
+                *tiff_uses.entry(path.to_path_buf()).or_insert(0) += 1;
             }
         }
         let decoded_tiffs = template_raster::DecodeCache::new(tiff_uses);
@@ -157,7 +158,10 @@ impl<'a> Batch<'a> {
                         (Some(cache),Some(key)) => cache.restore(key,&job.destination,&batch,&budget)?,
                         _ => false,
                     };
-                    if restored { cache_hits.fetch_add(1, Ordering::Relaxed); }
+                    if restored {
+                        cache_hits.fetch_add(1, Ordering::Relaxed);
+                        if let Some(path) = job.kind.tiff_path() {decoded_tiffs.skip(path);}
+                    }
                     if !restored {
                     match &job.kind {
                         Kind::Copy(source) => {
