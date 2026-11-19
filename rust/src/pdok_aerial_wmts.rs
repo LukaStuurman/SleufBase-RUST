@@ -432,70 +432,78 @@ impl ViewportRenderer {
         let target=plan(bounds,width,height)?;
         fs::create_dir_all(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
         let root=fs::canonicalize(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
-        let mut high=HashMap::with_capacity(target.count());
+        let total=target.count();
+        let mut high=HashMap::with_capacity(total);
         let mut missing=Vec::new();
         for id in target.ids(){
             input::check(cancel)?;
             match self.from_cache(id,&root,cancel){
                 Some((tile,true))=>{high.insert(id,tile);},
                 Some((tile,false))=>{high.insert(id,tile);missing.push(id);},
-                None=>missing.push(id)
+                None=>missing.push(id),
             }
         }
         if missing.is_empty(){
+            // A warm, fully cached view needs one rasterization and no
+            // intermediate uploads or low-resolution network requests.
             let mut rgba=vec![255; width as usize*height as usize*4];
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
             let raster=Raster{bounds,width,height,rgba,stale_cache:false};
-            if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+            if u64::from(width)*u64::from(height)<=12_000_000{
+                self.previous=Some(raster.clone());
+            }
             return Ok(raster);
         }
+        let old_overlap=self.previous.as_ref().is_some_and(|old|
+            old.bounds.min_x<bounds.max_x && old.bounds.max_x>bounds.min_x
+            && old.bounds.min_y<bounds.max_y && old.bounds.max_y>bounds.min_y);
         let mut rgba=self.reproject(bounds,width,height,cancel)?;
-        let total=target.count();
-        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
+        let mut preview_source=old_overlap;
         let mut previews=0usize;
+        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
         let mut stale=false;
-        // Low-level imagery is requested first only when high detail is mostly
-        // missing. This makes a new area visible quickly instead of showing a
-        // blank canvas until all high-resolution requests complete.
-        if target.zoom>=3 && high.len()*2<total {
-            let low_z=target.zoom-3;
-            if let Some(low_grid)=grid(bounds,low_z){
-                if low_grid.count()<=12 {
-                    let mut low=HashMap::new();
-                    let mut needed=Vec::new();
-                    for id in low_grid.ids(){
-                        match self.from_cache(id,&root,cancel){
-                            Some((tile,true))=>{low.insert(id,tile);},
-                            Some((tile,false))=>{low.insert(id,tile);needed.push(id);},
-                            None=>needed.push(id),
-                        }
+
+        // Google-Maps-style parent tiles are used ONLY when they are already
+        // cached. Never download a coarse level ahead of the target detail:
+        // the old blocking three-level prefetch could delay sharp imagery
+        // by several seconds on a cold network.
+        //
+        // Paint coarser parents first and then sharper parents, retaining
+        // the previous world-space image in portions with no cached tiles.
+        if !old_overlap && target.zoom>=2 && high.len()*2<total {
+            let first=target.zoom.saturating_sub(3);
+            for zoom in first..target.zoom {
+                let Some(parent)=grid(bounds,zoom) else {continue;};
+                if parent.count()>16 {continue;}
+                let mut cached=HashMap::new();
+                for id in parent.ids(){
+                    input::check(cancel)?;
+                    if let Some((tile,_))=self.from_cache(id,&root,cancel){
+                        cached.insert(id,tile);
                     }
-                    let mut extra=Vec::new();
-                    Self::fetch_batch(&needed,&root,cancel,|id,tile,when,is_stale|{
-                        extra.push((id,tile,when,is_stale));Ok(())
-                    })?;
-                    for (id,tile,when,is_stale) in extra {
-                        stale|=is_stale;
-                        self.remember(id,when,Arc::clone(&tile));
-                        low.insert(id,tile);
-                    }
-                    Self::paint(bounds,width,height,low_z,&low,&mut rgba,cancel)?;
-                    if !high.is_empty(){Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;}
-                    progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
-                        total,stale_cache:stale})?;
-                    previews+=1;
-                    last_preview=Instant::now();
+                }
+                if !cached.is_empty(){
+                    Self::paint(bounds,width,height,zoom,&cached,&mut rgba,cancel)?;
+                    preview_source=true;
                 }
             }
-        } else if !high.is_empty() {
+        }
+        if !high.is_empty(){
+            // Cached detail overlays all parents exactly once, not after
+            // each cached or downloaded tile.
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
-            progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
-                total,stale_cache:false})?;
-            previews+=1;
+            preview_source=true;
+        }
+        let mut completed=total-missing.len();
+        if preview_source {
+            progress(Progress{bounds,width,height,rgba:&rgba,
+                completed,total,stale_cache:false})?;
+            previews=1;
             last_preview=Instant::now();
         }
-        // Center first gives the user a recognizable location before edge
-        // tiles, while all tiles are still needed for the final picture.
+
+        // Highest-detail tiles always start immediately and are prioritized
+        // from the centre, where users are most likely to look.
         let center_col=(target.min_col+target.max_col) as f64*0.5;
         let center_row=(target.min_row+target.max_row) as f64*0.5;
         missing.sort_by(|a,b|{
@@ -505,32 +513,44 @@ impl ViewportRenderer {
             };
             d(a).total_cmp(&d(b))
         });
-        let mut count=total-missing.len();
-        let mut updates=Vec::new();
-        let mut next_update=total.div_ceil(4);
+        let preview_budget=if u64::from(width)*u64::from(height)>6_000_000{
+            2usize
+        }else if u64::from(width)*u64::from(height)>2_000_000{
+            3usize
+        }else{5usize};
         Self::fetch_batch(&missing,&root,cancel,|id,tile,when,is_stale|{
-            count+=1;
+            completed+=1;
             stale|=is_stale;
-            updates.push((id,Arc::clone(&tile),when));
-            high.insert(id,tile);
-            if count<total && previews<4 && count>=next_update
-                && last_preview.elapsed()>=PREVIEW_INTERVAL
+            high.insert(id,Arc::clone(&tile));
+            // Keep successful downloads in the in-memory LRU immediately.
+            // An interrupted pan/zoom can now use every completed tile
+            // instead of losing an entire cancelled batch.
+            self.remember(id,when,tile);
+            let region=Self::tile_region(bounds,width,height,id);
+            Self::paint_region(bounds,width,height,target.zoom,
+                &high,&mut rgba,region,cancel)?;
+            if completed<total && previews<preview_budget
+                && (previews==0 || last_preview.elapsed()>=PREVIEW_INTERVAL)
             {
-                Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
-                progress(Progress{bounds,width,height,rgba:&rgba,completed:count,total,stale_cache:stale})?;
+                progress(Progress{bounds,width,height,rgba:&rgba,
+                    completed,total,stale_cache:stale})?;
                 previews+=1;
                 last_preview=Instant::now();
-                next_update=count+total.div_ceil(4);
             }
             Ok(())
         })?;
-        for (id,tile,when) in updates{self.remember(id,when,tile);}
-        let mut final_rgba=vec![255; width as usize*height as usize*4];
-        Self::paint(bounds,width,height,target.zoom,&high,&mut final_rgba,cancel)?;
-        let raster=Raster{bounds,width,height,rgba:final_rgba,stale_cache:stale};
-        if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+        input::check(cancel)?;
+        // Exact final bilinear raster: repaint one last time to ensure
+        // cross-tile edges are identical regardless of download order.
+        rgba.fill(255);
+        Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
+        let raster=Raster{bounds,width,height,rgba,stale_cache:stale};
+        if u64::from(width)*u64::from(height)<=12_000_000 {
+            self.previous=Some(raster.clone());
+        }
         Ok(raster)
     }
+
 }
 
 #[cfg(test)]
