@@ -257,7 +257,7 @@ pub(super) struct BrowserUi {
     open_target:Option<u64>,
     pub(super) queue:VecDeque<(u64,RemoteFileKind)>,
     pub(super) batch_mode:bool,
-    batch_generation:u64,
+    pub(super) batch_generation:u64,
     pub(super) downloaded_json:Vec<PathBuf>,
     pub(super) downloaded_tiffs:Vec<PathBuf>,
     pub(super) completed:usize,
