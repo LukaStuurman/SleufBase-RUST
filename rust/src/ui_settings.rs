@@ -685,7 +685,7 @@ fn trench_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     );
     checkbox(ui,
         &mut p.template_avoid_multileader_collisions,
-        "Leidingverwijzingen binnen het profiel houden en overlap beperken",
+        "Leidingteksten en leaderlijnen automatisch verdelen zonder kruisingen",
     );
     checkbox(ui,
         &mut p.template_clip_cross_section_markers_to_profile,
