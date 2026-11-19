@@ -56,6 +56,9 @@ impl State {
     pub(super) fn layer(&self)->Option<&CadastralLayer> {
         self.layer.as_ref().filter(|layer|layer.visible)
     }
+    pub(super) fn layer_for(&self,provider:B)->Option<&CadastralLayer> {
+        (self.provider==Some(provider)).then(||self.layer()).flatten()
+    }
     pub(super) fn ready_for(&self, view:Bounds)->bool {
         self.layer().is_some_and(|layer|covers(layer.bounds,view))
     }
