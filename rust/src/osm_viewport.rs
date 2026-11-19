@@ -167,17 +167,28 @@ impl Renderer {
                 if fresh { completed += 1; } else { pending.push(id); }
             } else { pending.push(id); }
         }
-        let mut rgba = previous_pixels(self.previous.as_ref(), bounds, width, height, cancel)?;
+        // An earlier picture is only needed when new network tiles are
+        // pending. A fully cached viewport can paint directly once instead
+        // of reprojecting the previous image and painting it again.
+        let mut rgba = if pending.is_empty() {
+            vec![0; width as usize * height as usize * 4]
+        } else {
+            previous_pixels(self.previous.as_ref(), bounds, width, height, cancel)?
+        };
         let mut stale_cache = false;
         let mut preview_count = 0;
         let mut last_preview = None::<Instant>;
-        // At most four full-size previews per request, at least 150 ms apart.
-        // Advance thresholds with cache hits, rather than redrawing per tile.
+        // Each full-frame interpolation and GPU upload is expensive. Retain
+        // four previews for small screens, but use two at medium resolutions
+        // and one for huge screens. The final pixels remain full resolution.
+        let pixels = u64::from(width) * u64::from(height);
+        let preview_limit = if pixels > 6_000_000 { 1 }
+            else if pixels > 2_000_000 { 2 } else { 4 };
         let marks = [1, total.div_ceil(4), total.div_ceil(2), (total * 3).div_ceil(4)];
         let mut mark = 0;
         let mut publish = |tiles: &HashMap<TileId, RgbaImage>, completed: usize,
                            stale: bool, force: bool| -> Result<(), String> {
-            if completed == total || preview_count >= 4 { return Ok(()); }
+            if completed == total || preview_count >= preview_limit { return Ok(()); }
             if !force && (mark >= marks.len() || completed < marks[mark]
                 || last_preview.is_some_and(|at| at.elapsed() < Duration::from_millis(150)))
             { return Ok(()); }
@@ -188,7 +199,9 @@ impl Renderer {
             while mark < marks.len() && completed >= marks[mark] { mark += 1; }
             Ok(())
         };
-        if !tiles.is_empty() { publish(&tiles, completed, completed < tiles.len(), true)?; }
+        if !pending.is_empty() && !tiles.is_empty() {
+            publish(&tiles, completed, completed < tiles.len(), true)?;
+        }
         if !pending.is_empty() {
             let stop = AtomicBool::new(false);
             let next = AtomicUsize::new(0);

@@ -168,7 +168,7 @@ fn background(ui: &egui::Ui, state: &mut State, rect: egui::Rect, view: Bounds) 
             let cancel = Arc::new(AtomicBool::new(false));
             let flag = Arc::clone(&cancel);
             let ctx = ui.ctx().clone();
-            let cache = project::app_data_directory().join("osm_pointclouds");
+            let cache = sleufbase_rust::osm_tiles::common_cache_dir();
             state.loading = Some(Background { bounds: view, size, cancel, receiver });
             state.request_after = now + 0.25;
             state.refresh = false;

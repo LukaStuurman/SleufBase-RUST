@@ -67,6 +67,8 @@ Gebruik **Locatie** of **Ctrl+L** om een adres, plaats of RD-/GPS-coördinaat te
 
 Kies de achtergrond in de keuzelijst **Kaart** direct boven het kaartbeeld. Beschikbaar zijn onder meer PDOK-luchtfoto, Kadaster, OpenStreetMap en combinaties met percelen. Perceelgrenzen en -nummers komen van Kadaster/PDOK; de zichtbare details zijn afhankelijk van de bron en het zoomniveau.
 
+**Kaarten sneller hergebruiken.** OpenStreetMap-tegels worden gedeeld tussen de werkkaart, KickTheMap-jobkaart, puntenwolkenkaart en exportkaarten. PDOK slaat eerder opgehaalde achtergrondbeelden tijdelijk op zodat ze ook na het herstarten sneller beschikbaar zijn. Luchtfoto's blijven maximaal zes uur in de schijfcache; kadastrale lagen maximaal vijftien minuten. Bij gecombineerde kaarten kunnen de achtergrond en percelen gelijktijdig worden opgehaald, met behoud van de oorspronkelijke resolutie en uitlijning. Grote kaarten hoeven minder tussentijdse voorbeelden op te bouwen. Bij de DXF-export worden PDOK-kaarttegels ook zonder voorbeeldweergave parallel opgehaald, binnen de bestaande netwerkgrenzen. Een nieuw gebied heeft nog wel een internetverbinding nodig. De cache is bedoeld voor snelheid en verandert de meetnauwkeurigheid niet.
+
 Met **Proefsleufnaam**, links van **Maaiveld invullen**, toon of verberg je de naambordjes. Dezelfde voorkeur staat onder **Instellingen → Kaarten → Kaartscherm**. Als er onvoldoende ruimte is zonder overlap, kan een naambordje tijdelijk ontbreken. Zoom of verschuif de kaart om de omgeving duidelijker te maken.
 
 De zichtbaarheid van een TIFF regel je met het vinkje bij de proefsleuf. De keuzes op de werkkaart en de instellingen voor een export zijn afzonderlijke keuzes.
@@ -262,7 +264,7 @@ Open het bewerkvenster via het contextmenu van de sleuf. Het venster heeft twee 
 - **Doorsnede:** kabels en leidingen plaatsen en bewerken in een visuele weergave.
 - **Sleufgegevens:** naam, breedte, geometrie, hoogtes, dekbanden en aanvullende gegevens.
 
-Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of verkleinen. De inhoud blijft scrollbaar; de acties onderaan horen bij het hele concept.
+Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of verkleinen. De inhoud blijft scrollbaar. Onderaan staat een vaste actiebalk, net zoals in de joblijsten. Bij **Doorsnede** staan de kabelacties bij elkaar: **Kabel/leiding toevoegen**, **Toevoegen en herhalen** en **Invoer wissen**. In een smal venster vind je de extra kabelacties onder **Meer invoeracties**. **Opslaan in project** en **Sluiten zonder opslaan** staan altijd apart onderaan. Bij een fout blijft de melding in dezelfde balk zichtbaar.
 
 In **Sleufgegevens** kun je bij een handmatige sleuf begin- en eindcoördinaten wijzigen, begin en einde omkeren en de hele sleuf verschuiven. Via het contextmenu op de kaart zijn ook verplaatsen, interactief draaien, een hoek invullen en een virtuele kopie beschikbaar.
 
@@ -544,7 +546,7 @@ Lees bij een fout de volledige melding. Noteer bij het melden van een probleem d
 
 ## Meerdere LAS/LAZ-scans en bovenaanzicht
 
-Selecteer meerdere scans via **Puntenwolk → LAS/LAZ openen**. De bestanden komen na elkaar in het puntenwolkoverzicht; openen van de Potree-editor is niet verplicht. Kies later **Bewerken** om punten of polylijnen te tekenen. Met een begin- en eindpunt plaatst **Inladen** de proefsleuf rechtstreeks op de kaart. **Meer → Inladen met opties** biedt de eerdere detailkeuzes.
+Selecteer meerdere scans via **Puntenwolk → LAS/LAZ openen**. Per selectie kun je maximaal **2.048 LAS/LAZ-bestanden** kiezen; de gezamenlijke wachtrij is begrensd op 4.096 bestanden. SleufBase verwerkt deze scans één voor één in plaats van ze allemaal tegelijk in het geheugen te zetten. Het puntenwolkoverzicht kan maximaal 4.096 bronrecords bevatten. De bestanden komen na elkaar in het puntenwolkoverzicht; openen van de Potree-editor is niet verplicht. Je ziet in **Puntenwolken beheren** hoeveel bestanden verwerkt zijn, hoeveel al opgeslagen scans zijn overgeslagen en welke bestanden niet konden worden geïmporteerd. Kies **Wachtrij stoppen** om de huidige conversie te annuleren en de resterende opdrachten te wissen. Eerder opgeslagen scans blijven bewaard. Kies later **Bewerken** om punten of polylijnen te tekenen. Met een begin- en eindpunt plaatst **Inladen** de proefsleuf rechtstreeks op de kaart. **Meer → Inladen met opties** biedt de eerdere detailkeuzes.
 
 Voor een scan in RD New maakt SleufBase een GeoTIFF-bovenaanzicht uit de echte puntkleuren of intensiteit/hoogte. Alleen de scan vormt het raster: getekende punten, lijnmarkeringen en labels worden niet gefotografeerd. Dit GeoTIFF wordt bij het inladen als kaartlaag gebruikt en kan bij de DXF-sjabloonexport als raster dienen.
 

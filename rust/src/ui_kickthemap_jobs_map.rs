@@ -238,7 +238,7 @@ fn request_background(ctx: &egui::Context, browser: &mut BrowserUi, bounds: Boun
     browser.map_status = "OpenStreetMap-tegels ophalen…".into();
     #[cfg(not(test))]
     {
-        let dir = kickthemap_cache_dir().join("osm_jobs");
+        let dir = sleufbase_rust::osm_tiles::common_cache_dir();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             // Only visible tiles, at most 256 tiles and two global network

@@ -14,7 +14,10 @@ pub(super) fn parallel(
     fetch: impl Fn(Bounds, u32, u32) -> Result<PdokRaster, String> + Sync,
     progress: Option<&mut dyn FnMut(Progress<'_>) -> Result<(), String>>,
 ) -> Result<image::RgbaImage, String> {
-    if progress.is_none() || (width <= 512 && height <= 512) {
+    // Full-resolution DXF export has no progress callback, but benefits from
+    // four bounded in-flight WMS tiles too. The shared PDOK request policy
+    // retains its existing cap; no extra pixels are downloaded.
+    if width <= 512 && height <= 512 {
         return tiled_progress_with_alpha(bounds, width, height, cancel, transparent, fetch, progress);
     }
     crate::input::check(cancel)?;

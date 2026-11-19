@@ -218,6 +218,13 @@ impl TileMemory {
         }
     }
 }
+/// One on-disk OSM tile namespace for the main map, KickTheMap jobs, point
+/// clouds and template maps. The same source, zoom and tile ID are reused
+/// across windows; provider-wide download limits and cache expiry are unchanged.
+pub fn common_cache_dir() -> PathBuf {
+    crate::project::app_data_directory().join("osm-tiles")
+}
+
 fn tile_memory() -> &'static Mutex<TileMemory> {
     static MEMORY: OnceLock<Mutex<TileMemory>> = OnceLock::new();
     MEMORY.get_or_init(|| Mutex::new(TileMemory::new(crate::resource_policy::get().tile_memory_cache_entries)))

@@ -7,37 +7,64 @@ mod tests;
 
 impl Editor {
     pub(super) fn show_entry_actions(&mut self, ui: &mut egui::Ui) {
+        #[derive(Clone, Copy)]
+        enum EntryAction { Store, Repeat, Reset }
+        let selected = self.selected.is_some();
         let can_store = self.prepared_entry.is_none() || self.entry_changed();
-        ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(can_store, egui::Button::new(if self.selected.is_some() {
-                "Wijzig kabel/leiding"
-            } else {
-                "Kabel/leiding toevoegen"
-            })).on_hover_text("Bewaar deze invoer in de proefsleuf. Met Opslaan in project bewaar je daarna de hele proefsleuf.").clicked() {
-                match self.add_or_replace() {
-                    Ok(()) => {
-                        self.error.clear();
-                        self.notice = "Kabel/leiding toegevoegd aan het concept. Voeg er nog een toe of klik op Opslaan in project.".into();
-                    }
-                    Err(error) => self.error = error,
+        let can_reset = self.entry_changed() || self.prepared_entry.is_some();
+        let store = if selected { "Wijzig kabel/leiding" } else { "Kabel/leiding toevoegen" };
+        let repeat = if selected { "Bewaren en herhalen" } else { "Toevoegen en herhalen" };
+        let reset = if selected { "Wijzigingen herstellen" } else { "Invoer wissen" };
+        let mut requested = None;
+        if ui.available_width() < 340. {
+            // The full-width project actions are pinned below this group;
+            // do not let three long cable labels consume the whole viewport.
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(can_store, egui::Button::new(store))
+                    .on_hover_text("Bewaar de huidige kabel/leiding in het concept.")
+                    .clicked() { requested = Some(EntryAction::Store); }
+                ui.menu_button("Meer invoeracties", |ui| {
+                    if ui.add_enabled(can_store, egui::Button::new(repeat))
+                        .on_hover_text("Bewaar en gebruik dezelfde eigenschappen voor de volgende kabel.")
+                        .clicked() {
+                            requested = Some(EntryAction::Repeat);
+                            ui.close_menu();
+                        }
+                    if ui.add_enabled(can_reset, egui::Button::new(reset))
+                        .on_hover_text("Herstel alleen de huidige invoer, niet de hele proefsleuf.")
+                        .clicked() {
+                            requested = Some(EntryAction::Reset);
+                            ui.close_menu();
+                        }
+                });
+            });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(can_store, egui::Button::new(store))
+                    .on_hover_text("Bewaar deze invoer in de proefsleuf. Met Opslaan in project bewaar je daarna de hele proefsleuf.")
+                    .clicked() { requested = Some(EntryAction::Store); }
+                if ui.add_enabled(can_store, egui::Button::new(repeat))
+                    .on_hover_text("Bewaar deze kabel of leiding en zet dezelfde eigenschappen klaar voor de volgende. Kies daarna een nieuwe positie.")
+                    .clicked() { requested = Some(EntryAction::Repeat); }
+                if ui.add_enabled(can_reset, egui::Button::new(reset))
+                    .on_hover_text("Herstel alleen de huidige invoer. Eerder toegevoegde kabels en leidingen blijven in het concept.")
+                    .clicked() { requested = Some(EntryAction::Reset); }
+            });
+        }
+        match requested {
+            Some(EntryAction::Store) => match self.add_or_replace() {
+                Ok(()) => {
+                    self.error.clear();
+                    self.notice = "Kabel/leiding toegevoegd aan het concept. Voeg er nog een toe of klik op Opslaan in project.".into();
                 }
-            }
-            if ui.add_enabled(can_store, egui::Button::new(if self.selected.is_some() {
-                "Bewaren en herhalen"
-            } else {
-                "Toevoegen en herhalen"
-            })).on_hover_text("Bewaar deze kabel of leiding en zet dezelfde eigenschappen klaar voor de volgende. Kies daarna een nieuwe positie.").clicked() {
+                Err(error) => self.error = error,
+            },
+            Some(EntryAction::Repeat) => {
                 if let Err(error) = self.add_and_repeat() { self.error = error; }
             }
-            let can_reset = self.entry_changed() || self.prepared_entry.is_some();
-            if ui.add_enabled(can_reset, egui::Button::new(if self.selected.is_some() {
-                "Wijzigingen herstellen"
-            } else {
-                "Invoer wissen"
-            })).on_hover_text("Herstel alleen de huidige invoer. Eerder toegevoegde kabels en leidingen blijven in het concept.").clicked() {
-                self.reset_entry();
-            }
-        });
+            Some(EntryAction::Reset) => self.reset_entry(),
+            None => {}
+        }
     }
 
     pub(super) fn show_objects_workspace(

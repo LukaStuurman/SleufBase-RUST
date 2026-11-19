@@ -469,35 +469,72 @@ impl SleufBaseApp {
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT),|ui|{
-                    // Lay out the real footer first; wrapping, notices and delete
-                    // confirmation now reserve their actual height in this frame.
-                    ui.add_enabled_ui(editor.ahn_job.is_none(),|ui|{
-                        if editor.confirm_delete {
-                            ui.horizontal(|ui|{
-                                if ui.button("Ja, verwijderen").clicked(){action=Some(Action::Remove);}
-                                if ui.button("Annuleren").clicked(){editor.confirm_delete=false;}
-                            });
-                            ui.colored_label(DARK,"Alleen deze proefsleuf verwijderen? Alle meetobjecten ervan worden ook verwijderd.");
-                        }
-                        ui.horizontal_wrapped(|ui|{
-                            if ui.add(egui::Button::new(egui::RichText::new("Opslaan in project").color(Color32::WHITE)).fill(ORANGE)).clicked() {action=Some(Action::Save);}
-                            if ui.button("Sluiten zonder opslaan").clicked(){close_requested=true;}
-                        });
-                        if editor.objects_tab{editor.show_entry_actions(ui);}
-                    });
-                    if !editor.error.is_empty()||!editor.notice.is_empty() {
-                        let feedback_height=44_f32.min(ui.available_height().max(0.));
-                        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(),feedback_height),
-                            egui::Layout::top_down(egui::Align::LEFT),|ui|{
-                            egui::ScrollArea::vertical().id_salt("virtual-editor-feedback")
-                                .max_height(feedback_height).min_scrolled_height(0.).auto_shrink([false,false])
-                                .show(ui,|ui|{
-                                    if !editor.error.is_empty(){ui.colored_label(DARK,&editor.error);}
-                                    else{ui.small(&editor.notice);}
+                // Match KickTheMap's fixed action panel. Using nested
+                // bottom-up layout could clip button text on resizes.
+                egui::TopBottomPanel::bottom("virtual-editor-pinned-actions")
+                    .frame(egui::Frame::new())
+                    .show_inside(ui, |ui| {
+                    theme::card(10, 8, 6).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add_enabled_ui(editor.ahn_job.is_none(), |ui| {
+                            if editor.objects_tab {
+                                if ui.available_width() >= 700. {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.strong("Kabel/leiding");
+                                        ui.weak("Alleen huidige invoer");
+                                    });
+                                }
+                                editor.show_entry_actions(ui);
+                                ui.add_space(2.);
+                            }
+                            if editor.confirm_delete {
+                                ui.separator();
+                                ui.colored_label(DARK, "Deze proefsleuf en alle meetobjecten verwijderen?");
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.button("Ja, verwijderen").clicked() {
+                                        action = Some(Action::Remove);
+                                    }
+                                    if ui.button("Annuleren").clicked() {
+                                        editor.confirm_delete = false;
+                                    }
                                 });
+                            }
+                            if !editor.error.is_empty() || !editor.notice.is_empty() {
+                                ui.separator();
+                                egui::ScrollArea::vertical()
+                                    .id_salt("virtual-editor-feedback")
+                                    .max_height(44.)
+                                    .min_scrolled_height(0.)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        if !editor.error.is_empty() { ui.colored_label(DARK, &editor.error); }
+                                        else { ui.small(&editor.notice); }
+                                    });
+                            }
+                            ui.separator();
+                            if ui.available_width() >= 490. {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add_sized([180., 32.], egui::Button::new(
+                                        egui::RichText::new("Opslaan in project").color(Color32::WHITE)
+                                    ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
+                                    if ui.add_sized([184., 32.], egui::Button::new("Sluiten zonder opslaan")).clicked() {
+                                        close_requested = true;
+                                    }
+                                });
+                            } else {
+                                // Full-width actions remain readable even at
+                                // a narrow 320-pixel desktop window.
+                                let width = ui.available_width().max(1.);
+                                if ui.add_sized([width, 32.], egui::Button::new(
+                                    egui::RichText::new("Opslaan in project").color(Color32::WHITE)
+                                ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
+                                if ui.add_sized([width, 29.], egui::Button::new("Sluiten zonder opslaan")).clicked() {
+                                    close_requested = true;
+                                }
+                            }
                         });
-                    }
+                    });
+                    });
                     ui.separator();
                     ui.with_layout(egui::Layout::top_down(egui::Align::LEFT),|ui|{
                 theme::card(10,12,8).show(ui,|ui|{
@@ -704,7 +741,6 @@ impl SleufBaseApp {
                         if ui.button("Proefsleuf verwijderen…").clicked(){editor.confirm_delete=true;}
                     });
                     });
-                });
                 });
                 });
             }));

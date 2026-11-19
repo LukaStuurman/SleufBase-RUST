@@ -61,10 +61,66 @@ impl Selection {
     }
 }
 
+// The persistent catalog supports thousands of scans. One converter runs at a
+// time, so selecting many LAS/LAZ files does not create as many large decoders.
+const MAX_LAS_FILES_PER_SELECTION: usize = 2048;
+const MAX_PENDING_LAS_FILES: usize = 4096;
+const MAX_VISIBLE_IMPORT_ERRORS: usize = 100;
+
+#[derive(Default)]
+struct ImportBatch {
+    total: usize,
+    completed: usize,
+    skipped: usize,
+    failed: usize,
+    stopped: bool,
+    errors: Vec<String>,
+}
+impl ImportBatch {
+    fn record_error(&mut self, name: &std::path::Path, error: &str) {
+        self.failed += 1;
+        if self.errors.len() < MAX_VISIBLE_IMPORT_ERRORS {
+            self.errors.push(format!("{}: {error}", name.display()));
+        }
+    }
+    fn description(&self) -> String {
+        format!("Import: {} van {} verwerkt · {} overgeslagen · {} fouten",
+            self.completed, self.total, self.skipped, self.failed)
+    }
+}
+
+/// Deduplicate a large Explorer/file-dialog selection before it enters the
+/// bounded queue. Normalized paths prevent repeated conversion of one file.
+fn plan_las_queue(
+    pending: &VecDeque<PathBuf>,
+    active: Option<&std::path::Path>,
+    selected: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, String> {
+    if selected.len() > MAX_LAS_FILES_PER_SELECTION {
+        return Err(format!("Selecteer maximaal {MAX_LAS_FILES_PER_SELECTION} LAS/LAZ-bestanden per keer."));
+    }
+    let mut seen = pending.iter().cloned().collect::<HashSet<_>>();
+    if let Some(path) = active { seen.insert(path.to_path_buf()); }
+    let mut added = Vec::new();
+    for path in selected {
+        let valid = path.extension().and_then(|s|s.to_str())
+            .is_some_and(|ext|ext.eq_ignore_ascii_case("las")||ext.eq_ignore_ascii_case("laz"));
+        if !valid { return Err("Selecteer alleen .las- en .laz-bestanden.".into()); }
+        let normalized = path.canonicalize().unwrap_or(path);
+        if seen.insert(normalized.clone()) { added.push(normalized); }
+    }
+    if pending.len().saturating_add(usize::from(active.is_some()))
+        .saturating_add(added.len()) > MAX_PENDING_LAS_FILES {
+        return Err(format!("De importwachtrij kan maximaal {MAX_PENDING_LAS_FILES} bestanden bevatten. Verwerk eerst een deel."));
+    }
+    Ok(added)
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub open: bool,
     queue: VecDeque<PathBuf>,
+    batch: ImportBatch,
     form: Option<ImportForm>,
     worker: Option<ImportWorker>,
     ortho: Option<OrthoWorker>,
@@ -92,7 +148,7 @@ impl State {
     pub fn importing(&self) -> bool { self.worker.is_some() }
     pub fn reset(&mut self) {
         // The catalog and overview belong to the application, not one project.
-        self.queue.clear(); self.form = None; self.worker = None;
+        self.queue.clear(); self.batch = ImportBatch::default(); self.form = None; self.worker = None;
         self.editor = None; self.trench = None;
         self.ortho = None;
         self.remembered_generation = None;
@@ -113,7 +169,11 @@ impl State {
 struct ImportForm { path: PathBuf, title: String, crs: CloudCrs }
 struct PendingCatalog { source: PointCloudSource, expected: Option<PointCloudSource>, edit: bool }
 enum ImportEvent { Progress(String), Done(Result<PointCloudSource, String>) }
-struct ImportWorker { rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>, generation: u64, expected: Option<PointCloudSource> }
+struct ImportWorker {
+    rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>,
+    generation: u64, expected: Option<PointCloudSource>,
+    path: PathBuf, queued: bool,
+}
 impl Drop for ImportWorker { fn drop(&mut self) { self.cancel.store(true, Ordering::Release); } }
 struct OrthoWorker { rx: Receiver<Result<PathBuf,String>>, cancel: Arc<AtomicBool>,
     generation:u64, source_id:String }
@@ -223,12 +283,59 @@ impl SleufBaseApp {
     }
 
     pub(super) fn queue_pointcloud_files(&mut self, files: Vec<PathBuf>) {
-        if files.len() > 32 { self.message = "Open maximaal 32 puntenwolken tegelijk.".into(); return; }
-        if self.trench_editor.is_some() { self.message = self.pointcloud_unavailable_message().into(); return; }
-        if self.pointcloud_ui.busy() { self.message = "Sluit eerst de puntenwolkeditor of rond de import af.".into(); return; }
+        if files.is_empty() { return; }
+        if self.trench_editor.is_some() || self.pointcloud_ui.editor.is_some() {
+            self.message = "Sluit eerst het openstaande sleuf- of puntenwolkbewerkscherm.".into();
+            return;
+        }
+        if self.pointcloud_ui.pending_catalog.is_some() {
+            self.message = "Bewaar eerst de eerder geïmporteerde puntenwolk met Opnieuw bewaren.".into();
+            return;
+        }
+        if self.pointcloud_ui.batch.stopped
+            && self.pointcloud_ui.worker.as_ref().is_some_and(|worker| worker.queued) {
+            self.message = "De vorige import wordt nog gestopt. Voeg de nieuwe bestanden daarna toe.".into();
+            return;
+        }
         self.pointcloud_ui.open = true;
         self.ensure_pointcloud_catalog();
-        for file in files { if !self.pointcloud_ui.queue.contains(&file) { self.pointcloud_ui.queue.push_back(file); } }
+        if self.pointcloud_ui.catalog.is_none() {
+            self.message = self.pointcloud_ui.catalog_error.clone()
+                .unwrap_or_else(|| "Puntenwolkoverzicht is niet beschikbaar.".into());
+            return;
+        }
+        let active = self.pointcloud_ui.worker.as_ref()
+            .filter(|worker| worker.queued).map(|worker| worker.path.as_path());
+        let added = match plan_las_queue(&self.pointcloud_ui.queue, active, files) {
+            Ok(paths) => paths,
+            Err(error) => { self.message = error.clone(); self.pointcloud_ui.status = error; return; }
+        };
+        if added.is_empty() {
+            self.pointcloud_ui.status = "Deze bestanden staan al in de importwachtrij.".into();
+            return;
+        }
+        // The global catalog is separate from the project's 512-source limit.
+        // Never let a successful batch silently exceed the catalog read limit.
+        let known = self.pointcloud_ui.sources().iter().map(|source| source.source_path.clone())
+            .collect::<HashSet<_>>();
+        let mut pending = self.pointcloud_ui.queue.iter().cloned().collect::<HashSet<_>>();
+        if let Some(active) = active { pending.insert(active.to_path_buf()); }
+        pending.extend(added.iter().cloned());
+        let unique_new = pending.iter().filter(|path| !known.contains(*path)).count();
+        let total = self.pointcloud_ui.sources().len().saturating_add(unique_new);
+        if total > catalog::MAX_CATALOG_SOURCES {
+            let available = catalog::MAX_CATALOG_SOURCES.saturating_sub(self.pointcloud_ui.sources().len());
+            self.message = format!("Er is ruimte voor maximaal {available} nieuwe scans in het puntenwolkoverzicht. Selecteer minder bestanden.");
+            self.pointcloud_ui.status = self.message.clone();
+            return;
+        }
+        if self.pointcloud_ui.queue.is_empty() && active.is_none() {
+            self.pointcloud_ui.batch = ImportBatch::default();
+        }
+        self.pointcloud_ui.batch.total += added.len();
+        let count = added.len();
+        self.pointcloud_ui.queue.extend(added);
+        self.pointcloud_ui.status = format!("{count} LAS/LAZ-bestanden toegevoegd. {}", self.pointcloud_ui.batch.description());
     }
     pub(super) fn choose_pointcloud_files(&mut self) {
         if let Some(files) = rfd::FileDialog::new().set_title("Puntenwolken toevoegen")
@@ -307,17 +414,50 @@ impl SleufBaseApp {
         if let Some(worker) = &self.pointcloud_ui.worker {
             loop { match worker.rx.try_recv() {
                 Ok(ImportEvent::Progress(message)) => self.pointcloud_ui.status = message,
-                Ok(ImportEvent::Done(result)) => { done = Some((worker.generation, worker.expected.clone(), result)); break; }
+                Ok(ImportEvent::Done(result)) => {
+                    done = Some((worker.generation, worker.expected.clone(),
+                        worker.path.clone(), worker.queued, result));
+                    break;
+                }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => { done = Some((worker.generation, None, Err("De puntenwolkimport is onverwacht gestopt. Het bronbestand is behouden.".into()))); break; }
+                Err(TryRecvError::Disconnected) => {
+                    done = Some((worker.generation, worker.expected.clone(),
+                        worker.path.clone(), worker.queued,
+                        Err("De puntenwolkimport is onverwacht gestopt. Het bronbestand is behouden.".into())));
+                    break;
+                }
             } }
         }
-        if let Some((generation, expected, result)) = done {
+        if let Some((generation, expected, path, queued, result)) = done {
             self.pointcloud_ui.worker = None;
             if generation == self.project_generation {
+                if queued {
+                    self.pointcloud_ui.batch.completed += 1;
+                    if let Err(error) = &result {
+                        self.pointcloud_ui.batch.record_error(&path, error);
+                    }
+                }
                 match result {
-                    Ok(source) => self.accept_catalog_source(source, false, expected),
-                    Err(error) => { self.pointcloud_ui.status = error.clone(); self.message = error; }
+                    Ok(source) => {
+                        self.accept_catalog_source(source, false, expected);
+                        if queued && self.pointcloud_ui.pending_catalog.is_some() {
+                            self.pointcloud_ui.batch.record_error(&path, "Bronrecord nog niet bewaard");
+                        }
+                    }
+                    Err(error) => {
+                        self.pointcloud_ui.status = error.clone();
+                        if !queued { self.message = error; }
+                    }
+                }
+                if queued && self.pointcloud_ui.queue.is_empty()
+                    && self.pointcloud_ui.pending_catalog.is_none()
+                    && self.pointcloud_ui.batch.completed == self.pointcloud_ui.batch.total
+                {
+                    let batch = &self.pointcloud_ui.batch;
+                    self.pointcloud_ui.status = format!("{}: {} gereed{}.",
+                        if batch.stopped { "Import gestopt" } else { "Import afgerond" },
+                        batch.description(),
+                        if batch.failed > 0 { " (bekijk Importfouten)" } else { "" });
                 }
             }
         }
@@ -344,24 +484,37 @@ impl SleufBaseApp {
                 }
             }
         }
-        if self.pointcloud_ui.busy()||self.pointcloud_ui.ortho.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+        if self.pointcloud_ui.busy() || self.pointcloud_ui.ortho.is_some()
+            || !self.pointcloud_ui.queue.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(40));
         }
-        if self.pointcloud_ui.form.is_none() && !self.pointcloud_ui.busy()
-            && self.pointcloud_ui.pending_catalog.is_none() && self.file_intent.is_none() {
-            if let Some(path) = self.pointcloud_ui.queue.pop_front() {
-                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-                if let Some(source) = self.pointcloud_ui.sources().iter()
-                    .find(|source| source.source_path == canonical && source.validate_cache().is_ok()) {
-                    let id = source.id.clone(); self.pointcloud_ui.selection.apply([id], false);
-                    self.pointcloud_ui.status = "Scan al bewaard. Kies Bewerken om punten of lijnen toe te voegen.".into();
-                } else {
-                    let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-                    // Every queued LAS/LAZ is prepared and remembered without
-                    // opening Potree. The user can edit any scan later from
-                    // the catalog, even when several files were selected.
-                    self.start_pointcloud_import(ImportForm { path, title, crs: CloudCrs::Unknown }, None, ctx);
-                }
+        // Drain a handful of already-prepared sources per frame. Starting an
+        // actual LAS/LAZ conversion immediately stops this loop, keeping the
+        // expensive converter strictly single-threaded and the UI responsive.
+        for _ in 0..8 {
+            if self.pointcloud_ui.form.is_some() || self.pointcloud_ui.busy()
+                || self.pointcloud_ui.pending_catalog.is_some() || self.file_intent.is_some() {
+                break;
+            }
+            let Some(path) = self.pointcloud_ui.queue.pop_front() else { break; };
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let existing = self.pointcloud_ui.sources().iter()
+                .find(|source| source.source_path == canonical).cloned();
+            if let Some(source) = existing.as_ref().filter(|source| source.validate_cache().is_ok()) {
+                self.pointcloud_ui.selection.apply([source.id.clone()], false);
+                self.pointcloud_ui.batch.completed += 1;
+                self.pointcloud_ui.batch.skipped += 1;
+                self.pointcloud_ui.status = format!("Scan al bewaard. {}", self.pointcloud_ui.batch.description());
+            } else {
+                let title = existing.as_ref().map(|source| source.title.clone()).unwrap_or_else(||
+                    path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+                let crs = existing.as_ref().map(|source| source.crs).unwrap_or(CloudCrs::Unknown);
+                // Rebuild a missing/invalid conversion under its existing
+                // identity, retaining manually placed endpoints and cables.
+                // A truly different file remains a visible error rather
+                // than silently overwriting the saved scan.
+                self.start_pointcloud_import(ImportForm { path, title, crs }, existing, ctx, true);
+                break;
             }
         }
     }
@@ -374,14 +527,17 @@ impl SleufBaseApp {
             "Sluit eerst de gewone sleufbewerker en bewaar of annuleer het openstaande concept."
         } else { "Rond de lopende taak af en sluit een eventueel geopend puntenwolkvenster." }
     }
-    fn start_pointcloud_import(&mut self, form: ImportForm, existing: Option<PointCloudSource>, ctx: &egui::Context) {
+    fn start_pointcloud_import(&mut self, form: ImportForm, existing: Option<PointCloudSource>, ctx: &egui::Context, queued: bool) {
         if !self.pointcloud_task_allowed() {
             self.message = self.pointcloud_unavailable_message().into(); self.pointcloud_ui.form = Some(form); return;
         }
         let (tx, rx) = mpsc::channel(); let cancel = Arc::new(AtomicBool::new(false)); let flag = Arc::clone(&cancel);
         let repaint = ctx.clone();
         self.pointcloud_ui.status = "Puntenwolk voorbereiden…".into();
-        self.pointcloud_ui.worker = Some(ImportWorker { rx, cancel, generation: self.project_generation, expected: existing.clone() });
+        self.pointcloud_ui.worker = Some(ImportWorker {
+            rx, cancel, generation: self.project_generation, expected: existing.clone(),
+            path: form.path.clone(), queued,
+        });
         std::thread::spawn(move || {
             let progress = |message| { let _ = tx.send(ImportEvent::Progress(message)); repaint.request_repaint(); };
             let result = if let Some(source) = existing { pointcloud::import_existing(&source, &flag, progress) }
@@ -395,7 +551,10 @@ impl SleufBaseApp {
         let (tx, rx) = mpsc::channel(); let cancel = Arc::new(AtomicBool::new(false)); let flag = Arc::clone(&cancel);
         let repaint = ctx.clone();
         self.pointcloud_ui.status = "Het gekozen bestand vergelijken met de oorspronkelijke puntenwolk…".into();
-        self.pointcloud_ui.worker = Some(ImportWorker { rx, cancel, generation: self.project_generation, expected: Some(source.clone()) });
+        self.pointcloud_ui.worker = Some(ImportWorker {
+            rx, cancel, generation: self.project_generation, expected: Some(source.clone()),
+            path: path.clone(), queued: false,
+        });
         std::thread::spawn(move || {
             let result = source.relink_with_cancel(&path, &flag).map(|()| source);
             let _ = tx.send(ImportEvent::Done(result)); repaint.request_repaint();
@@ -470,6 +629,13 @@ impl SleufBaseApp {
         let loaded = self.point_clouds.iter().map(|source| source.id.clone()).collect::<HashSet<_>>();
         let mut state = std::mem::take(&mut self.pointcloud_ui);
         let enabled = can_work && state.pending_catalog.is_none();
+        // Adding more files is safe during an existing conversion: the
+        // pending queue stores only paths and the converter stays sequential.
+        let can_enqueue = self.trench_editor.is_none() && state.editor.is_none()
+            && state.pending_catalog.is_none() && !self.project_sources_owned()
+            && self.file_intent.is_none() && self.export_intent.is_none()
+            && self.template_job.is_none()
+            && !(state.batch.stopped && state.worker.as_ref().is_some_and(|w| w.queued));
         let query = state.search.trim().to_lowercase();
         let mut rows = state.sources().iter().map(|source| Row::new(source, loaded.contains(&source.id)))
             .filter(|row| !state.only_loaded || row.loaded)
@@ -598,7 +764,7 @@ impl SleufBaseApp {
                     if ui.add_enabled(enabled, egui::Button::new("Vernieuwen")).clicked() {
                         action = Some(("refresh", String::new()));
                     }
-                    if cloud_action_button(ui, "LAS/LAZ toevoegen…", enabled, true).clicked() {
+                    if cloud_action_button(ui, "LAS/LAZ toevoegen…", can_enqueue, true).clicked() {
                         action = Some(("choose", String::new()));
                     }
                 });
@@ -609,11 +775,47 @@ impl SleufBaseApp {
                     ui.label(egui::RichText::new(format!("{} / {} scans · {} geselecteerd · {} in project",
                         rows.len(), state.sources().len(), state.selection.ids.len(), loaded.len())).small().color(theme::MUTED));
                 });
-                if state.worker.is_some() {
+                if state.batch.total > 0 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.small(state.batch.description());
+                        let running = !state.queue.is_empty() ||
+                            state.worker.as_ref().is_some_and(|worker| worker.queued);
+                        if running && ui.button("Wachtrij stoppen")
+                            .on_hover_text("Annuleer de huidige conversie en verwijder de resterende bestanden uit de wachtrij; al bewaarde scans blijven behouden.")
+                            .clicked()
+                        {
+                            state.queue.clear();
+                            if let Some(worker) = state.worker.as_ref().filter(|worker| worker.queued) {
+                                worker.cancel.store(true, Ordering::Release);
+                            }
+                            state.batch.total = state.batch.completed
+                                + usize::from(state.worker.as_ref().is_some_and(|worker| worker.queued));
+                            state.batch.stopped = true;
+                            state.status = "De importwachtrij wordt gestopt. Reeds bewaarde puntenwolken blijven beschikbaar.".into();
+                        }
+                    });
+                    if state.batch.failed > 0 {
+                        ui.collapsing(format!("Importfouten ({})", state.batch.failed), |ui| {
+                            egui::ScrollArea::vertical().max_height(110.).show(ui, |ui| {
+                                for error in &state.batch.errors { ui.small(error); }
+                                if state.batch.failed > state.batch.errors.len() {
+                                    ui.small(format!("{} extra fouten niet in dit overzicht getoond.",
+                                        state.batch.failed - state.batch.errors.len()));
+                                }
+                            });
+                        });
+                    }
+                }
+                if let Some(worker) = &state.worker {
                     ui.horizontal(|ui| {
-                        ui.spinner(); ui.label("Puntenwolk voorbereiden…");
-                        if ui.button("Annuleren").clicked() {
-                            if let Some(worker) = &state.worker { worker.cancel.store(true, Ordering::Release); }
+                        ui.spinner();
+                        if worker.queued {
+                            ui.label(format!("LAS/LAZ converteren · {} wachten", state.queue.len()));
+                        } else {
+                            ui.label("Puntenwolk voorbereiden…");
+                            if ui.button("Annuleren").clicked() {
+                                worker.cancel.store(true, Ordering::Release);
+                            }
                         }
                     });
                 } else if state.editor.is_some() {
@@ -690,7 +892,7 @@ impl SleufBaseApp {
                 }
                 "rebuild" => {
                     if let Some(source) = self.pointcloud_ui.source(&id).cloned() {
-                        self.start_pointcloud_import(ImportForm { path: source.source_path.clone(), title: source.title.clone(), crs: source.crs }, Some(source), ctx);
+                        self.start_pointcloud_import(ImportForm { path: source.source_path.clone(), title: source.title.clone(), crs: source.crs }, Some(source), ctx, false);
                     }
                 }
                 _ => {}
@@ -715,7 +917,7 @@ impl SleufBaseApp {
                 if ui.button("Annuleren").clicked() { cancel = true; }
             });
         });
-        if create { self.start_pointcloud_import(form, None, ctx); }
+        if create { self.start_pointcloud_import(form, None, ctx, false); }
         else if !cancel && !response.should_close() { self.pointcloud_ui.form = Some(form); }
     }
 
@@ -1257,6 +1459,33 @@ fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod bulk_las_queue_tests {
+    use super::*;
+
+    #[test]
+    fn a_thousand_scans_can_be_added_once_without_duplicates() {
+        let selection = (0..1200).map(|i| PathBuf::from(format!("scan-{i}.las"))).collect::<Vec<_>>();
+        let planned = plan_las_queue(&VecDeque::new(), None, selection.clone()).unwrap();
+        assert_eq!(planned.len(), 1200);
+        let existing = planned.iter().cloned().collect::<VecDeque<_>>();
+        let additions = plan_las_queue(&existing, None,
+            vec![PathBuf::from("scan-3.las"), PathBuf::from("another.laz")]).unwrap();
+        assert_eq!(additions, [PathBuf::from("another.laz")]);
+        assert!(plan_las_queue(&VecDeque::new(), None,
+            (0..=MAX_LAS_FILES_PER_SELECTION).map(|i|format!("scan-{i}.laz").into()).collect()).is_err());
+    }
+
+    #[test]
+    fn active_source_and_pending_capacity_are_respected() {
+        let pending = (0..MAX_PENDING_LAS_FILES).map(|i| format!("{i}.las").into())
+            .collect::<VecDeque<PathBuf>>();
+        assert!(plan_las_queue(&pending, None, vec!["extra.las".into()]).is_err());
+        assert!(plan_las_queue(&VecDeque::new(), Some(std::path::Path::new("same.LAS")),
+            vec!["same.LAS".into()]).unwrap().is_empty());
+    }
 }
 
 #[cfg(test)]
