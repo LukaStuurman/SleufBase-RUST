@@ -752,11 +752,47 @@ impl SleufBaseApp {
                     ui.label(egui::RichText::new(format!("{} / {} scans · {} geselecteerd · {} in project",
                         rows.len(), state.sources().len(), state.selection.ids.len(), loaded.len())).small().color(theme::MUTED));
                 });
-                if state.worker.is_some() {
+                if state.batch.total > 0 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.small(state.batch.description());
+                        let running = !state.queue.is_empty() ||
+                            state.worker.as_ref().is_some_and(|worker| worker.queued);
+                        if running && ui.button("Wachtrij stoppen")
+                            .on_hover_text("Annuleer de huidige conversie en verwijder de resterende bestanden uit de wachtrij; al bewaarde scans blijven behouden.")
+                            .clicked()
+                        {
+                            state.queue.clear();
+                            if let Some(worker) = state.worker.as_ref().filter(|worker| worker.queued) {
+                                worker.cancel.store(true, Ordering::Release);
+                            }
+                            state.batch.total = state.batch.completed
+                                + usize::from(state.worker.as_ref().is_some_and(|worker| worker.queued));
+                            state.batch.stopped = true;
+                            state.status = "De importwachtrij wordt gestopt. Reeds bewaarde puntenwolken blijven beschikbaar.".into();
+                        }
+                    });
+                    if state.batch.failed > 0 {
+                        ui.collapsing(format!("Importfouten ({})", state.batch.failed), |ui| {
+                            egui::ScrollArea::vertical().max_height(110.).show(ui, |ui| {
+                                for error in &state.batch.errors { ui.small(error); }
+                                if state.batch.failed > state.batch.errors.len() {
+                                    ui.small(format!("{} extra fouten niet in dit overzicht getoond.",
+                                        state.batch.failed - state.batch.errors.len()));
+                                }
+                            });
+                        });
+                    }
+                }
+                if let Some(worker) = &state.worker {
                     ui.horizontal(|ui| {
-                        ui.spinner(); ui.label("Puntenwolk voorbereiden…");
-                        if ui.button("Annuleren").clicked() {
-                            if let Some(worker) = &state.worker { worker.cancel.store(true, Ordering::Release); }
+                        ui.spinner();
+                        if worker.queued {
+                            ui.label(format!("LAS/LAZ converteren · {} wachten", state.queue.len()));
+                        } else {
+                            ui.label("Puntenwolk voorbereiden…");
+                            if ui.button("Annuleren").clicked() {
+                                worker.cancel.store(true, Ordering::Release);
+                            }
                         }
                     });
                 } else if state.editor.is_some() {
