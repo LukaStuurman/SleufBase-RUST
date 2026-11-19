@@ -16,7 +16,7 @@ const FORMAT: &str = "sleufbase-pointcloud-source";
 const VERSION: u32 = 1;
 const MAX_RECORD_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_LOAD_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_CATALOG_SOURCES: usize = 4096;
+pub const MAX_CATALOG_SOURCES: usize = 4096;
 const MAX_DIRECTORY_ENTRIES: usize = 10_000;
 
 /// Callers can classify this optimistic-concurrency failure as HTTP 409.
