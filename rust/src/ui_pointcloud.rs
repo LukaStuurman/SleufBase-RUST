@@ -317,9 +317,9 @@ impl SleufBaseApp {
         if let Some(active) = active { pending.insert(active.to_path_buf()); }
         pending.extend(added.iter().cloned());
         let unique_new = pending.iter().filter(|path| !known.contains(*path)).count();
-        let total = known.len().saturating_add(unique_new);
+        let total = self.pointcloud_ui.sources().len().saturating_add(unique_new);
         if total > catalog::MAX_CATALOG_SOURCES {
-            let available = catalog::MAX_CATALOG_SOURCES.saturating_sub(known.len());
+            let available = catalog::MAX_CATALOG_SOURCES.saturating_sub(self.pointcloud_ui.sources().len());
             self.message = format!("Er is ruimte voor maximaal {available} nieuwe scans in het puntenwolkoverzicht. Selecteer minder bestanden.");
             self.pointcloud_ui.status = self.message.clone();
             return;
@@ -479,25 +479,30 @@ impl SleufBaseApp {
                 }
             }
         }
-        if self.pointcloud_ui.busy()||self.pointcloud_ui.ortho.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+        if self.pointcloud_ui.busy() || self.pointcloud_ui.ortho.is_some()
+            || !self.pointcloud_ui.queue.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(40));
         }
         if self.pointcloud_ui.form.is_none() && !self.pointcloud_ui.busy()
             && self.pointcloud_ui.pending_catalog.is_none() && self.file_intent.is_none() {
             if let Some(path) = self.pointcloud_ui.queue.pop_front() {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-                if let Some(source) = self.pointcloud_ui.sources().iter()
-                    .find(|source| source.source_path == canonical && source.validate_cache().is_ok()) {
-                    let id = source.id.clone(); self.pointcloud_ui.selection.apply([id], false);
+                let existing = self.pointcloud_ui.sources().iter()
+                    .find(|source| source.source_path == canonical).cloned();
+                if let Some(source) = existing.as_ref().filter(|source| source.validate_cache().is_ok()) {
+                    self.pointcloud_ui.selection.apply([source.id.clone()], false);
                     self.pointcloud_ui.batch.completed += 1;
                     self.pointcloud_ui.batch.skipped += 1;
                     self.pointcloud_ui.status = format!("Scan al bewaard. {}", self.pointcloud_ui.batch.description());
                 } else {
-                    let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-                    // Every queued LAS/LAZ is prepared and remembered without
-                    // opening Potree. The user can edit any scan later from
-                    // the catalog, even when several files were selected.
-                    self.start_pointcloud_import(ImportForm { path, title, crs: CloudCrs::Unknown }, None, ctx, true);
+                    let title = existing.as_ref().map(|source| source.title.clone()).unwrap_or_else(||
+                        path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+                    let crs = existing.as_ref().map(|source| source.crs).unwrap_or(CloudCrs::Unknown);
+                    // Rebuild a missing/invalid conversion under its existing
+                    // identity, retaining manually placed endpoints and cables.
+                    // A truly different file remains a visible error rather
+                    // than silently overwriting the saved scan.
+                    self.start_pointcloud_import(ImportForm { path, title, crs }, existing, ctx, true);
                 }
             }
         }
