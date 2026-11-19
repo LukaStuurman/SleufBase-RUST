@@ -42,7 +42,10 @@ fn area(a: Box4, b: Box4) -> f64 {
     width.max(0.) * height.max(0.)
 }
 fn expand(b: Box4, m: f64) -> Box4 {
-    [b[0]-m, b[1]-m, b[2]+m, b[3]+m]
+    // A hard/soft obstacle is often a segment, so its endpoint order is not
+    // guaranteed to match the order of the corners of a rectangle.
+    [b[0].min(b[2])-m, b[1].min(b[3])-m,
+        b[0].max(b[2])+m, b[1].max(b[3])+m]
 }
 fn cross(a: Point, b: Point, c: Point) -> f64 {
     (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
@@ -126,15 +129,28 @@ fn quality(
     }
     for &b in options.hard {
         score.add(area(shape.text,expand(b,margin)));
-        if hits_box(shape.route,expand(b,margin*0.3)){score.add(1.);}
+        // Hard/soft profile geometry is stored as line endpoints, not text
+        // rectangles. Compare the real segments for crossings; their large
+        // diagonal bounding rectangles would create false positives.
+        if intersect(shape.route,[[b[0],b[1]],[b[2],b[3]]]) {score.add(1.);}
     }
     for &b in options.soft {
         score.total+=area(shape.text,expand(b,margin))*8000.;
-        if hits_box(shape.route,expand(b,margin*0.1)){score.total+=1500.;}
+        if intersect(shape.route,[[b[0],b[1]],[b[2],b[3]]]) {
+            score.total+=1500.;
+        }
     }
+    let left=shape.text[0].min(shape.route[0][0]).min(shape.route[1][0])-margin;
+    let right=shape.text[2].max(shape.route[0][0]).max(shape.route[1][0])+margin;
     for (j,other) in shapes.iter().enumerate() {
         if i==j {continue;}
-        score.add(area(shape.text,other.text));
+        // A large profile can contain hundreds of widely separated objects.
+        // Their leaders, labels and fixed connectors cannot intersect if
+        // these full horizontal envelopes are disjoint.
+        let other_left=other.text[0].min(other.route[0][0]).min(other.route[1][0]);
+        let other_right=other.text[2].max(other.route[0][0]).max(other.route[1][0]);
+        if right<other_left || left>other_right {continue;}
+        score.add(area(shape.text,expand(other.text,margin)));
         if intersect(shape.route,other.route) { score.add(2.); }
         // Catch leaders that cut directly through somebody else's wording,
         // including the opposite case where a moved label covers a leader.
@@ -205,7 +221,7 @@ pub(super) fn improve(
     let margin=0.018;
     for pass in 0..3 {
         let mut improved=0;
-        if pass%2==1 {order.reverse();}
+        if pass>0 {order.reverse();}
         for &i in &order {
             input::check(cancel)?;
             let e=&entries[i];
