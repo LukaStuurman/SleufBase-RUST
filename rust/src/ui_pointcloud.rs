@@ -409,17 +409,50 @@ impl SleufBaseApp {
         if let Some(worker) = &self.pointcloud_ui.worker {
             loop { match worker.rx.try_recv() {
                 Ok(ImportEvent::Progress(message)) => self.pointcloud_ui.status = message,
-                Ok(ImportEvent::Done(result)) => { done = Some((worker.generation, worker.expected.clone(), result)); break; }
+                Ok(ImportEvent::Done(result)) => {
+                    done = Some((worker.generation, worker.expected.clone(),
+                        worker.path.clone(), worker.queued, result));
+                    break;
+                }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => { done = Some((worker.generation, None, Err("De puntenwolkimport is onverwacht gestopt. Het bronbestand is behouden.".into()))); break; }
+                Err(TryRecvError::Disconnected) => {
+                    done = Some((worker.generation, worker.expected.clone(),
+                        worker.path.clone(), worker.queued,
+                        Err("De puntenwolkimport is onverwacht gestopt. Het bronbestand is behouden.".into())));
+                    break;
+                }
             } }
         }
-        if let Some((generation, expected, result)) = done {
+        if let Some((generation, expected, path, queued, result)) = done {
             self.pointcloud_ui.worker = None;
             if generation == self.project_generation {
+                if queued {
+                    self.pointcloud_ui.batch.completed += 1;
+                    if let Err(error) = &result {
+                        self.pointcloud_ui.batch.record_error(&path, error);
+                    }
+                }
                 match result {
-                    Ok(source) => self.accept_catalog_source(source, false, expected),
-                    Err(error) => { self.pointcloud_ui.status = error.clone(); self.message = error; }
+                    Ok(source) => {
+                        self.accept_catalog_source(source, false, expected);
+                        if queued && self.pointcloud_ui.pending_catalog.is_some() {
+                            self.pointcloud_ui.batch.record_error(&path, "Bronrecord nog niet bewaard");
+                        }
+                    }
+                    Err(error) => {
+                        self.pointcloud_ui.status = error.clone();
+                        if !queued { self.message = error; }
+                    }
+                }
+                if queued && self.pointcloud_ui.queue.is_empty()
+                    && self.pointcloud_ui.pending_catalog.is_none()
+                    && self.pointcloud_ui.batch.completed == self.pointcloud_ui.batch.total
+                {
+                    let batch = &self.pointcloud_ui.batch;
+                    self.pointcloud_ui.status = format!("{}: {} gereed{}.",
+                        if batch.stopped { "Import gestopt" } else { "Import afgerond" },
+                        batch.description(),
+                        if batch.failed > 0 { " (bekijk Importfouten)" } else { "" });
                 }
             }
         }
@@ -456,13 +489,15 @@ impl SleufBaseApp {
                 if let Some(source) = self.pointcloud_ui.sources().iter()
                     .find(|source| source.source_path == canonical && source.validate_cache().is_ok()) {
                     let id = source.id.clone(); self.pointcloud_ui.selection.apply([id], false);
-                    self.pointcloud_ui.status = "Scan al bewaard. Kies Bewerken om punten of lijnen toe te voegen.".into();
+                    self.pointcloud_ui.batch.completed += 1;
+                    self.pointcloud_ui.batch.skipped += 1;
+                    self.pointcloud_ui.status = format!("Scan al bewaard. {}", self.pointcloud_ui.batch.description());
                 } else {
                     let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
                     // Every queued LAS/LAZ is prepared and remembered without
                     // opening Potree. The user can edit any scan later from
                     // the catalog, even when several files were selected.
-                    self.start_pointcloud_import(ImportForm { path, title, crs: CloudCrs::Unknown }, None, ctx);
+                    self.start_pointcloud_import(ImportForm { path, title, crs: CloudCrs::Unknown }, None, ctx, true);
                 }
             }
         }
@@ -476,14 +511,17 @@ impl SleufBaseApp {
             "Sluit eerst de gewone sleufbewerker en bewaar of annuleer het openstaande concept."
         } else { "Rond de lopende taak af en sluit een eventueel geopend puntenwolkvenster." }
     }
-    fn start_pointcloud_import(&mut self, form: ImportForm, existing: Option<PointCloudSource>, ctx: &egui::Context) {
+    fn start_pointcloud_import(&mut self, form: ImportForm, existing: Option<PointCloudSource>, ctx: &egui::Context, queued: bool) {
         if !self.pointcloud_task_allowed() {
             self.message = self.pointcloud_unavailable_message().into(); self.pointcloud_ui.form = Some(form); return;
         }
         let (tx, rx) = mpsc::channel(); let cancel = Arc::new(AtomicBool::new(false)); let flag = Arc::clone(&cancel);
         let repaint = ctx.clone();
         self.pointcloud_ui.status = "Puntenwolk voorbereiden…".into();
-        self.pointcloud_ui.worker = Some(ImportWorker { rx, cancel, generation: self.project_generation, expected: existing.clone() });
+        self.pointcloud_ui.worker = Some(ImportWorker {
+            rx, cancel, generation: self.project_generation, expected: existing.clone(),
+            path: form.path.clone(), queued,
+        });
         std::thread::spawn(move || {
             let progress = |message| { let _ = tx.send(ImportEvent::Progress(message)); repaint.request_repaint(); };
             let result = if let Some(source) = existing { pointcloud::import_existing(&source, &flag, progress) }
@@ -497,7 +535,10 @@ impl SleufBaseApp {
         let (tx, rx) = mpsc::channel(); let cancel = Arc::new(AtomicBool::new(false)); let flag = Arc::clone(&cancel);
         let repaint = ctx.clone();
         self.pointcloud_ui.status = "Het gekozen bestand vergelijken met de oorspronkelijke puntenwolk…".into();
-        self.pointcloud_ui.worker = Some(ImportWorker { rx, cancel, generation: self.project_generation, expected: Some(source.clone()) });
+        self.pointcloud_ui.worker = Some(ImportWorker {
+            rx, cancel, generation: self.project_generation, expected: Some(source.clone()),
+            path: path.clone(), queued: false,
+        });
         std::thread::spawn(move || {
             let result = source.relink_with_cancel(&path, &flag).map(|()| source);
             let _ = tx.send(ImportEvent::Done(result)); repaint.request_repaint();
@@ -792,7 +833,7 @@ impl SleufBaseApp {
                 }
                 "rebuild" => {
                     if let Some(source) = self.pointcloud_ui.source(&id).cloned() {
-                        self.start_pointcloud_import(ImportForm { path: source.source_path.clone(), title: source.title.clone(), crs: source.crs }, Some(source), ctx);
+                        self.start_pointcloud_import(ImportForm { path: source.source_path.clone(), title: source.title.clone(), crs: source.crs }, Some(source), ctx, false);
                     }
                 }
                 _ => {}
@@ -817,7 +858,7 @@ impl SleufBaseApp {
                 if ui.button("Annuleren").clicked() { cancel = true; }
             });
         });
-        if create { self.start_pointcloud_import(form, None, ctx); }
+        if create { self.start_pointcloud_import(form, None, ctx, false); }
         else if !cancel && !response.should_close() { self.pointcloud_ui.form = Some(form); }
     }
 
