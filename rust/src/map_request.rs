@@ -808,6 +808,35 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wmts_patch_packs_only_touched_pixels_and_merges_without_resampling() {
+        let bounds=Bounds {min_x:155000.,min_y:463000.,max_x:155040.,max_y:463030.};
+        let mut pixels=Pixels{bounds,width:4,height:3,
+            rgba:vec![255;4*3*4],stale_cache:false};
+        let mut rendered=pixels.rgba.clone();
+        for y in 1..3u32{
+            for x in 1..3u32 {
+                let start=((y*4+x)*4) as usize;
+                rendered[start..start+4].copy_from_slice(&[x as u8,y as u8,70,255]);
+            }
+        }
+        let patch=MapPatch::crop(bounds,4,3,&rendered,[1,1,3,3],false).unwrap();
+        assert_eq!(patch.rgba.len(),2*2*4);
+        assert_eq!(patch.rgba[..4],[1,1,70,255]);
+        patch.apply_to(&mut pixels).unwrap();
+        assert_eq!(pixels.rgba,rendered);
+        let invalid=MapPatch { bounds:Bounds {max_x:155041.,..bounds},..patch };
+        assert!(invalid.apply_to(&mut pixels).is_err());
+    }
+
+    #[test]
+    fn map_patch_rejects_partial_or_outside_uploads() {
+        let bounds=Bounds {min_x:0.,min_y:0.,max_x:5.,max_y:5.};
+        assert!(MapPatch::crop(bounds,4,4,&[0;4*4*4],[1,1,5,4],false).is_err());
+        assert!(MapPatch::crop(bounds,4,4,&[0;5],[1,1,3,3],false).is_err());
+        assert!(MapPatch::crop(bounds,4,4,&[0;4*4*4],[2,2,2,3],false).is_err());
+    }
     fn view() -> Viewport {
         Viewport {
             source: Provider::Aerial,
