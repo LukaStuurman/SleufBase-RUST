@@ -63,7 +63,7 @@ impl Default for ExportPreferences {
         dxf_centerline_color:"#000000".into(),dxf_label_color:"#000000".into(),
         cadastral_template_path:String::new(),template_client_logo_preset:"bgm".into(),
         template_client_logo_path:String::new(),template_client_logo_code:None,template_client_logos:Vec::new(),template_contact:Default::default(),template_include_cross_sections:true,
-        template_generate_reverse_cross_section_sheet:false,template_show_profile_direction:true,
+        template_generate_reverse_cross_section_sheet:true,template_show_profile_direction:true,
         template_enable_maaiveld_edit_points:true,template_avoid_multileader_collisions:true,
         template_clip_cross_section_markers_to_profile:true,
         template_cross_section_marker_diameter:0.02,template_cross_section_diameter_text:String::new(),

@@ -573,3 +573,10 @@ Een ingeladen puntenwolk wordt op de werkkaart alleen getoond via haar eigen geg
 In **Puntenwolken beheren → Coördinatenstelsel** en bij het toevoegen van LAS/LAZ kun je **WGS 84 (EPSG:4326 / EPSG:4979)** kiezen. Dit is een geografisch coördinatenstelsel: de horizontale coördinaten zijn lengte- en breedtegraad in graden, geen RD-meters. SleufBase herkent deze twee EPSG-codes automatisch als het bestand die informatie bevat. In Potree worden graden en hoogteverschil afzonderlijk aangeduid zodat er geen ongeldige 3D-lengte uit twee verschillende eenheden ontstaat.
 
 Een coördinatenstelsel kiezen **zet de coördinaten niet automatisch om**. Je kunt WGS 84-scans bekijken, punten en lijnen intekenen en de oorspronkelijke XYZ naar object-DXF exporteren. Voor het inladen als proefsleuf op de Nederlandse RD-kaart en het maken van een gegeorefereerde RD-orthofoto moeten de bronpunten eerst werkelijk in RD New (EPSG:28992, meters) staan.
+
+
+### Standaard beide richtingen en positie van N.A.P.-maaiveldtekst
+
+Wanneer je **Acties → Proefsleuven sjabloon DXF** opent, staat **Beide kijkrichtingen** standaard aan. Normaal en Reverse worden dus beide meegenomen. Je kunt de optie voor één export uitschakelen; wanneer je het exportvenster later opnieuw opent, staat deze weer aan.
+
+In de gemaakte DXF-dwarsprofielen staat de tekst **Maaiveld: … N.A.P.** nu onder de maaiveldlijn, in plaats van boven de lijn. De N.A.P.-referentie en de overige gegevens blijven behouden.

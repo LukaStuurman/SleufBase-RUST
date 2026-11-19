@@ -356,6 +356,9 @@ fn order_tools(ui: &mut egui::Ui, d: &mut Dialog) {
 }
 impl Dialog {
     pub fn new(mut state: State, rasters: &[GeoTiffInfo], generation: u64) -> Self {
+        // Default both normal and reverse views whenever a new export
+        // dialog opens; the checkbox remains editable for this export.
+        state.paired = true;
         let fresh=state.rows.is_empty();
         let error = state.sync(rasters).err().unwrap_or_default();
         if fresh && error.is_empty() {state.sort_rows(SortMode::NumberAsc);}
@@ -383,6 +386,9 @@ impl Dialog {
     pub fn with_settings(mut self, settings: &MigratedSettings) -> Result<Self, String> {
         let defaults = ExportDefaults::from_settings(settings)?;
         defaults.apply_order(&mut self.state);
+        // An older settings file may have a false paired default. Starting
+        // a fresh dialog must still select both directions by default.
+        self.state.paired = true;
         self.opening_defaults = Some(defaults);
         Ok(self)
     }

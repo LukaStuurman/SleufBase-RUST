@@ -337,7 +337,10 @@ pub fn build(
         body.obstacles.soft.push([a[0], a[1], b[0], b[1]]);
     }
     let maaiveld = format!("Maaiveld: {start_z:.2} N.A.P.");
-    let position = [left, sy + 0.035 * 0.45];
+    // DXF text insertion is its baseline; leave the entire 0.035-high
+    // "Maaiveld ... N.A.P." label clearly below the ground-level line.
+    // Y grows upwards in CAD; a positive offset used to put it above.
+    let position = [left, sy - 0.035 * 1.55];
     let obstacle = [
         position[0],
         position[1] - 0.035 * 0.25,

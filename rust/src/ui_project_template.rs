@@ -27,6 +27,10 @@ fn configure_options(mut options:Options,settings:&MigratedSettings,saved:Option
     // Settings own the general defaults; saved source choices and drawing
     // metadata remain explicit and must survive reopening this dialog.
     defaults.apply_project(&mut configured);
+    // Each newly opened template export starts with both directions enabled.
+    // Old saved preferences may still be false; users can uncheck the option
+    // for this export without making the old value the next dialog's default.
+    configured.paired = true;
     configured
 }
 
