@@ -313,11 +313,10 @@ impl SleufBaseApp {
         // Never let a successful batch silently exceed the catalog read limit.
         let known = self.pointcloud_ui.sources().iter().map(|source| source.source_path.clone())
             .collect::<HashSet<_>>();
-        let unique_new = self.pointcloud_ui.queue.iter()
-            .chain(active.iter().copied())
-            .chain(added.iter())
-            .filter(|path| !known.contains(*path))
-            .cloned().collect::<HashSet<_>>().len();
+        let mut pending = self.pointcloud_ui.queue.iter().cloned().collect::<HashSet<_>>();
+        if let Some(active) = active { pending.insert(active.to_path_buf()); }
+        pending.extend(added.iter().cloned());
+        let unique_new = pending.iter().filter(|path| !known.contains(*path)).count();
         let total = known.len().saturating_add(unique_new);
         if total > catalog::MAX_CATALOG_SOURCES {
             let available = catalog::MAX_CATALOG_SOURCES.saturating_sub(known.len());
