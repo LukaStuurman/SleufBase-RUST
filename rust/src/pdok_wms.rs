@@ -4,6 +4,8 @@
 
 #[path="pdok_tile_pool.rs"]
 mod tile_pool;
+#[path="pdok_disk_cache.rs"]
+mod disk_cache;
 use crate::model::Bounds;
 use image::ImageDecoder;
 use std::{
@@ -14,7 +16,7 @@ use std::{
 
 const PDOK_WMS_URL: &str = "https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0";
 const CADASTRAL_WMS_URL: &str = "https://service.pdok.nl/kadaster/kadastralekaart/wms/v5_0";
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Source {
     Aerial,
     Cadastral,
@@ -204,7 +206,7 @@ pub struct SharedRaster {
 }
 // Byte quota remains authoritative; retain enough grid tiles to avoid LRU thrash.
 const CACHE_ENTRIES: usize = 512;
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     source: Source,
     bounds: [u64; 4],
@@ -226,6 +228,20 @@ fn cache_key(source: Source, b: Bounds, width: u32, height: u32) -> CacheKey {
         width,
         height,
     }
+}
+// Deduplicate identical in-flight WMS requests from the main map, point-cloud
+// tools and export workers. The lock is per EXACT WMS source/BBOX/size, and is
+// not held while reading or changing the shared memory-cache mutex.
+fn request_lock(key: &CacheKey) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::{collections::HashMap, sync::{Arc, Mutex, Weak}};
+    static LOCKS: OnceLock<Mutex<HashMap<CacheKey, Weak<Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS.get_or_init(Default::default).lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, guard| guard.strong_count() > 0);
+    if let Some(guard) = locks.get(key).and_then(Weak::upgrade) { return guard; }
+    let guard = Arc::new(Mutex::new(()));
+    locks.insert(key.clone(), Arc::downgrade(&guard));
+    guard
 }
 struct Cache {
     entries: std::collections::VecDeque<(CacheKey, std::sync::Arc<[u8]>)>,
@@ -365,6 +381,40 @@ impl WmsClient {
             crate::input::check(cancel)?;
             return Ok(raster);
         }
+        let lock = request_lock(&cache_key(source, bounds, width, height));
+        let _guard = loop {
+            crate::input::check(cancel)?;
+            match lock.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::WouldBlock) =>
+                    std::thread::sleep(Duration::from_millis(10)),
+                Err(std::sync::TryLockError::Poisoned(_)) =>
+                    return Err("PDOK-verzoekslot niet beschikbaar".into()),
+            }
+        };
+        // Another map may have filled the shared in-memory cache while we
+        // waited. Never ask PDOK for the same tile unnecessarily.
+        if let Some(raster) = self.lookup_shared(source, bounds, width, height)? {
+            crate::input::check(cancel)?;
+            return Ok(raster);
+        }
+        if let Some(bytes) = disk_cache::lookup(source, &url, cancel) {
+            let decoded = if source == Source::CadastralOverlay {
+                decode_response_with_transparency(&bytes, width, height, cancel, true)
+            } else { decode_response(&bytes, width, height, cancel) };
+            match decoded {
+                Ok(rgba) => {
+                    crate::input::check(cancel)?;
+                    let rgba: std::sync::Arc<[u8]> = rgba.into();
+                    self.remember(cache_key(source, bounds, width, height), rgba.clone())?;
+                    return Ok(SharedRaster { bounds, width, height, rgba });
+                }
+                Err(_) => {
+                    crate::input::check(cancel)?;
+                    disk_cache::remove_invalid(&url);
+                }
+            }
+        }
         let mut last = String::new();
         for attempt in 0..3 {
             crate::input::check(cancel)?;
@@ -392,11 +442,16 @@ impl WmsClient {
                     return Err("PDOK gaf geen kaartbeeld terug".into());
                 }
                 let bytes = read_response(response, &stop)?;
-                if source == Source::CadastralOverlay {
+                let rgba = if source == Source::CadastralOverlay {
                     decode_response_with_transparency(&bytes, width, height, &stop, true)
                 } else {
                     decode_response(&bytes, width, height, &stop)
-                }
+                }?;
+                // The HTTP data has already passed strict format, dimensions,
+                // alpha and cancellation checks. Persist asynchronously so disk
+                // writes never delay the visible new map.
+                disk_cache::remember(&url, bytes, &stop);
+                Ok(rgba)
             })
             .and_then(|r| r);
             crate::input::check(cancel)?;
