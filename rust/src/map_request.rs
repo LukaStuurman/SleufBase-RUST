@@ -270,6 +270,7 @@ fn useful_during_pan(active: Viewport, desired: Viewport) -> bool {
         / ((b.max_y - b.min_y) / f64::from(desired.size[1]));
     (0.7..=1.15).contains(&x) && (0.7..=1.15).contains(&y)
 }
+#[derive(Clone)]
 pub struct Pixels {
     pub bounds: Bounds,
     pub width: u32,
@@ -305,6 +306,7 @@ pub struct Worker {
     epoch: u64,
     pending: Option<Task>,
     busy: bool,
+    progressive_pdok: bool,
 }
 // A block-by-block PDOK preview, with previously visible map pixels
 // reprojected underneath missing tiles. This avoids blank/checkerboard
@@ -598,6 +600,7 @@ impl Worker {
             epoch: 0,
             pending: None,
             busy: false,
+            progressive_pdok: false,
         })
     }
     pub fn start(&mut self, request: Request) {
@@ -661,6 +664,9 @@ impl Worker {
     pub fn busy(&self) -> bool {
         self.busy
     }
+    /// True only for the real renderer: all partial PDOK frames are composed
+    /// over its last visible picture, unlike synthetic preview test workers.
+    pub fn progressive_pdok(&self) -> bool { self.progressive_pdok }
 }
 impl Drop for Worker {
     fn drop(&mut self) {
