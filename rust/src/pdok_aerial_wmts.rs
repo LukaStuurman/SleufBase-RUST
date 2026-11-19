@@ -346,33 +346,56 @@ impl ViewportRenderer {
         }
         Ok(output)
     }
-    /// Exact RD affine sampling; cached low-zoom imagery can fill missing high
-    /// tiles without moving boundaries or changing the target canvas extent.
-    fn paint(bounds:Bounds,width:u32,height:u32,zoom:u8,
-        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],cancel:&AtomicBool
-    )->Result<(),String>{
-        let res=resolution(zoom);
-        let span=span(zoom);
+    /// Screen-space rectangle touched by a tile. A two-pixel halo redraws
+    /// bilinear samples at the tile boundaries when adjoining tiles arrive.
+    /// All coordinates are computed in f64 RD, independent of pan/zoom state.
+    fn tile_region(bounds:Bounds,width:u32,height:u32,id:TileId)->[u32;4]{
+        let span=span(id.zoom);
+        let left=ORIGIN_X+f64::from(id.col)*span;
+        let right=left+span;
+        let top=ORIGIN_Y-f64::from(id.row)*span;
+        let bottom=top-span;
         let dx=(bounds.max_x-bounds.min_x)/f64::from(width);
         let dy=(bounds.max_y-bounds.min_y)/f64::from(height);
-        for row in 0..height {
+        let x0=(((left-bounds.min_x)/dx).floor() as i64-2)
+            .clamp(0,i64::from(width)) as u32;
+        let x1=(((right-bounds.min_x)/dx).ceil() as i64+3)
+            .clamp(0,i64::from(width)) as u32;
+        let y0=(((bounds.max_y-top)/dy).floor() as i64-2)
+            .clamp(0,i64::from(height)) as u32;
+        let y1=(((bounds.max_y-bottom)/dy).ceil() as i64+3)
+            .clamp(0,i64::from(height)) as u32;
+        [x0,y0,x1,y1]
+    }
+    /// Draw only the changed tile's visible rectangle. Previously, each new
+    /// tile led to a full multi-megapixel interpolation and full-frame clone.
+    /// This keeps exactly the same bilinear samples as the original painter.
+    fn paint_region(bounds:Bounds,width:u32,height:u32,zoom:u8,
+        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],
+        rect:[u32;4],cancel:&AtomicBool)->Result<(),String>
+    {
+        if rect[0]>=rect[2] || rect[1]>=rect[3] {return Ok(());}
+        let res=resolution(zoom);
+        let tile_span=span(zoom);
+        let dx=(bounds.max_x-bounds.min_x)/f64::from(width);
+        let dy=(bounds.max_y-bounds.min_y)/f64::from(height);
+        for row in rect[1]..rect[3] {
             input::check(cancel)?;
             let wy=bounds.max_y-(f64::from(row)+0.5)*dy;
             let src_y=(ORIGIN_Y-wy)/res-0.5;
-            let source_row=((ORIGIN_Y-wy)/span).floor() as i64;
-            for col in 0..width {
+            let source_row=((ORIGIN_Y-wy)/tile_span).floor() as i64;
+            if source_row<0 || source_row>=(1i64<<zoom) {continue;}
+            let iy=src_y.floor() as i64;
+            let fy=src_y-iy as f64;
+            for col in rect[0]..rect[2] {
                 let wx=bounds.min_x+(f64::from(col)+0.5)*dx;
-                let source_col=((wx-ORIGIN_X)/span).floor() as i64;
-                if source_row<0||source_col<0 || source_row>=(1i64<<zoom) ||source_col>=(1i64<<zoom) {
-                    continue;
-                }
+                let source_col=((wx-ORIGIN_X)/tile_span).floor() as i64;
+                if source_col<0 || source_col>=(1i64<<zoom) {continue;}
                 let id=TileId{zoom,col:source_col as u32,row:source_row as u32};
                 let Some(primary)=tiles.get(&id) else {continue;};
                 let src_x=(wx-ORIGIN_X)/res-0.5;
                 let ix=src_x.floor() as i64;
-                let iy=src_y.floor() as i64;
                 let fx=src_x-ix as f64;
-                let fy=src_y-iy as f64;
                 let sample=|x:i64,y:i64| -> [u8;4] {
                     if x>=0 && y>=0 {
                         let neighbor=TileId{zoom,col:(x/256) as u32,row:(y/256) as u32};
@@ -384,7 +407,8 @@ impl ViewportRenderer {
                     let ly=(y-source_row*256).clamp(0,255) as u32;
                     primary.get_pixel(lx,ly).0
                 };
-                let [a,b,c,d]=[sample(ix,iy),sample(ix+1,iy),sample(ix,iy+1),sample(ix+1,iy+1)];
+                let [a,b,c,d]=[sample(ix,iy),sample(ix+1,iy),
+                    sample(ix,iy+1),sample(ix+1,iy+1)];
                 let out=(row as usize*width as usize+col as usize)*4;
                 for channel in 0..4 {
                     let top=f64::from(a[channel])*(1.-fx)+f64::from(b[channel])*fx;
@@ -394,6 +418,12 @@ impl ViewportRenderer {
             }
         }
         Ok(())
+    }
+    fn paint(bounds:Bounds,width:u32,height:u32,zoom:u8,
+        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],
+        cancel:&AtomicBool)->Result<(),String>
+    {
+        Self::paint_region(bounds,width,height,zoom,tiles,target,[0,0,width,height],cancel)
     }
     pub fn request(&mut self,bounds:Bounds,width:u32,height:u32,cache:&Path,
         cancel:&AtomicBool,progress:&mut dyn FnMut(Progress<'_>)->Result<(),String>
