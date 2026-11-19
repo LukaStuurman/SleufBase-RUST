@@ -705,7 +705,7 @@ pub(crate) fn show(
                 egui::Checkbox::new(&mut d.state.reverse, "Alleen omgekeerde richting"),
             );
             ui.checkbox(&mut d.state.show_reference, "Referentiepunt");
-            ui.checkbox(&mut d.state.avoid_collisions, "Labels uit elkaar plaatsen");
+            ui.checkbox(&mut d.state.avoid_collisions, "Labels en leaderlijnen ontwarren");
         });
 
         if d.state.server_mode==sleufbase_rust::template_server::Mode::Fresh {
