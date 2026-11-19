@@ -12,6 +12,55 @@ use std::process::{Command, Stdio};
 #[path="ui_pointcloud_map.rs"]
 mod map;
 
+// Used by both the list and RD map; map selection must be visible in the list.
+#[derive(Default)]
+pub(super) struct Selection {
+    ids: HashSet<String>,
+    focused: Option<String>,
+    anchor: Option<String>,
+}
+impl Selection {
+    fn clear(&mut self) {
+        self.ids.clear();
+        self.focused = None;
+        self.anchor = None;
+    }
+    fn apply(&mut self, ids: impl IntoIterator<Item = String>, extend: bool) {
+        if !extend { self.clear(); }
+        for id in ids {
+            self.ids.insert(id.clone());
+            self.focused = Some(id.clone());
+            self.anchor = Some(id);
+        }
+    }
+    fn select_row(&mut self, ordered: &[String], index: usize, extend: bool) {
+        let id = ordered[index].clone();
+        if extend {
+            if let Some(anchor) = self.anchor.as_ref()
+                .filter(|id| self.ids.contains(*id))
+                .and_then(|id| ordered.iter().position(|candidate| candidate == id))
+            {
+                self.ids.extend(ordered[anchor.min(index)..=anchor.max(index)].iter().cloned());
+                self.focused = Some(id);
+                return;
+            }
+        }
+        self.apply([id], extend);
+    }
+    fn reconcile(&mut self) {
+        if self.focused.as_ref().is_some_and(|id| !self.ids.contains(id)) {
+            self.focused = self.ids.iter().next().cloned();
+        }
+        if self.anchor.as_ref().is_some_and(|id| !self.ids.contains(id)) {
+            self.anchor = self.focused.clone();
+        }
+    }
+    fn set_checked(&mut self, id: &str, checked: bool) {
+        if checked { self.apply([id.to_owned()], true); }
+        else { self.ids.remove(id); self.reconcile(); }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub open: bool,
@@ -27,10 +76,11 @@ pub(super) struct State {
     remembered_generation: Option<u64>,
     pending_catalog: Option<PendingCatalog>,
     titles: HashMap<String, String>,
-    selected: Option<String>,
+    selection: Selection,
     search: String,
     filters: [String; 7],
     only_loaded: bool,
+    only_selected: bool,
     sort_column: usize,
     descending: bool,
     map_open: bool,
@@ -225,7 +275,7 @@ impl SleufBaseApp {
             Ok(()) => {
                 self.pointcloud_ui.pending_catalog = None;
                 self.pointcloud_ui.catalog_error = None;
-                self.pointcloud_ui.selected = Some(id.clone());
+                self.pointcloud_ui.selection.apply([id.clone()], false);
                 self.pointcloud_ui.titles.remove(&id);
                 self.pointcloud_ui.status = format!("{} staat in het puntenwolkoverzicht. Kies Inladen om de sleuf in dit project te gebruiken.", source.title);
                 self.pointcloud_ui.remember_memory(source);
@@ -233,7 +283,7 @@ impl SleufBaseApp {
             }
             Err(error) => {
                 self.pointcloud_ui.remember_memory(source.clone());
-                self.pointcloud_ui.selected = Some(id);
+                self.pointcloud_ui.selection.apply([id], false);
                 self.pointcloud_ui.pending_catalog = Some(PendingCatalog { source, expected, edit });
                 self.pointcloud_ui.status = format!("De scan is voorbereid, maar het overzicht kon niet worden bewaard: {error}. Kies Opnieuw bewaren.");
             }
@@ -303,7 +353,7 @@ impl SleufBaseApp {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 if let Some(source) = self.pointcloud_ui.sources().iter()
                     .find(|source| source.source_path == canonical && source.validate_cache().is_ok()) {
-                    let id = source.id.clone(); self.pointcloud_ui.selected = Some(id);
+                    let id = source.id.clone(); self.pointcloud_ui.selection.apply([id], false);
                     self.pointcloud_ui.status = "Scan al bewaard. Kies Bewerken om punten of lijnen toe te voegen.".into();
                 } else {
                     let title = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -362,7 +412,7 @@ impl SleufBaseApp {
         };
         self.pointcloud_ui.titles.remove(id);
         self.pointcloud_ui.remember_memory(source.clone());
-        self.pointcloud_ui.selected = Some(id.into());
+        self.pointcloud_ui.selection.apply([id.into()], false);
         #[cfg(not(windows))]
         { let _ = source; self.pointcloud_ui.status = "De ingebouwde puntenwolkeditor vereist Windows en WebView2.".into(); }
         #[cfg(windows)]
@@ -423,6 +473,7 @@ impl SleufBaseApp {
         let query = state.search.trim().to_lowercase();
         let mut rows = state.sources().iter().map(|source| Row::new(source, loaded.contains(&source.id)))
             .filter(|row| !state.only_loaded || row.loaded)
+            .filter(|row| !state.only_selected || state.selection.ids.contains(&row.id))
             .filter(|row| query.is_empty() ||
                 format!("{} {} {} {} {}", row.title, row.path, row.axis, crs_short(row.crs),
                     row.center.iter().map(|v| format!("{v:.3}")).collect::<Vec<_>>().join(" "))
@@ -444,7 +495,7 @@ impl SleufBaseApp {
             };
             (if state.descending { order.reverse() } else { order }).then_with(|| a.id.cmp(&b.id))
         });
-        if state.selected.is_none() { state.selected = rows.first().map(|row| row.id.clone()); }
+        // Do not reselect the first scan after the user explicitly clears selection.
         let visible = rows.iter().map(|row| row.id.as_str()).collect::<HashSet<_>>();
         let locations = state.sources().iter().filter(|source| source.crs == CloudCrs::RdNew && visible.contains(source.id.as_str()))
             .map(|source| map::Location { id: source.id.clone(), title: source.title.clone(), center: center(source),
@@ -471,7 +522,7 @@ impl SleufBaseApp {
                 }
                 egui::TopBottomPanel::bottom("pointcloud-source-details")
                     .frame(theme::card(10, 8, 6)).show_inside(ui, |ui| {
-                        if let Some(id) = state.selected.clone() {
+                        if let Some(id) = state.selection.focused.clone() {
                             if let Some(source) = state.catalog.as_ref().and_then(|catalog| catalog.sources.iter().find(|source| source.id == id)) {
                                 let title = state.titles.entry(id.clone()).or_insert_with(|| source.title.clone());
                                 show_source_details(ui, source, title, loaded.contains(&id), enabled, &mut details, &mut action);
@@ -502,7 +553,8 @@ impl SleufBaseApp {
                 // Like SleufBase Jobs, keep the list/map tabs and filtering in
                 // a compact toolbar, leaving the rest to virtualized rows.
                 let active_filters = state.filters.iter().filter(|value| !value.trim().is_empty()).count()
-                    + usize::from(state.only_loaded) + usize::from(!state.search.is_empty());
+                    + usize::from(state.only_loaded) + usize::from(state.only_selected)
+                    + usize::from(!state.search.is_empty());
                 ui.horizontal_wrapped(|ui| {
                     if ui.selectable_label(!state.map_open, "Lijst").clicked() {
                         state.map_open = false; state.map.pause();
@@ -514,7 +566,11 @@ impl SleufBaseApp {
                         ui.set_max_width((ctx.screen_rect().width() - 50.).min(320.));
                         egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 100.).max(100.)).show(ui, |ui| {
                             ui.checkbox(&mut state.only_loaded, "Alleen ingeladen scans");
-                            if ui.button("Selectie wissen").clicked() { state.selected = None; }
+                            ui.checkbox(&mut state.only_selected, "Alleen geselecteerd");
+                            if ui.button("Alle zichtbare scans selecteren").clicked() {
+                                state.selection.apply(rows.iter().map(|row| row.id.clone()), true);
+                            }
+                            if ui.button("Selectie wissen").clicked() { state.selection.clear(); }
                             ui.separator();
                             egui::ComboBox::from_id_salt("cloud-sort-column")
                                 .selected_text(CLOUD_COLUMNS[state.sort_column]).show_ui(ui, |ui| {
@@ -535,6 +591,7 @@ impl SleufBaseApp {
                                 state.filters = Default::default();
                                 state.search.clear();
                                 state.only_loaded = false;
+                                state.only_selected = false;
                             }
                         });
                     });
@@ -549,8 +606,8 @@ impl SleufBaseApp {
                     ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Zoek scans…")
                         .desired_width(ui.available_width().min(310.)));
                     if !state.search.is_empty() && ui.small_button("Wissen").clicked() { state.search.clear(); }
-                    ui.label(egui::RichText::new(format!("{} / {} scans · {} in project",
-                        rows.len(), state.sources().len(), loaded.len())).small().color(theme::MUTED));
+                    ui.label(egui::RichText::new(format!("{} / {} scans · {} geselecteerd · {} in project",
+                        rows.len(), state.sources().len(), state.selection.ids.len(), loaded.len())).small().color(theme::MUTED));
                 });
                 if state.worker.is_some() {
                     ui.horizontal(|ui| {
@@ -568,7 +625,7 @@ impl SleufBaseApp {
                 ui.add_space(3.);
                 if state.map_open {
                     let size = egui::vec2(ui.available_width().max(1.), ui.available_height().max(80.));
-                    if let Some(id) = map::show(ui, &locations, &mut state.selected, &mut state.map, size) {
+                    if let Some(id) = map::show(ui, &locations, &mut state.selection, &mut state.map, size) {
                         if enabled { action = Some(("edit", id)); }
                     }
                 } else if rows.is_empty() {
@@ -1042,7 +1099,7 @@ fn cloud_columns_for_width(width: f32) -> Vec<(usize, f32)> {
             2 => 82., 3 => 72., 4 => if width < 540. { 114. } else { 138. },
             5 => 188., 6 => 94., _ => 0.,
         })).collect::<Vec<_>>();
-    let free = (width - 28. - CLOUD_COLUMN_GAP * (columns.len() - 1) as f32
+    let free = (width - 44. - CLOUD_COLUMN_GAP * (columns.len() - 1) as f32
         - columns.iter().map(|(_, value)| *value).sum::<f32>()).max(60.);
     let has_path = columns.iter().any(|(column, _)| *column == 1);
     for (column, column_width) in &mut columns {
@@ -1083,12 +1140,22 @@ fn cloud_action_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: b
         .corner_radius(8).min_size(egui::vec2(0., 30.)))
 }
 fn show_cloud_header(ui: &mut egui::Ui, width: f32, columns: &[(usize, f32)],
-    state: &mut State, inline_filters: bool) {
+    state: &mut State, visible_ids: &[String], inline_filters: bool) {
     let height = if inline_filters { 56. } else { 28. };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     ui.painter_at(rect).rect_filled(rect, 6., Color32::WHITE);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("cloud-column-headings"));
-    let mut x = rect.left() + 12.;
+    let mut all = !visible_ids.is_empty() && visible_ids.iter().all(|id| state.selection.ids.contains(id));
+    if child.put(egui::Rect::from_min_size(rect.min + egui::vec2(8., 3.), egui::vec2(22., 22.)),
+        egui::Checkbox::without_text(&mut all))
+        .on_hover_text("Alle zichtbare scans selecteren of deselecteren").changed() {
+        if all { state.selection.apply(visible_ids.iter().cloned(), true); }
+        else {
+            for id in visible_ids { state.selection.ids.remove(id); }
+            state.selection.reconcile();
+        }
+    }
+    let mut x = rect.left() + 36.;
     for &(column, column_width) in columns {
         let arrow = if state.sort_column == column {
             if state.descending { " ▼" } else { " ▲" }
@@ -1112,7 +1179,7 @@ fn show_cloud_header(ui: &mut egui::Ui, width: f32, columns: &[(usize, f32)],
     }
 }
 fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
-    striped: bool, width: f32, columns: &[(usize, f32)]) -> egui::Response {
+    striped: bool, width: f32, columns: &[(usize, f32)]) -> (egui::Response, Option<bool>) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CLOUD_ROW_HEIGHT), egui::Sense::hover());
     let response = ui.interact(rect, ui.make_persistent_id(("cloud-card", item.id.as_str())), egui::Sense::click());
     let fill = if selected { Color32::from_rgb(255, 239, 226) }
@@ -1125,15 +1192,13 @@ fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
     if selected {
         painter.rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(2., 8.), egui::vec2(3., 20.)), 2., ORANGE);
     }
-    // The small radio marker makes single-item selection clear without giving
-    // the false expectation of multi-selection from the KickTheMap checkbox.
-    let marker = egui::pos2(rect.left() + 16., rect.center().y);
-    painter.circle_stroke(marker, 7., Stroke::new(1.3, if selected { ORANGE } else { theme::MUTED }));
-    if selected { painter.circle_filled(marker, 3.8, ORANGE); }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect)
         .id_salt(("cloud-card-content", item.id.as_str()))
         .layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let mut x = rect.left() + 28.;
+    let mut checked = selected;
+    let check = child.put(egui::Rect::from_min_size(rect.min + egui::vec2(8., 7.), egui::vec2(22., 22.)),
+        egui::Checkbox::without_text(&mut checked));
+    let mut x = rect.left() + 36.;
     for &(column, column_width) in columns {
         let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 4.), egui::vec2(column_width, 28.));
         let value = cloud_column_value(item, column);
@@ -1161,16 +1226,17 @@ fn show_cloud_card(ui: &mut egui::Ui, item: &Row, selected: bool,
         }
         x += column_width + CLOUD_COLUMN_GAP;
     }
-    response.on_hover_text(format!("{}\nBestand: {}\nX {:.3} · Y {:.3} · Z {:.3}\n{}\n{}",
+    (response.on_hover_text(format!("{}\nBestand: {}\nX {:.3} · Y {:.3} · Z {:.3}\n{}\n{}",
         item.title, item.path, item.center[0], item.center[1], item.center[2],
-        item.axis, if item.loaded { "In dit project" } else { "Bewaard in overzicht" }))
+        item.axis, if item.loaded { "In dit project" } else { "Bewaard in overzicht" })), check.changed().then_some(checked))
 }
 fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled: bool,
     action: &mut Option<(&'static str, String)>) {
     let width = (ui.available_width() - ui.spacing().scroll.allocated_width()).max(1.);
     let columns = cloud_columns_for_width(width);
     let inline_filters = width >= 680. && ui.available_height() >= 240.;
-    show_cloud_header(ui, width, &columns, state, inline_filters);
+    let ordered = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+    show_cloud_header(ui, width, &columns, state, &ordered, inline_filters);
     ui.spacing_mut().item_spacing.y = 2.;
     egui::ScrollArea::vertical().id_salt("pointcloud-catalog-vertical")
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
@@ -1178,15 +1244,42 @@ fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled
         .show_rows(ui, CLOUD_ROW_HEIGHT, rows.len(), |ui, range| {
             for index in range {
                 let item = &rows[index];
-                let response = show_cloud_card(ui, item,
-                    state.selected.as_deref() == Some(item.id.as_str()), index % 2 != 0, width, &columns);
-                if response.clicked() { state.selected = Some(item.id.clone()); }
+                let (response, checked) = show_cloud_card(ui, item,
+                    state.selection.ids.contains(&item.id), index % 2 != 0, width, &columns);
+                let extend = ui.input(|input| input.modifiers.ctrl || input.modifiers.command || input.modifiers.shift);
+                if let Some(checked) = checked {
+                    if checked && extend { state.selection.select_row(&ordered, index, true); }
+                    else { state.selection.set_checked(&item.id, checked); }
+                } else if response.clicked() { state.selection.select_row(&ordered, index, extend); }
                 if enabled && response.double_clicked() {
-                    state.selected = Some(item.id.clone());
+                    state.selection.apply([item.id.clone()], false);
                     *action = Some(("edit", item.id.clone()));
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod pointcloud_selection_tests {
+    use super::Selection;
+    #[test]
+    fn map_and_list_selection_share_additive_and_range_rules() {
+        let mut selection = Selection::default();
+        let ordered = ["one", "two", "three", "four"].map(str::to_owned);
+        selection.apply(["two".to_owned(), "three".to_owned()], false);
+        assert_eq!(selection.ids.len(), 2);
+        selection.apply(["four".to_owned()], true);
+        assert_eq!(selection.ids.len(), 3);
+        selection.select_row(&ordered, 0, false);
+        assert_eq!(selection.ids.len(), 1);
+        selection.select_row(&ordered, 2, true);
+        assert!(["one", "two", "three"].iter().all(|id| selection.ids.contains(*id)));
+        selection.set_checked("two", false);
+        assert!(!selection.ids.contains("two"));
+        selection.clear();
+        assert!(selection.ids.is_empty());
+        assert!(selection.focused.is_none());
+    }
 }
 
 fn same_source(trench: &VirtualTrench, id: &str) -> bool {
