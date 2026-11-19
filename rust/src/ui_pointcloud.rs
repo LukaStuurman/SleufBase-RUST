@@ -1444,6 +1444,33 @@ fn show_source_table(ui: &mut egui::Ui, rows: &[Row], state: &mut State, enabled
 }
 
 #[cfg(test)]
+mod bulk_las_queue_tests {
+    use super::*;
+
+    #[test]
+    fn a_thousand_scans_can_be_added_once_without_duplicates() {
+        let selection = (0..1200).map(|i| PathBuf::from(format!("scan-{i}.las"))).collect::<Vec<_>>();
+        let planned = plan_las_queue(&VecDeque::new(), None, selection.clone()).unwrap();
+        assert_eq!(planned.len(), 1200);
+        let existing = planned.iter().cloned().collect::<VecDeque<_>>();
+        let additions = plan_las_queue(&existing, None,
+            vec![PathBuf::from("scan-3.las"), PathBuf::from("another.laz")]).unwrap();
+        assert_eq!(additions, [PathBuf::from("another.laz")]);
+        assert!(plan_las_queue(&VecDeque::new(), None,
+            (0..=MAX_LAS_FILES_PER_SELECTION).map(|i|format!("scan-{i}.laz").into()).collect()).is_err());
+    }
+
+    #[test]
+    fn active_source_and_pending_capacity_are_respected() {
+        let pending = (0..MAX_PENDING_LAS_FILES).map(|i| format!("{i}.las").into())
+            .collect::<VecDeque<PathBuf>>();
+        assert!(plan_las_queue(&pending, None, vec!["extra.las".into()]).is_err());
+        assert!(plan_las_queue(&VecDeque::new(), Some(std::path::Path::new("same.LAS")),
+            vec!["same.LAS".into()]).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod pointcloud_selection_tests {
     use super::Selection;
     #[test]
