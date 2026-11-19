@@ -30,7 +30,7 @@ pub enum Background {
     #[default]
     Pdok,
 }
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stroke {
     pub points: Vec<[f64; 2]>,
