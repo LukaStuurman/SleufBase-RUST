@@ -419,20 +419,26 @@ impl Worker {
                     } else {
                         crate::pdok_wms::Source::Aerial
                     };
+                    // Cloning and uploading the entire multi-megapixel
+                    // raster after EVERY individual 512px tile is expensive.
+                    // Keep two partial previews on regular screens and one
+                    // on very large screens, then the full-resolution result.
+                    let mut preview_count = 0usize;
+                    let pixels = u64::from(v.size[0]) * u64::from(v.size[1]);
+                    let preview_budget = if pixels > 4_000_000 { 1 } else { 2 };
                     let mut update = |p: crate::pdok_wms::Progress<'_>| {
                         crate::input::check(cancel)?;
-                        if p.completed < p.total {
-                            preview(
-                                Pixels {
-                                    bounds: v.bounds,
-                                    width: v.size[0],
-                                    height: v.size[1],
-                                    rgba: p.image.as_raw().clone(),
-                                    stale_cache: false,
-                                },
-                                p.completed,
-                                p.total,
-                            )?;
+                        if p.completed < p.total && preview_count < preview_budget
+                            && (p.completed == 1 || p.completed >= p.total.div_ceil(2))
+                        {
+                            preview(Pixels {
+                                bounds: v.bounds,
+                                width: v.size[0],
+                                height: v.size[1],
+                                rgba: p.image.as_raw().clone(),
+                                stale_cache: false,
+                            }, p.completed, p.total)?;
+                            preview_count += 1;
                         }
                         Ok(())
                     };

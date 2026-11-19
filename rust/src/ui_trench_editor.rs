@@ -469,12 +469,11 @@ impl SleufBaseApp {
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT),|ui|{
-                    // The job lists use a pinned action surface: keep project
-                    // actions independent of the scrolling entry/editor body.
-                    // Render it first in bottom-up layout, with its own compact
-                    // two-tier grouping and responsive widths.
-                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                // Match KickTheMap's fixed action panel. Using nested
+                // bottom-up layout could clip button text on resizes.
+                egui::TopBottomPanel::bottom("virtual-editor-pinned-actions")
+                    .frame(egui::Frame::new())
+                    .show_inside(ui, |ui| {
                     theme::card(10, 8, 6).show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         ui.add_enabled_ui(editor.ahn_job.is_none(), |ui| {
@@ -742,7 +741,6 @@ impl SleufBaseApp {
                         if ui.button("Proefsleuf verwijderen…").clicked(){editor.confirm_delete=true;}
                     });
                     });
-                });
                 });
                 });
             }));
