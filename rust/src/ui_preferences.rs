@@ -13,7 +13,7 @@ pub(super) fn fields(ui:&mut egui::Ui,preferences:&mut ExportPreferences){
         ui.checkbox(&mut preferences.template_include_cross_sections,"Dwarsprofielen opnemen");
         ui.checkbox(&mut preferences.template_show_profile_direction,"Profielrichting en referentie tonen");
         ui.checkbox(&mut preferences.template_enable_maaiveld_edit_points,"Bewerkte maaiveldpunten gebruiken");
-        ui.checkbox(&mut preferences.template_avoid_multileader_collisions,"Botsingen tussen profiellabels vermijden");
+        ui.checkbox(&mut preferences.template_avoid_multileader_collisions,"Botsingen van labels en leaderlijnen vermijden");
         ui.checkbox(&mut preferences.template_clip_cross_section_markers_to_profile,"Objectmarkers binnen profiel houden");
         ui.horizontal(|ui|{ui.label("Markerdiameter (m)");ui.add(egui::DragValue::new(&mut preferences.template_cross_section_marker_diameter).range(0.005..=0.2).speed(0.001));});
         ui.horizontal(|ui|{ui.label("Diametertekst (leeg = Ø)");ui.text_edit_singleline(&mut preferences.template_cross_section_diameter_text);});
