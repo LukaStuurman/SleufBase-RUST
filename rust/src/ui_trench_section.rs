@@ -32,7 +32,7 @@ impl Section {
 
     fn radius(self, diameter_mm: f64) -> f32 {
         // Keep small cables selectable and very large pipes inside the panel.
-        (diameter_mm as f32 / 2000. * self.plot.height() / self.max_depth as f32).clamp(4., 24.)
+        (diameter_mm as f32 / 2000. * self.plot.height() / self.max_depth as f32).clamp(4., 32.)
     }
 }
 
@@ -221,8 +221,19 @@ impl Editor {
         );
 
         let active = self.selected.is_some() || self.entry_changed();
+        // The actual depth is never invented in the stored measurement.
+        // Until the user supplies a depth, show a clearly labelled VISUAL
+        // diameter example within the plot rather than hiding it above the
+        // "Onbekend" annotation at plot.top() - 16.
+        let illustrative = active && active_depth.is_none();
+        let display_depth = if illustrative {
+            Some(self.object.depth.clamp(0.1, section.max_depth * 0.75))
+        } else { active_depth };
+        let display_chainage = if illustrative && self.selected.is_none()
+            && !self.entry_started && self.object.chainage == 0.
+        { length * 0.5 } else { self.object.chainage };
         let position = if active {
-            Some((self.object.chainage, active_depth))
+            Some((display_chainage, display_depth))
         } else {
             response
                 .hover_pos()
@@ -238,10 +249,15 @@ impl Editor {
             let depth = depth
                 .map(|depth| format!("{depth:.2} m").replace('.', ","))
                 .unwrap_or_else(|| "onbekend".into());
-            format!(
-                "{} m vanaf begin   ·   Diepte {depth}",
-                format!("{along:.2}").replace('.', ",")
-            )
+            if illustrative {
+                format!("Diameter voorbeeld: Ø {} mm · diepte nog niet opgegeven",
+                    format!("{:.1}", self.object.diameter).replace('.', ","))
+            } else {
+                format!(
+                    "{} m vanaf begin   ·   Diepte {depth}",
+                    format!("{along:.2}").replace('.', ",")
+                )
+            }
         } else if stride > 1 {
             "Afstand vanaf begin · alle objecten staan in de objectenlijst".into()
         } else {
@@ -296,7 +312,7 @@ impl Editor {
         }
 
         if active {
-            let point = section.point(self.object.chainage, active_depth);
+            let point = section.point(display_chainage, display_depth);
             let radius = section.radius(self.object.diameter);
             painter.circle_filled(
                 point,
@@ -310,11 +326,15 @@ impl Editor {
                 "Ø onbekend".into()
             };
             let left = point.x > plot.center().x;
-            let label = match self.selected {
-                Some(index) => format!("{} · {diameter}", index + 1),
-                None => format!("Nieuw · {diameter}"),
+            let label = if illustrative {
+                format!("Voorbeeld · {diameter}")
+            } else {
+                match self.selected {
+                    Some(index) => format!("{} · {diameter}", index + 1),
+                    None => format!("Nieuw · {diameter}"),
+                }
             };
-            let label_beside = active_depth.is_none() || point.y - radius - 18. < plot.top();
+            let label_beside = illustrative || point.y - radius - 18. < plot.top();
             let label_rect = painter.text(
                 point + egui::vec2(if left { -radius - 5. } else { radius + 5. },
                     if label_beside { 0. } else { -radius - 2. }),
@@ -499,5 +519,19 @@ mod tests {
         let saved = editor.completed_draft().unwrap();
         assert_eq!(saved.objects.len(), 1);
         assert_eq!(serde_json::to_value(&saved.objects[0]).unwrap(), original);
+    }
+}
+
+#[cfg(test)]
+mod diameter_display_tests {
+    use super::*;
+    #[test]
+    fn larger_diameter_has_larger_screen_radius_until_plot_cap() {
+        let section=Section { plot: egui::Rect::from_min_size(
+            egui::pos2(0., 0.), egui::vec2(550., 180.)),
+            length:7.,max_depth:1.5 };
+        assert!(section.radius(200.) > section.radius(50.));
+        assert!(section.radius(400.) > section.radius(200.));
+        assert_eq!(section.radius(10000.), 32.);
     }
 }
