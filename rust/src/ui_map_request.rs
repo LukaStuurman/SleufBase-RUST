@@ -49,7 +49,10 @@ pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewpo
     let mut width = (view.rect.width() * ratio).ceil().max(1.) as u32;
     let mut height = (view.rect.height() * ratio).ceil().max(1.) as u32;
     // Keep full world coverage even on an unusually large/high-DPI display.
-    let (side, pixels) = if is_osm(source) {
+    // Interactive aerial WMTS is bounded to 16M display pixels rather
+    // than falling back to slow WMS on big high-DPI canvases.
+    let (side, pixels) = if is_osm(source)
+        || matches!(source, Provider::Aerial | Provider::AerialCadastral) {
         (f64::from(sleufbase_rust::osm_tiles::VIEWPORT_MAX_SIDE),
             sleufbase_rust::osm_tiles::VIEWPORT_MAX_PIXELS as f64)
     } else { (10_000., 50_000_000.) };
