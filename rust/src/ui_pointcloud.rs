@@ -61,10 +61,66 @@ impl Selection {
     }
 }
 
+// The persistent catalog supports thousands of scans. One converter runs at a
+// time, so selecting many LAS/LAZ files does not create as many large decoders.
+const MAX_LAS_FILES_PER_SELECTION: usize = 2048;
+const MAX_PENDING_LAS_FILES: usize = 4096;
+const MAX_VISIBLE_IMPORT_ERRORS: usize = 100;
+
+#[derive(Default)]
+struct ImportBatch {
+    total: usize,
+    completed: usize,
+    skipped: usize,
+    failed: usize,
+    stopped: bool,
+    errors: Vec<String>,
+}
+impl ImportBatch {
+    fn record_error(&mut self, name: &std::path::Path, error: &str) {
+        self.failed += 1;
+        if self.errors.len() < MAX_VISIBLE_IMPORT_ERRORS {
+            self.errors.push(format!("{}: {error}", name.display()));
+        }
+    }
+    fn description(&self) -> String {
+        format!("Import: {} van {} verwerkt · {} overgeslagen · {} fouten",
+            self.completed, self.total, self.skipped, self.failed)
+    }
+}
+
+/// Deduplicate a large Explorer/file-dialog selection before it enters the
+/// bounded queue. Normalized paths prevent repeated conversion of one file.
+fn plan_las_queue(
+    pending: &VecDeque<PathBuf>,
+    active: Option<&std::path::Path>,
+    selected: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, String> {
+    if selected.len() > MAX_LAS_FILES_PER_SELECTION {
+        return Err(format!("Selecteer maximaal {MAX_LAS_FILES_PER_SELECTION} LAS/LAZ-bestanden per keer."));
+    }
+    let mut seen = pending.iter().cloned().collect::<HashSet<_>>();
+    if let Some(path) = active { seen.insert(path.to_path_buf()); }
+    let mut added = Vec::new();
+    for path in selected {
+        let valid = path.extension().and_then(|s|s.to_str())
+            .is_some_and(|ext|ext.eq_ignore_ascii_case("las")||ext.eq_ignore_ascii_case("laz"));
+        if !valid { return Err("Selecteer alleen .las- en .laz-bestanden.".into()); }
+        let normalized = path.canonicalize().unwrap_or(path);
+        if seen.insert(normalized.clone()) { added.push(normalized); }
+    }
+    if pending.len().saturating_add(usize::from(active.is_some()))
+        .saturating_add(added.len()) > MAX_PENDING_LAS_FILES {
+        return Err(format!("De importwachtrij kan maximaal {MAX_PENDING_LAS_FILES} bestanden bevatten. Verwerk eerst een deel."));
+    }
+    Ok(added)
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub open: bool,
     queue: VecDeque<PathBuf>,
+    batch: ImportBatch,
     form: Option<ImportForm>,
     worker: Option<ImportWorker>,
     ortho: Option<OrthoWorker>,
@@ -92,7 +148,7 @@ impl State {
     pub fn importing(&self) -> bool { self.worker.is_some() }
     pub fn reset(&mut self) {
         // The catalog and overview belong to the application, not one project.
-        self.queue.clear(); self.form = None; self.worker = None;
+        self.queue.clear(); self.batch = ImportBatch::default(); self.form = None; self.worker = None;
         self.editor = None; self.trench = None;
         self.ortho = None;
         self.remembered_generation = None;
@@ -113,7 +169,11 @@ impl State {
 struct ImportForm { path: PathBuf, title: String, crs: CloudCrs }
 struct PendingCatalog { source: PointCloudSource, expected: Option<PointCloudSource>, edit: bool }
 enum ImportEvent { Progress(String), Done(Result<PointCloudSource, String>) }
-struct ImportWorker { rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>, generation: u64, expected: Option<PointCloudSource> }
+struct ImportWorker {
+    rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>,
+    generation: u64, expected: Option<PointCloudSource>,
+    path: PathBuf, queued: bool,
+}
 impl Drop for ImportWorker { fn drop(&mut self) { self.cancel.store(true, Ordering::Release); } }
 struct OrthoWorker { rx: Receiver<Result<PathBuf,String>>, cancel: Arc<AtomicBool>,
     generation:u64, source_id:String }
