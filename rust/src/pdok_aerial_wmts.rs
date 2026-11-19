@@ -26,6 +26,44 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 const PREVIEW_INTERVAL: Duration = Duration::from_millis(110);
 const MAX_MEMORY_TILES: usize = 192;
+const MAX_DISK_TILES: usize = 4096;
+const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
+static DISK_WRITES: AtomicUsize = AtomicUsize::new(0);
+
+// Disk use stays bounded even after years of browsing many locations.
+// The known 3-level zoom/column/row path is traversed without following
+// symlinks, and in-flight atomic temporary files are never touched.
+fn prune_disk(root:&Path){
+    let mut entries=Vec::new();
+    let mut total=0u64;
+    let Ok(levels)=fs::read_dir(root) else{return;};
+    for level in levels.flatten(){
+        if !level.file_type().is_ok_and(|ft|ft.is_dir()){continue;}
+        let Ok(columns)=fs::read_dir(level.path()) else{continue;};
+        for column in columns.flatten(){
+            if !column.file_type().is_ok_and(|ft|ft.is_dir()){continue;}
+            let Ok(files)=fs::read_dir(column.path()) else{continue;};
+            for file in files.flatten(){
+                let path=file.path();
+                if path.extension().and_then(|value|value.to_str())!=Some("img"){continue;}
+                let Ok(info)=fs::symlink_metadata(&path) else{continue;};
+                if !info.file_type().is_file(){continue;}
+                total=total.saturating_add(info.len());
+                entries.push((path,info.len(),info.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+            }
+        }
+    }
+    if total<=MAX_DISK_BYTES && entries.len()<=MAX_DISK_TILES{return;}
+    entries.sort_by_key(|(_,_,when)|*when);
+    let mut count=entries.len();
+    for (path,bytes,_) in entries{
+        if count<=MAX_DISK_TILES && total<=MAX_DISK_BYTES{break;}
+        if fs::remove_file(&path).is_ok(){
+            count=count.saturating_sub(1);
+            total=total.saturating_sub(bytes);
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TileId { pub zoom: u8, pub col: u32, pub row: u32 }
@@ -181,8 +219,12 @@ fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
             let path=id.path(root);
             // Best-effort atomic write, never let a full/locked cache make
             // an otherwise successful interactive map request fail.
-            let _=crate::storage::atomic_write(&path,true,|file|
-                file.write_all(&bytes).map_err(|e|e.to_string()));
+            if crate::storage::atomic_write(&path,true,|file|
+                file.write_all(&bytes).map_err(|e|e.to_string())).is_ok()
+                && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0
+            {
+                prune_disk(root);
+            }
             Ok(tile)
         }){
             Ok(tile)=>return Ok((tile,SystemTime::now(),false)),
