@@ -474,14 +474,17 @@ impl SleufBaseApp {
                     // actions independent of the scrolling entry/editor body.
                     // Render it first in bottom-up layout, with its own compact
                     // two-tier grouping and responsive widths.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     theme::card(10, 8, 6).show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         ui.add_enabled_ui(editor.ahn_job.is_none(), |ui| {
                             if editor.objects_tab {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.strong("Kabel/leiding");
-                                    ui.weak("Alleen huidige invoer");
-                                });
+                                if ui.available_width() >= 700. {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.strong("Kabel/leiding");
+                                        ui.weak("Alleen huidige invoer");
+                                    });
+                                }
                                 editor.show_entry_actions(ui);
                                 ui.add_space(2.);
                             }
@@ -531,6 +534,7 @@ impl SleufBaseApp {
                                 }
                             }
                         });
+                    });
                     });
                     ui.separator();
                     ui.with_layout(egui::Layout::top_down(egui::Align::LEFT),|ui|{
