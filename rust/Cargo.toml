@@ -1,6 +1,6 @@
 [package]
 name = "sleufbase-rust"
-version = "1.0.43"
+version = "1.0.44"
 edition = "2021"
 license = "MIT"
 description = "SleufBase for Windows"
