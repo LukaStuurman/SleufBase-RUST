@@ -12,13 +12,14 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}},
-    time::SystemTime,
+    time::{Duration,SystemTime},
 };
 
 const MAX_ENTRY: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL: u64 = 512 * 1024 * 1024;
 const MAX_COUNT: usize = 2048;
-const CACHE_FORMAT: &str = "template-local-png-v1";
+const CACHE_FORMAT: &str = "template-local-png-v2";
+const REMOTE_MAP_TTL: Duration = Duration::from_secs(15 * 60);
 
 pub(super) struct Persistent {
     root: PathBuf,
@@ -97,6 +98,7 @@ impl Persistent {
     // field is included: geometry, orientation, object colors, raster inputs,
     // typography and photo transforms.
     pub(super) fn key(&self, kind: &Kind<'_>, request: &super::Request, control: &Control) -> Option<String> {
+        let mut remote_map = false;
         let data = match kind {
             Kind::Copy(_) => return None, // A validated binary copy is already inexpensive.
             Kind::Tiff {source,axis,reverse,lines} => serde_json::json!({
@@ -120,7 +122,13 @@ impl Persistent {
                     map_export::Background::Solid {color} => serde_json::json!({"solid":color}),
                     map_export::Background::Png {path} =>
                         serde_json::json!({"png":self.file_digest(path,control)?}),
-                    _ => return None, // Remote map data may change between exports.
+                    background => {
+                        // A short-lived remote snapshot accelerates a repeat
+                        // export without extending the services' existing
+                        // tile-cache freshness assumptions indefinitely.
+                        remote_map = true;
+                        serde_json::json!({"remote":format!("{background:?}")})
+                    }
                 };
                 let raster = if source.include_tiff {
                     if let Some(src) = source.tiff.as_ref() {
@@ -147,7 +155,8 @@ impl Persistent {
         };
         if control.check().is_err() { return None; }
         let input = serde_json::to_vec(&(CACHE_FORMAT, env!("CARGO_PKG_VERSION"), data)).ok()?;
-        Some(Self::hex(digest::digest(&SHA256,&input).as_ref()))
+        Some(format!("{}{}", if remote_map {"remote-"} else {"local-"},
+            Self::hex(digest::digest(&SHA256,&input).as_ref())))
     }
     fn path(&self, key: &str) -> PathBuf { self.root.join(format!("{key}.png")) }
     fn valid(&self, path: &Path) -> bool {
@@ -164,6 +173,13 @@ impl Persistent {
     }
     pub(super) fn restore(&self,key:&str,dest:&Path,control:&Control,budget:&Budget)->Result<bool,String>{
         let path = self.path(key);
+        if key.starts_with("remote-") {
+            let fresh = fs::metadata(&path).ok()
+                .and_then(|m|m.modified().ok())
+                .and_then(|timestamp|SystemTime::now().duration_since(timestamp).ok())
+                .is_some_and(|elapsed|elapsed<=REMOTE_MAP_TTL);
+            if !fresh {return Ok(false);}
+        }
         if !self.valid(&path) {return Ok(false);}
         // The usual quota accounting and post-copy PNG validation still apply.
         // The cache file was fully decoded above. A second PNG decode after
@@ -173,10 +189,12 @@ impl Persistent {
     }
     pub(super) fn remember(&self,key:&str,asset:&Path,control:&Control){
         let path = self.path(key);
-        if path.exists() {return;}
+        // A stale remote snapshot is replaced atomically; permanent local
+        // snapshots remain immutable and keyed by source content.
+        if path.exists() && !key.starts_with("remote-") {return;}
         let Ok(metadata)=fs::metadata(asset) else {return;};
         if !metadata.is_file()||metadata.len()==0||metadata.len()>MAX_ENTRY{return;}
-        let result=crate::storage::atomic_write_checked(&path,false,|out|{
+        let result=crate::storage::atomic_write_checked(&path,key.starts_with("remote-"),|out|{
             let mut input=File::open(asset).map_err(|e|e.to_string())?;
             let mut buf=[0u8;512*1024];
             loop{
