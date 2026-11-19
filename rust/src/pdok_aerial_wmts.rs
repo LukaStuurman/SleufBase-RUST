@@ -586,6 +586,53 @@ impl ViewportRenderer {
 mod tests{
     use super::*;
     #[test]
+    fn tile_regions_compose_the_same_bilinear_pixels_as_full_frame() {
+        let cancel=AtomicBool::new(false);
+        let zoom=12;
+        let tile=span(zoom);
+        let left=ORIGIN_X+2047.*tile;
+        let top=ORIGIN_Y-2047.*tile;
+        let bounds=Bounds{
+            min_x:left+0.13*tile,max_x:left+1.87*tile,
+            min_y:top-1.89*tile,max_y:top-0.11*tile,
+        };
+        let (width,height)=(420u32,360u32);
+        let grid=grid(bounds,zoom).unwrap();
+        let mut tiles=HashMap::new();
+        let mut incremental=vec![255; width as usize*height as usize*4];
+        for id in grid.ids(){
+            let pixels=image::Rgba([
+                (id.col%191) as u8,
+                (id.row%223) as u8,
+                (id.col.wrapping_mul(7)%127) as u8,
+                255
+            ]);
+            tiles.insert(id,Arc::new(RgbaImage::from_pixel(256,256,pixels)));
+            ViewportRenderer::paint_region(
+                bounds,width,height,zoom,&tiles,&mut incremental,
+                ViewportRenderer::tile_region(bounds,width,height,id),&cancel
+            ).unwrap();
+        }
+        let mut full=vec![255; width as usize*height as usize*4];
+        ViewportRenderer::paint(bounds,width,height,zoom,&tiles,&mut full,&cancel).unwrap();
+        assert_eq!(incremental,full,"incremental tile painting changed the final RD pixels");
+    }
+    #[test]
+    fn computed_screen_rect_tracks_world_position_without_shifting() {
+        let zoom=12;
+        let size=span(zoom);
+        let id=TileId{zoom,col:2047,row:2047};
+        let x0=ORIGIN_X+2047.*size;
+        let y0=ORIGIN_Y-2047.*size;
+        let bounds=Bounds{min_x:x0,max_x:x0+2.*size,
+            min_y:y0-2.*size,max_y:y0};
+        let region=ViewportRenderer::tile_region(bounds,512,512,id);
+        assert_eq!(region[0],0);
+        assert_eq!(region[1],0);
+        assert!(region[2]>=256 && region[2]<=260);
+        assert!(region[3]>=256 && region[3]<=260);
+    }
+    #[test]
     fn fixed_rd_grid_zoom_and_wmts_kvp_addresses(){
         let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155300.,max_y:463200.};
         let plan=plan(bounds,1200,800).unwrap();
