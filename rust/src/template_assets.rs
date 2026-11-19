@@ -12,7 +12,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{atomic::{AtomicUsize, Ordering}, Mutex},
 };
 
 const BUNDLE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
@@ -115,6 +115,7 @@ impl<'a> Batch<'a> {
         }
         let decoded_tiffs = template_raster::DecodeCache::new(tiff_uses);
         let image_cache = image_cache::Persistent::open();
+        let cache_hits = AtomicUsize::new(0);
         let mut completed = 0;
         for heavy in [false, true] {
             let indices = self
@@ -156,6 +157,7 @@ impl<'a> Batch<'a> {
                         (Some(cache),Some(key)) => cache.restore(key,&job.destination,&batch,&budget)?,
                         _ => false,
                     };
+                    if restored { cache_hits.fetch_add(1, Ordering::Relaxed); }
                     if !restored {
                     match &job.kind {
                         Kind::Copy(source) => {
@@ -259,9 +261,10 @@ impl<'a> Batch<'a> {
                 |_| {
                     completed += 1;
                     progress(&format!(
-                        "Afbeelding {} van {} gereed",
+                        "Afbeelding {} van {} gereed · {} uit cache",
                         completed,
-                        self.jobs.len()
+                        self.jobs.len(),
+                        cache_hits.load(Ordering::Relaxed)
                     ));
                     Ok(())
                 },
