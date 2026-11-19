@@ -306,6 +306,88 @@ pub struct Worker {
     pending: Option<Task>,
     busy: bool,
 }
+// A block-by-block PDOK preview, with previously visible map pixels
+// reprojected underneath missing tiles. This avoids blank/checkerboard
+// flashing while panning or zooming and never changes the final raster.
+struct ProgressivePdok {
+    view: Viewport,
+    rgba: Vec<u8>,
+    dirty: Vec<[u32;4]>,
+    previews: usize,
+    last_preview: Option<std::time::Instant>,
+}
+impl ProgressivePdok {
+    fn new(view:Viewport,previous:Option<&Pixels>,cancel:&AtomicBool)->Result<Self,String>{
+        let (w,h)=(view.size[0] as usize,view.size[1] as usize);
+        let bytes=w.checked_mul(h).and_then(|p|p.checked_mul(4))
+            .ok_or("Kaartvoorbeeld is te groot")?;
+        let mut rgba=vec![255u8;bytes];
+        if let Some(old)=previous.filter(|old|
+            old.width>0 && old.height>0 && old.rgba.len()==old.width as usize*old.height as usize*4)
+        {
+            let sx=f64::from(old.width)/(old.bounds.max_x-old.bounds.min_x);
+            let sy=f64::from(old.height)/(old.bounds.max_y-old.bounds.min_y);
+            let dx=(view.bounds.max_x-view.bounds.min_x)/f64::from(view.size[0]);
+            let dy=(view.bounds.max_y-view.bounds.min_y)/f64::from(view.size[1]);
+            for y in 0..view.size[1] {
+                crate::input::check(cancel)?;
+                let wy=view.bounds.max_y-(f64::from(y)+0.5)*dy;
+                let oy=((old.bounds.max_y-wy)*sy).floor();
+                if oy<0. || oy>=f64::from(old.height) {continue;}
+                for x in 0..view.size[0] {
+                    let wx=view.bounds.min_x+(f64::from(x)+0.5)*dx;
+                    let ox=((wx-old.bounds.min_x)*sx).floor();
+                    if ox<0. || ox>=f64::from(old.width) {continue;}
+                    let src=(oy as usize*old.width as usize+ox as usize)*4;
+                    let dst=(y as usize*w+x as usize)*4;
+                    rgba[dst..dst+4].copy_from_slice(&old.rgba[src..src+4]);
+                }
+            }
+        }
+        Ok(Self{view,rgba,dirty:Vec::new(),previews:0,last_preview:None})
+    }
+    fn progress(
+        &mut self,
+        progress:crate::pdok_wms::Progress<'_>,
+        cancel:&AtomicBool,
+        publish:&mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+    )->Result<(),String>{
+        crate::input::check(cancel)?;
+        self.dirty.push(progress.tile);
+        if progress.total<=1 || progress.completed>=progress.total {return Ok(());}
+        let pixels=u64::from(self.view.size[0])*u64::from(self.view.size[1]);
+        let limit=if pixels>4_000_000{2}else{4};
+        let threshold=match self.previews {
+            0=>1,
+            1=>progress.total.div_ceil(4),
+            2=>progress.total.div_ceil(2),
+            _=>(3*progress.total).div_ceil(4),
+        };
+        if self.previews>=limit || progress.completed<threshold
+            || self.last_preview.is_some_and(|at|at.elapsed()<Duration::from_millis(100))
+        {return Ok(());}
+        let width=self.view.size[0] as usize;
+        let source=progress.image.as_raw();
+        for [left,top,w,h] in self.dirty.drain(..) {
+            if left.saturating_add(w)>self.view.size[0]||top.saturating_add(h)>self.view.size[1]{
+                return Err("PDOK-tegel valt buiten de kaart".into());
+            }
+            for y in top..top+h {
+                let offset=(y as usize*width+left as usize)*4;
+                let len=w as usize*4;
+                self.rgba[offset..offset+len].copy_from_slice(&source[offset..offset+len]);
+            }
+        }
+        publish(Pixels{
+            bounds:self.view.bounds,width:self.view.size[0],height:self.view.size[1],
+            rgba:self.rgba.clone(),stale_cache:false,
+        },progress.completed,progress.total)?;
+        self.previews+=1;
+        self.last_preview=Some(std::time::Instant::now());
+        Ok(())
+    }
+}
+
 // Preparing the parcel overlay in parallel with the aerial/OSM base avoids
 // waiting for TWO sequential network phases on ordinary screens. The PDOK
 // client still enforces its existing global four-request limit. Very large
