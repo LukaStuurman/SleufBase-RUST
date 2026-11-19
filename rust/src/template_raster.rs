@@ -68,12 +68,19 @@ impl DecodeCache {
         // gets whitened, cropped, rotated or altered by one of its consumers.
         let result = loaded.as_ref().map(|image| image.as_ref().clone())
             .map_err(Clone::clone);
-        let mut entries = self.entries.lock().map_err(|_| "TIFF-cache niet beschikbaar")?;
-        if let Some(entry) = entries.get_mut(path) {
-            entry.remaining = entry.remaining.saturating_sub(1);
-            if entry.remaining == 0 { entries.remove(path); }
-        }
+        self.release(path);
         result
+    }
+    // A persistent PNG hit consumes one planned physical source user without
+    // decoding anything. Otherwise later sources could remain cached too long.
+    pub(crate) fn skip(&self, path: &Path) { self.release(path); }
+    fn release(&self, path: &Path) {
+        if let Ok(mut entries) = self.entries.lock() {
+            if let Some(entry) = entries.get_mut(path) {
+                entry.remaining = entry.remaining.saturating_sub(1);
+                if entry.remaining == 0 { entries.remove(path); }
+            }
+        }
     }
 }
 fn nearest(point: XY, paths: &[Vec<XY>], cancel: &AtomicBool) -> Result<Option<(XY, f64)>, String> {
