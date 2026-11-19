@@ -103,11 +103,12 @@ impl Viewport {
         if planned.validate().is_ok() && planned.covers(self) {planned} else {self}
     }
     pub fn cadastral_too_far(self) -> bool {
+        // WMTS supports several zoom levels. Restrict only country-scale
+        // requests, instead of hiding the raster map past 2 m per pixel.
         self.source == Provider::Cadastral
-            && self
-                .logical_meters_per_pixel
-                .unwrap_or((self.bounds.max_x - self.bounds.min_x) / self.size[0].max(1) as f64)
-                >= 2.
+            && self.logical_meters_per_pixel.unwrap_or(
+                (self.bounds.max_x - self.bounds.min_x) / self.size[0].max(1) as f64
+            ) >= 250.
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
