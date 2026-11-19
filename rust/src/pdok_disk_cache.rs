@@ -61,7 +61,7 @@ pub(super) fn remove_invalid(url: &reqwest::Url) {
 fn is_owned_image(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return false; };
     name.len() == 72 && name.starts_with("wms-") && name.ends_with(".img")
-        && name[4..68].bytes().all(|c| c.is_ascii_hexdigit())
+        && name.as_bytes()[4..68].iter().all(|c| c.is_ascii_hexdigit())
 }
 fn prune(root: &std::path::Path) {
     let Ok(entries) = fs::read_dir(root) else { return; };
