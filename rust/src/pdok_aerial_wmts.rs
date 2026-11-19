@@ -633,6 +633,43 @@ mod tests{
         assert_eq!(incremental,full,"incremental tile painting changed the final RD pixels");
     }
     #[test]
+    fn out_of_order_tiles_leave_no_unpainted_or_misaligned_pixels() {
+        let cancel=AtomicBool::new(false);
+        let zoom=13u8;
+        let side=span(zoom);
+        let bx=ORIGIN_X+4021.*side;
+        let by=ORIGIN_Y-3048.*side;
+        for (width,height,minx,miny) in [
+            (177u32,310u32,0.03,0.17),
+            (1024,683,0.47,0.62),
+            (721,721,0.77,0.81),
+        ] {
+            let bounds=Bounds{
+                min_x:bx+minx*side,max_x:bx+(2.92+minx)*side,
+                min_y:by-(2.88+miny)*side,max_y:by-miny*side,
+            };
+            let mut ids=grid(bounds,zoom).unwrap().ids().collect::<Vec<_>>();
+            let all=ids.iter().map(|id|(*id,Arc::new(RgbaImage::from_fn(256,256,|x,y|{
+                let r=(id.col as u64*3+x as u64*2)%255;
+                let g=(id.row as u64*5+y as u64*7)%255;
+                image::Rgba([r as u8,g as u8,((x+y)%255) as u8,255])
+            })))).collect::<HashMap<_,_>>();
+            let mut expected=vec![255; width as usize*height as usize*4];
+            ViewportRenderer::paint(bounds,width,height,zoom,&all,&mut expected,&cancel).unwrap();
+            ids.reverse();
+            let mut arrived=HashMap::new();
+            let mut actual=vec![255; width as usize*height as usize*4];
+            for id in ids {
+                arrived.insert(id,Arc::clone(&all[&id]));
+                let region=ViewportRenderer::tile_region(bounds,width,height,id);
+                ViewportRenderer::paint_region(bounds,width,height,zoom,&arrived,
+                    &mut actual,region,&cancel).unwrap();
+            }
+            assert_eq!(actual,expected,"partial compositing diverged at {width}x{height}");
+        }
+    }
+
+    #[test]
     fn computed_screen_rect_tracks_world_position_without_shifting() {
         let zoom=12;
         let size=span(zoom);
