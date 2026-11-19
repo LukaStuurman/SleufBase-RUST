@@ -262,7 +262,7 @@ Open het bewerkvenster via het contextmenu van de sleuf. Het venster heeft twee 
 - **Doorsnede:** kabels en leidingen plaatsen en bewerken in een visuele weergave.
 - **Sleufgegevens:** naam, breedte, geometrie, hoogtes, dekbanden en aanvullende gegevens.
 
-Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of verkleinen. De inhoud blijft scrollbaar; de acties onderaan horen bij het hele concept.
+Je kunt het venster aan de titelbalk verplaatsen en via de rand vergroten of verkleinen. De inhoud blijft scrollbaar. Onderaan staat een vaste actiebalk, net zoals in de joblijsten. Bij **Doorsnede** staan de kabelacties bij elkaar: **Kabel/leiding toevoegen**, **Toevoegen en herhalen** en **Invoer wissen**. In een smal venster vind je de extra kabelacties onder **Meer invoeracties**. **Opslaan in project** en **Sluiten zonder opslaan** staan altijd apart onderaan. Bij een fout blijft de melding in dezelfde balk zichtbaar.
 
 In **Sleufgegevens** kun je bij een handmatige sleuf begin- en eindcoördinaten wijzigen, begin en einde omkeren en de hele sleuf verschuiven. Via het contextmenu op de kaart zijn ook verplaatsen, interactief draaien, een hoek invullen en een virtuele kopie beschikbaar.
 
