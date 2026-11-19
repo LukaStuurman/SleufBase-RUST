@@ -93,14 +93,6 @@ impl SleufBaseApp {
                 _ => None,
             }
         };
-        if source.is_none() || self.map_requests.source != source {
-            self.pdok_texture = None;
-            self.pdok_bounds = None;
-            self.osm_texture = None;
-            self.osm_bounds = None;
-            self.map_requests.source = source;
-            self.map_requests.complete_image = false;
-        }
         // Close-up parcel backgrounds are rendered from real WFS paths.
         // At broader zoom levels, and when WFS is unavailable, retain the
         // bounded raster/WMTS provider rather than fetching huge vector sets.
@@ -116,6 +108,14 @@ impl SleufBaseApp {
                 _ => source,
             }
         } else { source };
+        if source.is_none() || self.map_requests.source != source {
+            self.pdok_texture = None;
+            self.pdok_bounds = None;
+            self.osm_texture = None;
+            self.osm_bounds = None;
+            self.map_requests.source = source;
+            self.map_requests.complete_image = false;
+        }
         let desired = source.map(|s| viewport(view, s));
         let dragging = view.response.dragged()
             && (!self.navigation.pointer_tool
