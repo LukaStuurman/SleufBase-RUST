@@ -1,8 +1,8 @@
 //! Persistent, opt-in-by-availability image cache for deterministic local
 //! template assets. The export transaction always owns a fresh copy of each
 //! PNG; cache paths are never embedded in the DXF or exposed as input paths.
-//! Remote map backgrounds intentionally bypass this cache: a prior export must
-//! not silently replace an updated PDOK/OSM image.
+//! Online map backgrounds expire after 15 minutes; no cached result survives
+//! indefinitely when PDOK/OSM source imagery could have changed.
 use super::{Kind, copy_asset};
 use crate::{export_control::Control, template_raster, map_export, asset_budget::Budget};
 use ring::digest::{self, SHA256};
@@ -180,7 +180,14 @@ impl Persistent {
                 .is_some_and(|elapsed|elapsed<=REMOTE_MAP_TTL);
             if !fresh {return Ok(false);}
         }
-        if !self.valid(&path) {return Ok(false);}
+        if !self.valid(&path) {
+            // Clear a corrupt immutable entry so the freshly rendered PNG can
+            // replace it. Only remove ordinary owned files, never links.
+            if fs::symlink_metadata(&path).is_ok_and(|m|m.file_type().is_file()) {
+                let _=fs::remove_file(&path);
+            }
+            return Ok(false);
+        }
         // The usual quota accounting and post-copy PNG validation still apply.
         // The cache file was fully decoded above. A second PNG decode after
         // copying would needlessly double the cost of a cache hit.
