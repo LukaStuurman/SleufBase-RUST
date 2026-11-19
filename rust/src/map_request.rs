@@ -510,8 +510,10 @@ impl Worker {
                             .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
                         let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
                             .map(|(_,image)|image);
-                        let base=aerial_wmts(&mut aerial,v,cancel,preview)
-                            .or_else(|_|aerial_wms_fallback(v,old,cancel,preview))?;
+                        let base=match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                            Ok(image)=>image,
+                            Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview)?,
+                        };
                         // Publish a complete first aerial base before the
                         // vector/raster parcel overlay has finished.
                         preview(base.clone(), 1, 2)?;
@@ -548,8 +550,10 @@ impl Worker {
                 Provider::Aerial => {
                     let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
                         .map(|(_,image)|image);
-                    aerial_wmts(&mut aerial,v,cancel,preview)
-                        .or_else(|_|aerial_wms_fallback(v,old,cancel,preview))
+                    match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                        Ok(image)=>Ok(image),
+                        Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview),
+                    }
                 }
             };
             if matches!(v.source,Provider::Aerial|Provider::AerialCadastral)
