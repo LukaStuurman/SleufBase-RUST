@@ -283,12 +283,55 @@ impl SleufBaseApp {
     }
 
     pub(super) fn queue_pointcloud_files(&mut self, files: Vec<PathBuf>) {
-        if files.len() > 32 { self.message = "Open maximaal 32 puntenwolken tegelijk.".into(); return; }
-        if self.trench_editor.is_some() { self.message = self.pointcloud_unavailable_message().into(); return; }
-        if self.pointcloud_ui.busy() { self.message = "Sluit eerst de puntenwolkeditor of rond de import af.".into(); return; }
+        if files.is_empty() { return; }
+        if self.trench_editor.is_some() || self.pointcloud_ui.editor.is_some() {
+            self.message = "Sluit eerst het openstaande sleuf- of puntenwolkbewerkscherm.".into();
+            return;
+        }
+        if self.pointcloud_ui.pending_catalog.is_some() {
+            self.message = "Bewaar eerst de eerder geïmporteerde puntenwolk met Opnieuw bewaren.".into();
+            return;
+        }
         self.pointcloud_ui.open = true;
         self.ensure_pointcloud_catalog();
-        for file in files { if !self.pointcloud_ui.queue.contains(&file) { self.pointcloud_ui.queue.push_back(file); } }
+        if self.pointcloud_ui.catalog.is_none() {
+            self.message = self.pointcloud_ui.catalog_error.clone()
+                .unwrap_or_else(|| "Puntenwolkoverzicht is niet beschikbaar.".into());
+            return;
+        }
+        let active = self.pointcloud_ui.worker.as_ref()
+            .filter(|worker| worker.queued).map(|worker| worker.path.as_path());
+        let added = match plan_las_queue(&self.pointcloud_ui.queue, active, files) {
+            Ok(paths) => paths,
+            Err(error) => { self.message = error.clone(); self.pointcloud_ui.status = error; return; }
+        };
+        if added.is_empty() {
+            self.pointcloud_ui.status = "Deze bestanden staan al in de importwachtrij.".into();
+            return;
+        }
+        // The global catalog is separate from the project's 512-source limit.
+        // Never let a successful batch silently exceed the catalog read limit.
+        let known = self.pointcloud_ui.sources().iter().map(|source| source.source_path.clone())
+            .collect::<HashSet<_>>();
+        let unique_new = self.pointcloud_ui.queue.iter()
+            .chain(active.iter().copied())
+            .chain(added.iter())
+            .filter(|path| !known.contains(*path))
+            .cloned().collect::<HashSet<_>>().len();
+        let total = known.len().saturating_add(unique_new);
+        if total > catalog::MAX_CATALOG_SOURCES {
+            let available = catalog::MAX_CATALOG_SOURCES.saturating_sub(known.len());
+            self.message = format!("Er is ruimte voor maximaal {available} nieuwe scans in het puntenwolkoverzicht. Selecteer minder bestanden.");
+            self.pointcloud_ui.status = self.message.clone();
+            return;
+        }
+        if self.pointcloud_ui.queue.is_empty() && active.is_none() {
+            self.pointcloud_ui.batch = ImportBatch::default();
+        }
+        self.pointcloud_ui.batch.total += added.len();
+        let count = added.len();
+        self.pointcloud_ui.queue.extend(added);
+        self.pointcloud_ui.status = format!("{count} LAS/LAZ-bestanden toegevoegd. {}", self.pointcloud_ui.batch.description());
     }
     pub(super) fn choose_pointcloud_files(&mut self) {
         if let Some(files) = rfd::FileDialog::new().set_title("Puntenwolken toevoegen")
