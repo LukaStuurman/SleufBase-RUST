@@ -695,6 +695,11 @@ impl SleufBaseApp {
                 _ => None,
             }
         } else { None };
+        // The chosen parcel background uses real RD vector shapes when
+        // close enough. A manual imported WFS layer remains project-owned.
+        let vector_layer = if self.project_view.use_background {
+            self.cadastral_vectors.layer_for(self.project_view.provider())
+        } else { None };
         let view = canvas(
             ui,
             &self.datasets,
@@ -704,7 +709,7 @@ impl SleufBaseApp {
             &self.virtual_trenches,
             &self.trench_markers,
             &self.bgt_layers,
-            self.cadastral.as_ref(),
+            vector_layer.or(self.cadastral.as_ref()),
             &self.comments,
             if self.osm_visible && self.osm_texture.is_some() {
                 self.osm_texture.as_ref()
@@ -736,6 +741,16 @@ impl SleufBaseApp {
             }
             self.request_viewport_previews(&view);
             let camera = project_view_ui::capture_camera(&view);
+            let parcel_provider = if self.project_view.use_background {
+                self.project_view.provider()
+            } else { B::Unknown };
+            let top_left=view.world(view.rect.left_top());
+            let bottom_right=view.world(view.rect.right_bottom());
+            let visible=Bounds {
+                min_x:top_left[0], max_y:top_left[1],
+                max_x:bottom_right[0], min_y:bottom_right[1],
+            };
+            self.cadastral_vectors.update(parcel_provider, visible, ui.ctx());
             self.update_map_background(&view);
             if self.project_view.camera.as_ref() != Some(&camera)
                 && self.navigation.camera_changed

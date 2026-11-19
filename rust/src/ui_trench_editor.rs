@@ -469,27 +469,26 @@ impl SleufBaseApp {
                 settings_ui::control_style(ui);
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                // Match KickTheMap's fixed action panel. Using nested
-                // bottom-up layout could clip button text on resizes.
+                // A compact bottom bar like the job lists: exact height avoids
+                // the old empty 150-200 px area seen after resizing the editor.
+                let narrow = ui.available_width() < 490.;
+                let one_row = ui.available_width() >= 1040. && editor.objects_tab
+                    && !editor.confirm_delete && editor.ahn_job.is_none();
+                let feedback = !editor.error.is_empty() || !editor.notice.is_empty();
+                let footer_height = (if one_row { 54. }
+                    else if editor.objects_tab { if narrow { 136. } else { 87. } }
+                    else if narrow { 84. } else { 54. })
+                    + if feedback { 24. } else { 0. }
+                    + if editor.confirm_delete { 49. } else { 0. };
                 egui::TopBottomPanel::bottom("virtual-editor-pinned-actions")
+                    .exact_height(footer_height)
+                    .show_separator_line(false)
                     .frame(egui::Frame::new())
                     .show_inside(ui, |ui| {
-                    theme::card(10, 8, 6).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
+                    theme::card(10, 8, 4).show(ui, |ui| {
                         ui.add_enabled_ui(editor.ahn_job.is_none(), |ui| {
-                            if editor.objects_tab {
-                                if ui.available_width() >= 700. {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.strong("Kabel/leiding");
-                                        ui.weak("Alleen huidige invoer");
-                                    });
-                                }
-                                editor.show_entry_actions(ui);
-                                ui.add_space(2.);
-                            }
                             if editor.confirm_delete {
-                                ui.separator();
-                                ui.colored_label(DARK, "Deze proefsleuf en alle meetobjecten verwijderen?");
+                                ui.colored_label(DARK, "Alleen deze proefsleuf verwijderen?");
                                 ui.horizontal_wrapped(|ui| {
                                     if ui.button("Ja, verwijderen").clicked() {
                                         action = Some(Action::Remove);
@@ -499,43 +498,53 @@ impl SleufBaseApp {
                                     }
                                 });
                             }
-                            if !editor.error.is_empty() || !editor.notice.is_empty() {
-                                ui.separator();
-                                egui::ScrollArea::vertical()
-                                    .id_salt("virtual-editor-feedback")
-                                    .max_height(44.)
-                                    .min_scrolled_height(0.)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        if !editor.error.is_empty() { ui.colored_label(DARK, &editor.error); }
-                                        else { ui.small(&editor.notice); }
-                                    });
+                            if feedback {
+                                let full = if !editor.error.is_empty() {
+                                    &editor.error
+                                } else { &editor.notice };
+                                ui.add(egui::Label::new(egui::RichText::new(full)
+                                    .color(if editor.error.is_empty() { INK } else { DARK }))
+                                    .truncate()).on_hover_text(full);
+                                ui.add_space(2.);
                             }
-                            ui.separator();
-                            if ui.available_width() >= 490. {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.add_sized([180., 32.], egui::Button::new(
-                                        egui::RichText::new("Opslaan in project").color(Color32::WHITE)
-                                    ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
-                                    if ui.add_sized([184., 32.], egui::Button::new("Sluiten zonder opslaan")).clicked() {
-                                        close_requested = true;
-                                    }
+                            if one_row {
+                                ui.columns(2, |columns| {
+                                    editor.show_entry_actions(&mut columns[0]);
+                                    columns[1].with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.add_sized([174., 30.], egui::Button::new(
+                                            egui::RichText::new("Opslaan in project").color(Color32::WHITE)
+                                        ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
+                                        if ui.add_sized([181., 30.], egui::Button::new("Sluiten zonder opslaan"))
+                                            .clicked() { close_requested = true; }
+                                    });
                                 });
                             } else {
-                                // Full-width actions remain readable even at
-                                // a narrow 320-pixel desktop window.
-                                let width = ui.available_width().max(1.);
-                                if ui.add_sized([width, 32.], egui::Button::new(
-                                    egui::RichText::new("Opslaan in project").color(Color32::WHITE)
-                                ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
-                                if ui.add_sized([width, 29.], egui::Button::new("Sluiten zonder opslaan")).clicked() {
-                                    close_requested = true;
+                                if editor.objects_tab {
+                                    editor.show_entry_actions(ui);
+                                    ui.add_space(3.);
+                                }
+                                if narrow {
+                                    let width = ui.available_width().max(1.);
+                                    if ui.add_sized([width, 30.], egui::Button::new(
+                                        egui::RichText::new("Opslaan in project").color(Color32::WHITE)
+                                    ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
+                                    if ui.add_sized([width, 28.], egui::Button::new("Sluiten zonder opslaan"))
+                                        .clicked() { close_requested = true; }
+                                } else {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.add_sized([174., 30.], egui::Button::new(
+                                            egui::RichText::new("Opslaan in project").color(Color32::WHITE)
+                                        ).fill(ORANGE)).clicked() { action = Some(Action::Save); }
+                                        if ui.add_sized([181., 30.], egui::Button::new("Sluiten zonder opslaan"))
+                                            .clicked() { close_requested = true; }
+                                    });
                                 }
                             }
                         });
                     });
-                    });
-                    ui.separator();
+                });
+                ui.separator();
                     ui.with_layout(egui::Layout::top_down(egui::Align::LEFT),|ui|{
                 theme::card(10,12,8).show(ui,|ui|{
                     ui.set_min_width(ui.available_width());

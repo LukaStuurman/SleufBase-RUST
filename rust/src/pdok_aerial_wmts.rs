@@ -1,0 +1,538 @@
+//! Interactive PDOK RGB aerial photography via the official EPSG:28992 WMTS
+//! tile pyramid. Large DXF template exports deliberately retain the exact
+//! BBOX WMS path; this renderer is only for interactive pan/zoom.
+//!
+//! WMTS is preferred by PDOK for interactive use. The same 256px tile is
+//! reused after pan/zoom, with a coarse level as the first visual placeholder
+//! and the target-resolution tiles progressively composited in world space.
+use crate::{input, model::Bounds};
+use image::{DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
+use std::{
+    collections::{HashMap, VecDeque}, fs, io::{Cursor, Write}, path::{Path, PathBuf},
+    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, OnceLock},
+    time::{Duration, Instant, SystemTime},
+};
+
+const BASE: &str = "https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0";
+const LAYER: &str = "Actueel_orthoHR";
+const TILE: u32 = 256;
+// The fixed Dutch RD New WMTS tile matrix (Geonovum); units are metres.
+const ORIGIN_X: f64 = -285401.92;
+const ORIGIN_Y: f64 = 903402.0;
+const LEVEL_ZERO_RESOLUTION: f64 = 3440.64;
+const MAX_ZOOM: u8 = 19;
+const MAX_VIEW_TILES: usize = 256;
+const MAX_BYTES: u64 = 4 * 1024 * 1024;
+const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
+const PREVIEW_INTERVAL: Duration = Duration::from_millis(110);
+const MAX_MEMORY_TILES: usize = 192;
+const MAX_DISK_TILES: usize = 4096;
+const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
+static DISK_WRITES: AtomicUsize = AtomicUsize::new(0);
+
+// Disk use stays bounded even after years of browsing many locations.
+// The known 3-level zoom/column/row path is traversed without following
+// symlinks, and in-flight atomic temporary files are never touched.
+fn prune_disk(root:&Path){
+    let mut entries=Vec::new();
+    let mut total=0u64;
+    let Ok(levels)=fs::read_dir(root) else{return;};
+    for level in levels.flatten(){
+        if !level.file_type().is_ok_and(|ft|ft.is_dir()){continue;}
+        let Ok(columns)=fs::read_dir(level.path()) else{continue;};
+        for column in columns.flatten(){
+            if !column.file_type().is_ok_and(|ft|ft.is_dir()){continue;}
+            let Ok(files)=fs::read_dir(column.path()) else{continue;};
+            for file in files.flatten(){
+                let path=file.path();
+                if path.extension().and_then(|value|value.to_str())!=Some("img"){continue;}
+                let Ok(info)=fs::symlink_metadata(&path) else{continue;};
+                if !info.file_type().is_file(){continue;}
+                total=total.saturating_add(info.len());
+                entries.push((path,info.len(),info.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+            }
+        }
+    }
+    if total<=MAX_DISK_BYTES && entries.len()<=MAX_DISK_TILES{return;}
+    entries.sort_by_key(|(_,_,when)|*when);
+    let mut count=entries.len();
+    for (path,bytes,_) in entries{
+        if count<=MAX_DISK_TILES && total<=MAX_DISK_BYTES{break;}
+        if fs::remove_file(&path).is_ok(){
+            count=count.saturating_sub(1);
+            total=total.saturating_sub(bytes);
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TileId { pub zoom: u8, pub col: u32, pub row: u32 }
+impl TileId {
+    fn valid(self) -> bool {
+        self.zoom <= MAX_ZOOM && self.col < 1u32 << self.zoom
+            && self.row < 1u32 << self.zoom
+    }
+    fn path(self, root: &Path) -> PathBuf {
+        root.join(self.zoom.to_string()).join(self.col.to_string())
+            .join(format!("{}.img", self.row))
+    }
+    fn url(self) -> Result<reqwest::Url, String> {
+        if !self.valid() {return Err("Ongeldige PDOK-luchtfototegel".into());}
+        let mut url=reqwest::Url::parse(BASE).map_err(|e|e.to_string())?;
+        url.query_pairs_mut()
+            .append_pair("SERVICE","WMTS")
+            .append_pair("REQUEST","GetTile")
+            .append_pair("VERSION","1.0.0")
+            .append_pair("LAYER",LAYER)
+            .append_pair("STYLE","default")
+            .append_pair("TILEMATRIXSET","EPSG:28992")
+            .append_pair("TILEMATRIX",&self.zoom.to_string())
+            .append_pair("TILEROW",&self.row.to_string())
+            .append_pair("TILECOL",&self.col.to_string())
+            .append_pair("FORMAT","image/png");
+        Ok(url)
+    }
+}
+fn resolution(zoom: u8) -> f64 {
+    LEVEL_ZERO_RESOLUTION / f64::from(1u32 << zoom)
+}
+fn span(zoom: u8) -> f64 { resolution(zoom) * f64::from(TILE) }
+#[derive(Clone, Copy, Debug)]
+struct Grid {
+    zoom: u8,
+    min_col: u32, max_col: u32, min_row: u32, max_row: u32,
+}
+impl Grid {
+    fn ids(self) -> impl Iterator<Item=TileId> {
+        (self.min_row..=self.max_row).flat_map(move |row|
+            (self.min_col..=self.max_col).map(move |col|TileId{
+                zoom:self.zoom,col,row
+            }))
+    }
+    fn count(self) -> usize {
+        (self.max_col-self.min_col+1) as usize * (self.max_row-self.min_row+1) as usize
+    }
+}
+fn grid(bounds:Bounds,zoom:u8) -> Option<Grid> {
+    let size=span(zoom);
+    let limit=f64::from(1u32<<zoom);
+    let col_min=((bounds.min_x-ORIGIN_X)/size).floor();
+    let col_max=((bounds.max_x-ORIGIN_X)/size - 1e-10).floor();
+    let row_min=((ORIGIN_Y-bounds.max_y)/size).floor();
+    let row_max=((ORIGIN_Y-bounds.min_y)/size - 1e-10).floor();
+    if ![col_min,col_max,row_min,row_max].iter().all(|v|
+        v.is_finite()&&*v>=0.&&*v<limit) || col_min>col_max || row_min>row_max {
+        return None;
+    }
+    Some(Grid {zoom,min_col:col_min as u32,max_col:col_max as u32,
+        min_row:row_min as u32,max_row:row_max as u32})
+}
+fn plan(bounds:Bounds,width:u32,height:u32) -> Result<Grid,String> {
+    if width==0 || height==0 || width>8192 || height>8192
+        || u64::from(width)*u64::from(height)>16_777_216
+        || [bounds.min_x,bounds.min_y,bounds.max_x,bounds.max_y].iter()
+            .any(|n|!n.is_finite())
+        || bounds.min_x>=bounds.max_x || bounds.min_y>=bounds.max_y {
+        return Err("Ongeldige interactieve PDOK-uitsnede".into());
+    }
+    let pixel=((bounds.max_x-bounds.min_x)/f64::from(width))
+        .max((bounds.max_y-bounds.min_y)/f64::from(height));
+    let wanted=(LEVEL_ZERO_RESOLUTION/pixel).log2().ceil().clamp(0., f64::from(MAX_ZOOM)) as u8;
+    for level in (0..=wanted).rev(){
+        if let Some(grid)=grid(bounds,level){
+            if grid.count()<=MAX_VIEW_TILES{return Ok(grid);}
+        }
+    }
+    Err("Gebied valt buiten de Nederlandse PDOK-tegelkaart".into())
+}
+fn decode(bytes:&[u8]) -> Result<RgbaImage,String> {
+    if bytes.len() as u64>MAX_BYTES {return Err("PDOK-tegel overschrijdt de downloadlimiet".into());}
+    let format=image::guess_format(bytes).map_err(|_|"PDOK gaf geen afbeelding terug")?;
+    if !matches!(format,ImageFormat::Png|ImageFormat::Jpeg){
+        return Err("PDOK-tegel heeft een onbekend formaat".into());
+    }
+    let mut reader=image::ImageReader::with_format(Cursor::new(bytes),format);
+    let mut limits=image::Limits::default();
+    limits.max_image_width=Some(TILE);
+    limits.max_image_height=Some(TILE);
+    limits.max_alloc=Some(4*1024*1024);
+    reader.limits(limits);
+    let decoder=reader.into_decoder().map_err(|e|format!("PDOK-tegel lezen: {e}"))?;
+    if decoder.dimensions()!=(TILE,TILE) {
+        return Err("PDOK-tegel heeft onjuiste afmetingen".into());
+    }
+    DynamicImage::from_decoder(decoder)
+        .map_err(|e|format!("PDOK-tegel decoderen: {e}"))
+        .map(|image|image.to_rgba8())
+}
+fn read_disk(id:TileId, root:&Path, cancel:&AtomicBool)->Option<(Arc<RgbaImage>,SystemTime,bool)>{
+    let path=id.path(root);
+    let meta=fs::symlink_metadata(&path).ok()?;
+    if !meta.file_type().is_file() || meta.len()==0 || meta.len()>MAX_BYTES {return None;}
+    let timestamp=meta.modified().ok()?;
+    let bytes=input::read(&path,MAX_BYTES,"PDOK WMTS-cache",cancel).ok()?;
+    let image=decode(&bytes).ok()?;
+    let fresh=SystemTime::now().duration_since(timestamp).map_or(true,|age|age<=FRESH_FOR);
+    Some((Arc::new(image),timestamp,fresh))
+}
+fn http_client()->Result<&'static reqwest::blocking::Client,String>{
+    static CLIENT: OnceLock<Result<reqwest::blocking::Client,String>>=OnceLock::new();
+    CLIENT.get_or_init(||reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12)).connect_timeout(Duration::from_secs(5))
+        .user_agent(concat!("SleufBase-Rust/",env!("CARGO_PKG_VERSION")))
+        .build().map_err(|e|e.to_string())).as_ref().map_err(Clone::clone)
+}
+fn download(id:TileId,cancel:&AtomicBool)->Result<Vec<u8>,String>{
+    input::check(cancel)?;
+    let url=id.url()?;
+    let client=http_client()?.clone();
+    // Share PDOK's existing global four-request ceiling with WMS/WFS.
+    crate::cadastral::cancellable_request(cancel,move|stop|{
+        let mut response=client.get(url).send()
+            .map_err(|e|format!("PDOK WMTS niet bereikbaar: {e}"))?
+            .error_for_status().map_err(|e|format!("PDOK WMTS HTTP-fout: {e}"))?;
+        if response.content_length().is_some_and(|n|n>MAX_BYTES){
+            return Err("PDOK WMTS-antwoord te groot".into());
+        }
+        if !response.headers().get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v|v.to_str().ok())
+            .is_some_and(|s|s.to_ascii_lowercase().contains("image"))
+        {
+            return Err("PDOK gaf geen WMTS-afbeelding terug".into());
+        }
+        input::read_chunks(&mut response,MAX_BYTES,"PDOK WMTS-tegel",&stop)
+    })?
+}
+fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
+    ->Result<(Arc<RgbaImage>,SystemTime,bool),String>
+{
+    input::check(cancel)?;
+    if let Some((tile,modified,true))=read_disk(id,root,cancel){
+        return Ok((tile,modified,false));
+    }
+    let mut last_error=String::new();
+    for attempt in 0..2{
+        input::check(cancel)?;
+        match download(id,cancel).and_then(|bytes|{
+            input::check(cancel)?;
+            let tile=Arc::new(decode(&bytes)?);
+            let path=id.path(root);
+            // Best-effort atomic write, never let a full/locked cache make
+            // an otherwise successful interactive map request fail.
+            if crate::storage::atomic_write(&path,true,|file|
+                file.write_all(&bytes).map_err(|e|e.to_string())).is_ok()
+                && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0
+            {
+                prune_disk(root);
+            }
+            Ok(tile)
+        }){
+            Ok(tile)=>return Ok((tile,SystemTime::now(),false)),
+            Err(e)=>last_error=e,
+        }
+        if attempt==0{
+            crate::cadastral::cancel_sleep(cancel,Duration::from_millis(180))?;
+        }
+    }
+    if let Some((tile,old,_))=read_disk(id,root,cancel){
+        return Ok((tile,old,true));
+    }
+    Err(last_error)
+}
+#[derive(Clone)]
+pub struct Raster {
+    pub bounds:Bounds, pub width:u32, pub height:u32,
+    pub rgba:Vec<u8>, pub stale_cache:bool,
+}
+pub struct Progress<'a> {
+    pub bounds:Bounds, pub width:u32, pub height:u32, pub rgba:&'a [u8],
+    pub completed:usize, pub total:usize, pub stale_cache:bool,
+}
+#[derive(Default)]
+pub struct ViewportRenderer {
+    previous:Option<Raster>,
+    memory:VecDeque<(TileId,SystemTime,Arc<RgbaImage>)>,
+}
+impl ViewportRenderer {
+    fn memory_get(&mut self,id:TileId)->Option<(Arc<RgbaImage>,bool)> {
+        let i=self.memory.iter().position(|entry|entry.0==id)?;
+        let entry=self.memory.remove(i)?;
+        let fresh=SystemTime::now().duration_since(entry.1).map_or(true,|d|d<=FRESH_FOR);
+        let tile=Arc::clone(&entry.2);
+        self.memory.push_back(entry);
+        Some((tile,fresh))
+    }
+    fn remember(&mut self,id:TileId,when:SystemTime,tile:Arc<RgbaImage>){
+        self.memory.retain(|entry|entry.0!=id);
+        self.memory.push_back((id,when,tile));
+        while self.memory.len()>MAX_MEMORY_TILES{self.memory.pop_front();}
+    }
+    fn from_cache(&mut self,id:TileId,dir:&Path,cancel:&AtomicBool)
+        ->Option<(Arc<RgbaImage>,bool)>
+    {
+        if let Some(result)=self.memory_get(id){return Some(result);}
+        let (tile,time,fresh)=read_disk(id,dir,cancel)?;
+        self.remember(id,time,Arc::clone(&tile));
+        Some((tile,fresh))
+    }
+    fn fetch_batch(
+        ids:&[TileId],root:&Path,cancel:&AtomicBool,
+        mut on_tile:impl FnMut(TileId,Arc<RgbaImage>,SystemTime,bool)->Result<(),String>,
+    )->Result<(),String>{
+        if ids.is_empty(){return Ok(());}
+        let index=AtomicUsize::new(0);
+        let workers=ids.len().min(3);
+        let (tx,rx)=mpsc::sync_channel(workers);
+        std::thread::scope(|scope| -> Result<(),String> {
+            for _ in 0..workers{
+                let tx=tx.clone(); let index=&index;
+                scope.spawn(move||{
+                    while !cancel.load(Ordering::Relaxed){
+                        let position=index.fetch_add(1,Ordering::Relaxed);
+                        let Some(&id)=ids.get(position) else{break;};
+                        let result=load_tile(id,root,cancel);
+                        if tx.send((id,result)).is_err(){break;}
+                    }
+                });
+            }
+            drop(tx);
+            // Always release the receiver before scoped worker threads join.
+            // Otherwise a cancelled or failed render may leave workers blocked
+            // forever on a full bounded channel.
+            let result=(|| -> Result<(),String> {
+                for _ in 0..ids.len(){
+                    let (id,result)=loop {
+                        input::check(cancel)?;
+                        match rx.recv_timeout(Duration::from_millis(35)){
+                            Ok(result)=>break result,
+                            Err(mpsc::RecvTimeoutError::Timeout)=>continue,
+                            Err(_) =>return Err("PDOK-tegelwerker is gestopt".into()),
+                        }
+                    };
+                    let (tile,modified,stale)=result?;
+                    on_tile(id,tile,modified,stale)?;
+                }
+                Ok(())
+            })();
+            drop(rx);
+            result
+        })
+    }
+    fn reproject(&self,b:Bounds,width:u32,height:u32,cancel:&AtomicBool)
+        ->Result<Vec<u8>,String>
+    {
+        let mut output=vec![255u8;width as usize*height as usize*4];
+        let Some(old)=&self.previous else{return Ok(output);};
+        if old.width==0 || old.height==0 || old.rgba.len()!=old.width as usize*old.height as usize*4{
+            return Ok(output);
+        }
+        let dx=(b.max_x-b.min_x)/f64::from(width);
+        let dy=(b.max_y-b.min_y)/f64::from(height);
+        let sx=f64::from(old.width)/(old.bounds.max_x-old.bounds.min_x);
+        let sy=f64::from(old.height)/(old.bounds.max_y-old.bounds.min_y);
+        for row in 0..height {
+            input::check(cancel)?;
+            let y=b.max_y-(f64::from(row)+0.5)*dy;
+            let oy=((old.bounds.max_y-y)*sy).floor();
+            if oy<0.||oy>=f64::from(old.height){continue;}
+            for col in 0..width{
+                let x=b.min_x+(f64::from(col)+0.5)*dx;
+                let ox=((x-old.bounds.min_x)*sx).floor();
+                if ox<0.||ox>=f64::from(old.width){continue;}
+                let from=(oy as usize*old.width as usize+ox as usize)*4;
+                let to=(row as usize*width as usize+col as usize)*4;
+                output[to..to+4].copy_from_slice(&old.rgba[from..from+4]);
+            }
+        }
+        Ok(output)
+    }
+    /// Exact RD affine sampling; cached low-zoom imagery can fill missing high
+    /// tiles without moving boundaries or changing the target canvas extent.
+    fn paint(bounds:Bounds,width:u32,height:u32,zoom:u8,
+        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],cancel:&AtomicBool
+    )->Result<(),String>{
+        let res=resolution(zoom);
+        let span=span(zoom);
+        let dx=(bounds.max_x-bounds.min_x)/f64::from(width);
+        let dy=(bounds.max_y-bounds.min_y)/f64::from(height);
+        for row in 0..height {
+            input::check(cancel)?;
+            let wy=bounds.max_y-(f64::from(row)+0.5)*dy;
+            let src_y=(ORIGIN_Y-wy)/res-0.5;
+            let source_row=((ORIGIN_Y-wy)/span).floor() as i64;
+            for col in 0..width {
+                let wx=bounds.min_x+(f64::from(col)+0.5)*dx;
+                let source_col=((wx-ORIGIN_X)/span).floor() as i64;
+                if source_row<0||source_col<0 || source_row>=(1i64<<zoom) ||source_col>=(1i64<<zoom) {
+                    continue;
+                }
+                let id=TileId{zoom,col:source_col as u32,row:source_row as u32};
+                let Some(primary)=tiles.get(&id) else {continue;};
+                let src_x=(wx-ORIGIN_X)/res-0.5;
+                let ix=src_x.floor() as i64;
+                let iy=src_y.floor() as i64;
+                let fx=src_x-ix as f64;
+                let fy=src_y-iy as f64;
+                let sample=|x:i64,y:i64| -> [u8;4] {
+                    if x>=0 && y>=0 {
+                        let neighbor=TileId{zoom,col:(x/256) as u32,row:(y/256) as u32};
+                        if let Some(tile)=tiles.get(&neighbor) {
+                            return tile.get_pixel((x%256) as u32,(y%256) as u32).0;
+                        }
+                    }
+                    let lx=(x-source_col*256).clamp(0,255) as u32;
+                    let ly=(y-source_row*256).clamp(0,255) as u32;
+                    primary.get_pixel(lx,ly).0
+                };
+                let [a,b,c,d]=[sample(ix,iy),sample(ix+1,iy),sample(ix,iy+1),sample(ix+1,iy+1)];
+                let out=(row as usize*width as usize+col as usize)*4;
+                for channel in 0..4 {
+                    let top=f64::from(a[channel])*(1.-fx)+f64::from(b[channel])*fx;
+                    let bot=f64::from(c[channel])*(1.-fx)+f64::from(d[channel])*fx;
+                    target[out+channel]=(top*(1.-fy)+bot*fy).round() as u8;
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn request(&mut self,bounds:Bounds,width:u32,height:u32,cache:&Path,
+        cancel:&AtomicBool,progress:&mut dyn FnMut(Progress<'_>)->Result<(),String>
+    )->Result<Raster,String>{
+        input::check(cancel)?;
+        let target=plan(bounds,width,height)?;
+        fs::create_dir_all(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
+        let root=fs::canonicalize(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
+        let mut high=HashMap::with_capacity(target.count());
+        let mut missing=Vec::new();
+        for id in target.ids(){
+            input::check(cancel)?;
+            match self.from_cache(id,&root,cancel){
+                Some((tile,true))=>{high.insert(id,tile);},
+                Some((tile,false))=>{high.insert(id,tile);missing.push(id);},
+                None=>missing.push(id)
+            }
+        }
+        if missing.is_empty(){
+            let mut rgba=vec![255; width as usize*height as usize*4];
+            Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
+            let raster=Raster{bounds,width,height,rgba,stale_cache:false};
+            if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+            return Ok(raster);
+        }
+        let mut rgba=self.reproject(bounds,width,height,cancel)?;
+        let total=target.count();
+        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
+        let mut previews=0usize;
+        let mut stale=false;
+        // Low-level imagery is requested first only when high detail is mostly
+        // missing. This makes a new area visible quickly instead of showing a
+        // blank canvas until all high-resolution requests complete.
+        if target.zoom>=3 && high.len()*2<total {
+            let low_z=target.zoom-3;
+            if let Some(low_grid)=grid(bounds,low_z){
+                if low_grid.count()<=12 {
+                    let mut low=HashMap::new();
+                    let mut needed=Vec::new();
+                    for id in low_grid.ids(){
+                        match self.from_cache(id,&root,cancel){
+                            Some((tile,true))=>{low.insert(id,tile);},
+                            Some((tile,false))=>{low.insert(id,tile);needed.push(id);},
+                            None=>needed.push(id),
+                        }
+                    }
+                    let mut extra=Vec::new();
+                    Self::fetch_batch(&needed,&root,cancel,|id,tile,when,is_stale|{
+                        extra.push((id,tile,when,is_stale));Ok(())
+                    })?;
+                    for (id,tile,when,is_stale) in extra {
+                        stale|=is_stale;
+                        self.remember(id,when,Arc::clone(&tile));
+                        low.insert(id,tile);
+                    }
+                    Self::paint(bounds,width,height,low_z,&low,&mut rgba,cancel)?;
+                    if !high.is_empty(){Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;}
+                    progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
+                        total,stale_cache:stale})?;
+                    previews+=1;
+                    last_preview=Instant::now();
+                }
+            }
+        } else if !high.is_empty() {
+            Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
+            progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
+                total,stale_cache:false})?;
+            previews+=1;
+            last_preview=Instant::now();
+        }
+        // Center first gives the user a recognizable location before edge
+        // tiles, while all tiles are still needed for the final picture.
+        let center_col=(target.min_col+target.max_col) as f64*0.5;
+        let center_row=(target.min_row+target.max_row) as f64*0.5;
+        missing.sort_by(|a,b|{
+            let d=|id:&TileId|{
+                (f64::from(id.col)-center_col).powi(2)
+                    +(f64::from(id.row)-center_row).powi(2)
+            };
+            d(a).total_cmp(&d(b))
+        });
+        let mut count=total-missing.len();
+        let mut updates=Vec::new();
+        let mut next_update=total.div_ceil(4);
+        Self::fetch_batch(&missing,&root,cancel,|id,tile,when,is_stale|{
+            count+=1;
+            stale|=is_stale;
+            updates.push((id,Arc::clone(&tile),when));
+            high.insert(id,tile);
+            if count<total && previews<4 && count>=next_update
+                && last_preview.elapsed()>=PREVIEW_INTERVAL
+            {
+                Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
+                progress(Progress{bounds,width,height,rgba:&rgba,completed:count,total,stale_cache:stale})?;
+                previews+=1;
+                last_preview=Instant::now();
+                next_update=count+total.div_ceil(4);
+            }
+            Ok(())
+        })?;
+        for (id,tile,when) in updates{self.remember(id,when,tile);}
+        let mut final_rgba=vec![255; width as usize*height as usize*4];
+        Self::paint(bounds,width,height,target.zoom,&high,&mut final_rgba,cancel)?;
+        let raster=Raster{bounds,width,height,rgba:final_rgba,stale_cache:stale};
+        if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+        Ok(raster)
+    }
+}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn fixed_rd_grid_zoom_and_wmts_kvp_addresses(){
+        let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155300.,max_y:463200.};
+        let plan=plan(bounds,1200,800).unwrap();
+        assert!(plan.zoom>=13 && plan.zoom<=17);
+        assert!(plan.count()<=MAX_VIEW_TILES);
+        let id=plan.ids().next().unwrap();
+        assert!(id.valid());
+        let url=id.url().unwrap();
+        let p=url.query_pairs().collect::<HashMap<_,_>>();
+        assert_eq!(p["TILEMATRIXSET"],"EPSG:28992");
+        assert_eq!(p["LAYER"],LAYER);
+        assert_eq!(p["TILEMATRIX"],id.zoom.to_string());
+        assert_eq!(p["TILEROW"],id.row.to_string());
+        assert_eq!(p["TILECOL"],id.col.to_string());
+    }
+    #[test]
+    fn tile_world_coordinates_do_not_shift_between_zoom_levels(){
+        let b=Bounds{min_x:155010.,min_y:463010.,max_x:155070.,max_y:463080.};
+        for zoom in [9u8,12,15,18] {
+            let g=grid(b,zoom).unwrap();
+            assert!(g.count()>0);
+            let id=g.ids().next().unwrap();
+            let x0=ORIGIN_X+f64::from(id.col)*span(zoom);
+            let y0=ORIGIN_Y-f64::from(id.row)*span(zoom);
+            assert!(x0<=b.max_x && x0+span(zoom)>=b.min_x);
+            assert!(y0>=b.min_y && y0-span(zoom)<=b.max_y);
+        }
+    }
+}

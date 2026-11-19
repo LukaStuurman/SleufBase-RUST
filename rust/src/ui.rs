@@ -85,6 +85,8 @@ mod recovery_ui;
 mod ahn_pending_ui;
 #[path="ui_map_request.rs"]
 mod map_request_ui;
+#[path="ui_cadastral_vector.rs"]
+mod cadastral_vector_ui;
 #[path="ui_settings_flow.rs"]
 mod settings_flow_ui;
 #[path="ui_settings.rs"]
@@ -237,6 +239,7 @@ pub struct SleufBaseApp {
     pdok_texture:Option<egui::TextureHandle>,
     pdok_bounds:Option<Bounds>,
     map_requests:map_request_ui::State,
+    cadastral_vectors:cadastral_vector_ui::State,
     pdok_busy:bool,
     osm_texture:Option<egui::TextureHandle>,
     osm_bounds:Option<Bounds>,
@@ -348,6 +351,7 @@ impl Default for SleufBaseApp {
             pdok_texture:None,
             pdok_bounds:None,
             map_requests:Default::default(),
+            cadastral_vectors:Default::default(),
             pdok_busy:false,
             osm_texture:None,
             osm_bounds:None,
@@ -456,6 +460,7 @@ impl SleufBaseApp {
             self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         }
         self.map_requests.invalidate();
+        self.cadastral_vectors.reset();
         self.pdok_busy=false;self.osm_busy=false;
         self.osm_texture=None; self.osm_bounds=None; self.osm_visible=false;
         if let Some(loader)=&mut self.raster_loader {loader.replace(Vec::new(),Default::default());}
@@ -1683,6 +1688,7 @@ fn canvas(
         }
     }
     if let Some(kad)=cadastral.filter(|l|l.visible) {
+        let visible = navigation.as_ref().and_then(|nav|nav.viewport.as_ref());
         for layer in &kad.linework {
             let color=match layer.layer_name.as_str() {
                 "KAD_GRENS"=>Color32::from_rgb(65,74,84),
@@ -1691,6 +1697,12 @@ fn canvas(
             };
             for path in &layer.paths {
                 for pair in path.windows(2) {
+                    if let Some(b) = visible {
+                        let (x0,y0) = pair[0];
+                        let (x1,y1) = pair[1];
+                        if x0.max(x1) < b.min_x || x0.min(x1) > b.max_x
+                            || y0.max(y1) < b.min_y || y0.min(y1) > b.max_y {continue;}
+                    }
                     painter.line_segment([
                         project(pair[0].0,pair[0].1),
                         project(pair[1].0,pair[1].1)
@@ -1701,6 +1713,10 @@ fn canvas(
         // The rotation is preserved in the model, but egui text rendering
         // here is not rotation-aware yet.
         for label in &kad.labels {
+            if let Some(b) = visible {
+                if label.position.0 < b.min_x || label.position.0 > b.max_x
+                    || label.position.1 < b.min_y || label.position.1 > b.max_y {continue;}
+            }
             painter.text(project(label.position.0,label.position.1),
                 egui::Align2::CENTER_CENTER,&label.text,
                 egui::FontId::proportional(11.0),INK);
@@ -1852,6 +1868,7 @@ impl SleufBaseApp {
         self.poll_raster_previews(ctx);
         self.poll_viewport_previews(ctx);
         self.poll_map_background(ctx);
+        self.cadastral_vectors.poll(ctx);
         self.poll_live_jobs();
         self.poll_live_download(ctx);
         self.poll_kickthemap_browser(ctx);

@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Arc,atomic::{AtomicBool,AtomicUsize,Ordering},mpsc};
 
-const ENDPOINT:&str="https://service.pdok.nl/kadaster/kadastralekaart/wfs/v5_0";
+const ENDPOINT:&str="https://service.pdok.nl/kadaster/brk-kadastrale-kaart/wfs/v5_0";
 const DIRECT_LIMIT:f64=700.0;
 const TILE:f64=350.0;
 const OVERLAP:f64=8.0;
@@ -229,6 +229,20 @@ pub fn fetch_cadastral_with_cancel(bounds:Bounds,cancel:&AtomicBool)->Result<Cad
     fetch_selected(bounds,&CadastralKind::all(),cancel)
 }
 /// The template contract requests only boundaries or the two text feature types.
+/// Interactive, bounded WFS geometry layer: one RD BBOX with normal WFS
+/// pagination, not dozens of overlapping query tiles. This is intentionally
+/// limited to close-range camera views; larger areas use the WMTS/WMS map.
+/// Unlike a manual WFS import, the result is not written into the project.
+pub fn fetch_view_cadastral(bounds:Bounds,cancel:&AtomicBool)->Result<CadastralLayer,String>{
+    validate_bounds(bounds)?;
+    let kinds=[
+        CadastralKind::KadastraleGrens,
+        CadastralKind::Bebouwing,
+        CadastralKind::OpenbareRuimteNaam,
+        CadastralKind::Nummeraanduidingreeks,
+    ];
+    fetch_queries(bounds,&kinds,&[bounds],cancel)
+}
 pub fn fetch_template_cadastral(bounds:Bounds,labels:bool,cancel:&AtomicBool)->Result<CadastralLayer,String>{
     let kinds=if labels{vec![CadastralKind::OpenbareRuimteNaam,CadastralKind::Nummeraanduidingreeks]}else{vec![CadastralKind::KadastraleGrens]};
     let queries=template_tiles(bounds,cancel)?;

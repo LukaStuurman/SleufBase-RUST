@@ -103,11 +103,12 @@ impl Viewport {
         if planned.validate().is_ok() && planned.covers(self) {planned} else {self}
     }
     pub fn cadastral_too_far(self) -> bool {
+        // WMTS supports several zoom levels. Restrict only country-scale
+        // requests, instead of hiding the raster map past 2 m per pixel.
         self.source == Provider::Cadastral
-            && self
-                .logical_meters_per_pixel
-                .unwrap_or((self.bounds.max_x - self.bounds.min_x) / self.size[0].max(1) as f64)
-                >= 2.
+            && self.logical_meters_per_pixel.unwrap_or(
+                (self.bounds.max_x - self.bounds.min_x) / self.size[0].max(1) as f64
+            ) >= 250.
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -270,6 +271,7 @@ fn useful_during_pan(active: Viewport, desired: Viewport) -> bool {
         / ((b.max_y - b.min_y) / f64::from(desired.size[1]));
     (0.7..=1.15).contains(&x) && (0.7..=1.15).contains(&y)
 }
+#[derive(Clone)]
 pub struct Pixels {
     pub bounds: Bounds,
     pub width: u32,
@@ -305,6 +307,122 @@ pub struct Worker {
     epoch: u64,
     pending: Option<Task>,
     busy: bool,
+    progressive_pdok: bool,
+}
+// A block-by-block PDOK preview, with previously visible map pixels
+// reprojected underneath missing tiles. This avoids blank/checkerboard
+// flashing while panning or zooming and never changes the final raster.
+struct ProgressivePdok {
+    view: Viewport,
+    rgba: Vec<u8>,
+    dirty: Vec<[u32;4]>,
+    previews: usize,
+    last_preview: Option<std::time::Instant>,
+}
+impl ProgressivePdok {
+    fn new(view:Viewport,previous:Option<&Pixels>,cancel:&AtomicBool)->Result<Self,String>{
+        let (w,h)=(view.size[0] as usize,view.size[1] as usize);
+        let bytes=w.checked_mul(h).and_then(|p|p.checked_mul(4))
+            .ok_or("Kaartvoorbeeld is te groot")?;
+        let mut rgba=vec![255u8;bytes];
+        if let Some(old)=previous.filter(|old|
+            old.width>0 && old.height>0 && old.rgba.len()==old.width as usize*old.height as usize*4)
+        {
+            let sx=f64::from(old.width)/(old.bounds.max_x-old.bounds.min_x);
+            let sy=f64::from(old.height)/(old.bounds.max_y-old.bounds.min_y);
+            let dx=(view.bounds.max_x-view.bounds.min_x)/f64::from(view.size[0]);
+            let dy=(view.bounds.max_y-view.bounds.min_y)/f64::from(view.size[1]);
+            for y in 0..view.size[1] {
+                crate::input::check(cancel)?;
+                let wy=view.bounds.max_y-(f64::from(y)+0.5)*dy;
+                let oy=((old.bounds.max_y-wy)*sy).floor();
+                if oy<0. || oy>=f64::from(old.height) {continue;}
+                for x in 0..view.size[0] {
+                    let wx=view.bounds.min_x+(f64::from(x)+0.5)*dx;
+                    let ox=((wx-old.bounds.min_x)*sx).floor();
+                    if ox<0. || ox>=f64::from(old.width) {continue;}
+                    let src=(oy as usize*old.width as usize+ox as usize)*4;
+                    let dst=(y as usize*w+x as usize)*4;
+                    rgba[dst..dst+4].copy_from_slice(&old.rgba[src..src+4]);
+                }
+            }
+        }
+        Ok(Self{view,rgba,dirty:Vec::new(),previews:0,last_preview:None})
+    }
+    fn progress(
+        &mut self,
+        progress:crate::pdok_wms::Progress<'_>,
+        cancel:&AtomicBool,
+        publish:&mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+    )->Result<(),String>{
+        crate::input::check(cancel)?;
+        self.dirty.push(progress.tile);
+        if progress.total<=1 || progress.completed>=progress.total {return Ok(());}
+        let pixels=u64::from(self.view.size[0])*u64::from(self.view.size[1]);
+        let limit=if pixels>4_000_000{2}else{4};
+        let threshold=match self.previews {
+            0=>1,
+            1=>progress.total.div_ceil(4),
+            2=>progress.total.div_ceil(2),
+            _=>(3*progress.total).div_ceil(4),
+        };
+        if self.previews>=limit || progress.completed<threshold
+            || self.last_preview.is_some_and(|at|at.elapsed()<Duration::from_millis(100))
+        {return Ok(());}
+        let width=self.view.size[0] as usize;
+        let source=progress.image.as_raw();
+        for [left,top,w,h] in self.dirty.drain(..) {
+            if left.saturating_add(w)>self.view.size[0]||top.saturating_add(h)>self.view.size[1]{
+                return Err("PDOK-tegel valt buiten de kaart".into());
+            }
+            for y in top..top+h {
+                let offset=(y as usize*width+left as usize)*4;
+                let len=w as usize*4;
+                self.rgba[offset..offset+len].copy_from_slice(&source[offset..offset+len]);
+            }
+        }
+        publish(Pixels{
+            bounds:self.view.bounds,width:self.view.size[0],height:self.view.size[1],
+            rgba:self.rgba.clone(),stale_cache:false,
+        },progress.completed,progress.total)?;
+        self.previews+=1;
+        self.last_preview=Some(std::time::Instant::now());
+        Ok(())
+    }
+}
+
+// Interactive aerials use the official PDOK WMTS pyramid (cacheable 256px
+// zoom-level tiles). Keep the exact BBOX WMS renderer as a safety fallback.
+fn aerial_wmts(
+    renderer:&mut crate::pdok_aerial_wmts::ViewportRenderer,
+    view:Viewport,cancel:&AtomicBool,
+    publish:&mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+)->Result<Pixels,String>{
+    let cache=crate::project::app_data_directory().join("pdok-aerial-wmts");
+    let mut update=|p:crate::pdok_aerial_wmts::Progress<'_>|{
+        publish(Pixels{
+            bounds:p.bounds,width:p.width,height:p.height,
+            rgba:p.rgba.to_vec(),stale_cache:p.stale_cache,
+        },p.completed,p.total)
+    };
+    let raster=renderer.request(view.bounds,view.size[0],view.size[1],
+        &cache,cancel,&mut update)?;
+    Ok(Pixels{bounds:raster.bounds,width:raster.width,height:raster.height,
+        rgba:raster.rgba,stale_cache:raster.stale_cache})
+}
+fn aerial_wms_fallback(
+    view:Viewport,previous:Option<&Pixels>,cancel:&AtomicBool,
+    publish:&mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+)->Result<Pixels,String>{
+    let mut buffer=ProgressivePdok::new(view,previous,cancel)?;
+    let mut update=|p:crate::pdok_wms::Progress<'_>|{
+        buffer.progress(p,cancel,publish)
+    };
+    let image=crate::pdok_wms::request_tiled_with_progress(
+        crate::pdok_wms::Source::Aerial,view.bounds,view.size[0],view.size[1],
+        cancel,Some(&mut update))?;
+    Ok(Pixels{bounds:view.bounds,width:image.width(),height:image.height(),
+        rgba:image.into_raw(),stale_cache:false})
 }
 // Preparing the parcel overlay in parallel with the aerial/OSM base avoids
 // waiting for TWO sequential network phases on ordinary screens. The PDOK
@@ -324,9 +442,12 @@ fn parcel_overlay(view: Viewport, cancel: &AtomicBool) -> Result<image::RgbaImag
 impl Worker {
     pub fn new(osm_cache: PathBuf) -> Result<Self, String> {
         let mut osm = crate::osm_tiles::ViewportRenderer::default();
-        Self::with_fetcher(move |request, cancel, preview| {
+        let mut aerial = crate::pdok_aerial_wmts::ViewportRenderer::default();
+        let mut wmts:Option<crate::cadastral_tiles::Client> = None;
+        let mut last_pdok:Option<(Provider, Pixels)> = None;
+        let mut worker=Self::with_fetcher(move |request, cancel, preview| {
             let v = request.view;
-            match v.source {
+            let result=match v.source {
                 Provider::Osm | Provider::OsmCadastral => {
                     std::thread::scope(|scope| -> Result<Pixels, String> {
                         // Start collecting cadastral linework while OSM tiles
@@ -387,19 +508,18 @@ impl Worker {
                     std::thread::scope(|scope| -> Result<Pixels, String> {
                         let overlay = parallel_parcel_overlay(v)
                             .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
-                        // Keep the existing PDOK grid and network limits.
-                        let mut progress = |_: crate::pdok_wms::Progress<'_>| crate::input::check(cancel);
-                        let mut image = crate::pdok_wms::request_tiled_with_progress(
-                            crate::pdok_wms::Source::Aerial,
-                            v.bounds, v.size[0], v.size[1], cancel, Some(&mut progress),
-                        )?;
-                        preview(Pixels {
-                            bounds: v.bounds,
-                            width: image.width(),
-                            height: image.height(),
-                            rgba: image.as_raw().clone(),
-                            stale_cache: false,
-                        }, 1, 2)?;
+                        let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
+                            .map(|(_,image)|image);
+                        let base=match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                            Ok(image)=>image,
+                            Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview)?,
+                        };
+                        // Publish a complete first aerial base before the
+                        // vector/raster parcel overlay has finished.
+                        preview(base.clone(), 1, 2)?;
+                        let mut image=image::RgbaImage::from_raw(
+                            base.width,base.height,base.rgba)
+                            .ok_or("PDOK-luchtfoto gaf ongeldige pixels terug")?;
                         let layer = if let Some(job) = overlay {
                             job.join().map_err(|_| "Perceelwerker is gestopt")??
                         } else { parcel_overlay(v, cancel)? };
@@ -409,57 +529,44 @@ impl Worker {
                             width: image.width(),
                             height: image.height(),
                             rgba: image.into_raw(),
-                            stale_cache: false,
+                            stale_cache: base.stale_cache,
                         })
                     })
                 }
-                Provider::Aerial | Provider::Cadastral => {
-                    let source = if v.source == Provider::Cadastral {
-                        crate::pdok_wms::Source::Cadastral
-                    } else {
-                        crate::pdok_wms::Source::Aerial
-                    };
-                    // Cloning and uploading the entire multi-megapixel
-                    // raster after EVERY individual 512px tile is expensive.
-                    // Keep two partial previews on regular screens and one
-                    // on very large screens, then the full-resolution result.
-                    let mut preview_count = 0usize;
-                    let pixels = u64::from(v.size[0]) * u64::from(v.size[1]);
-                    let preview_budget = if pixels > 4_000_000 { 1 } else { 2 };
-                    let mut update = |p: crate::pdok_wms::Progress<'_>| {
-                        crate::input::check(cancel)?;
-                        if p.completed < p.total && preview_count < preview_budget
-                            && (p.completed == 1 || p.completed >= p.total.div_ceil(2))
-                        {
-                            preview(Pixels {
-                                bounds: v.bounds,
-                                width: v.size[0],
-                                height: v.size[1],
-                                rgba: p.image.as_raw().clone(),
-                                stale_cache: false,
-                            }, p.completed, p.total)?;
-                            preview_count += 1;
-                        }
-                        Ok(())
-                    };
-                    let image = crate::pdok_wms::request_tiled_with_progress(
-                        source,
-                        v.bounds,
-                        v.size[0],
-                        v.size[1],
-                        cancel,
-                        Some(&mut update),
-                    )?;
-                    Ok(Pixels {
-                        bounds: v.bounds,
-                        width: image.width(),
-                        height: image.height(),
-                        rgba: image.into_raw(),
-                        stale_cache: false,
+                Provider::Cadastral => {
+                    // At broad zooms use the existing multiscale Kadaster WMTS
+                    // tile client instead of enlarging a single WMS PNG.
+                    // Close-up backgrounds switch to RD vector shapes in UI.
+                    if wmts.is_none() {
+                        wmts=Some(crate::cadastral_tiles::Client::new(
+                            crate::project::app_data_directory().join("cadastral-wmts"))?);
+                    }
+                    let image=wmts.as_ref().unwrap().request(v.bounds,v.size,cancel)?;
+                    Ok(Pixels{
+                        bounds:v.bounds,width:image.width(),height:image.height(),
+                        rgba:image.into_raw(),stale_cache:false,
                     })
                 }
+                Provider::Aerial => {
+                    let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
+                        .map(|(_,image)|image);
+                    match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                        Ok(image)=>Ok(image),
+                        Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview),
+                    }
+                }
+            };
+            if matches!(v.source,Provider::Aerial|Provider::AerialCadastral)
+                && u64::from(v.size[0])*u64::from(v.size[1])<=12_000_000
+            {
+                if let Ok(image)=&result {
+                    last_pdok=Some((v.source,image.clone()));
+                }
             }
-        })
+            result
+        })?;
+        worker.progressive_pdok=true;
+        Ok(worker)
     }
     pub fn with_fetcher(
         mut fetch: impl FnMut(
@@ -516,6 +623,7 @@ impl Worker {
             epoch: 0,
             pending: None,
             busy: false,
+            progressive_pdok: false,
         })
     }
     pub fn start(&mut self, request: Request) {
@@ -579,6 +687,9 @@ impl Worker {
     pub fn busy(&self) -> bool {
         self.busy
     }
+    /// True only for the real renderer: all partial PDOK frames are composed
+    /// over its last visible picture, unlike synthetic preview test workers.
+    pub fn progressive_pdok(&self) -> bool { self.progressive_pdok }
 }
 impl Drop for Worker {
     fn drop(&mut self) {
