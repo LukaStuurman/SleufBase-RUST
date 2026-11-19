@@ -30,6 +30,39 @@ const MAX_DISK_TILES: usize = 4096;
 const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
 static DISK_WRITES: AtomicUsize = AtomicUsize::new(0);
 
+// Cache writes must never hold a network worker, decode thread or map
+// rendering progress callback. A single bounded background writer retains
+// atomic publication; a full queue simply skips optional disk caching.
+struct SaveJob {
+    root: PathBuf,
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+fn tile_writer()->Option<&'static mpsc::SyncSender<SaveJob>> {
+    static WRITER:OnceLock<Option<mpsc::SyncSender<SaveJob>>>=OnceLock::new();
+    WRITER.get_or_init(||{
+        let (tx,rx)=mpsc::sync_channel::<SaveJob>(8);
+        std::thread::Builder::new()
+            .name("sleufbase-luchtfoto-wmts-cache".into())
+            .spawn(move||{
+                while let Ok(job)=rx.recv(){
+                    let saved=crate::storage::atomic_write(&job.path,true,|file|
+                        file.write_all(&job.bytes).map_err(|e|e.to_string()));
+                    if saved.is_ok() && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0 {
+                        prune_disk(&job.root);
+                    }
+                }
+            }).ok().map(|_|tx)
+    }).as_ref()
+}
+fn remember_disk(root:&Path, id:TileId, bytes:Vec<u8>){
+    if let Some(writer)=tile_writer(){
+        let _=writer.try_send(SaveJob{
+            root:root.to_path_buf(),path:id.path(root),bytes,
+        });
+    }
+}
+
 // Disk use stays bounded even after years of browsing many locations.
 // The known 3-level zoom/column/row path is traversed without following
 // symlinks, and in-flight atomic temporary files are never touched.
@@ -216,15 +249,9 @@ fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
         match download(id,cancel).and_then(|bytes|{
             input::check(cancel)?;
             let tile=Arc::new(decode(&bytes)?);
-            let path=id.path(root);
-            // Best-effort atomic write, never let a full/locked cache make
-            // an otherwise successful interactive map request fail.
-            if crate::storage::atomic_write(&path,true,|file|
-                file.write_all(&bytes).map_err(|e|e.to_string())).is_ok()
-                && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0
-            {
-                prune_disk(root);
-            }
+            // Disk I/O runs in a bounded writer rather than blocking one
+            // of the four valuable WMTS network/conversion workers.
+            remember_disk(root,id,bytes);
             Ok(tile)
         }){
             Ok(tile)=>return Ok((tile,SystemTime::now(),false)),
