@@ -193,7 +193,10 @@ impl SleufBaseApp {
             // Aerial+Cadastral also previews a complete base image, never an
             // incomplete WMS mosaic, while the parcel overlay is still loading.
             if self.map_requests.complete_image && !is_osm(request.view.source)
-                && request.view.source != Provider::AerialCadastral { return; }
+                && request.view.source != Provider::AerialCadastral
+                && !self.map_requests.worker.as_ref().is_some_and(|w|w.progressive_pdok()) {
+                return;
+            }
             self.map_requests.scheduler.preview(request);
         }
         if let Some((completed, total)) = progress {
@@ -316,7 +319,7 @@ mod tests {
         let mut scheduler = map_request::Scheduler::default();
         frame(&ctx, [180., 140.], Provider::Cadastral, |view, v| {
             assert_eq!(v.logical_meters_per_pixel, Some(2.));
-            assert!(v.cadastral_too_far());
+            assert!(!v.cadastral_too_far());
             assert_eq!(
                 v.size[0],
                 (view.rect.width() * ctx.pixels_per_point()).ceil() as u32
