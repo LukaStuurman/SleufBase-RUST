@@ -6,7 +6,7 @@
 //! reused after pan/zoom, with a coarse level as the first visual placeholder
 //! and the target-resolution tiles progressively composited in world space.
 use crate::{input, model::Bounds};
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque}, fs, io::{Cursor, Write}, path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, OnceLock},
@@ -162,7 +162,7 @@ fn download(id:TileId,cancel:&AtomicBool)->Result<Vec<u8>,String>{
         {
             return Err("PDOK gaf geen WMTS-afbeelding terug".into());
         }
-        input::read_chunks(&mut response,MAX_BYTES as usize,"PDOK WMTS-tegel",&stop)
+        input::read_chunks(&mut response,MAX_BYTES,"PDOK WMTS-tegel",&stop)
     })?
 }
 fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
@@ -254,19 +254,26 @@ impl ViewportRenderer {
                 });
             }
             drop(tx);
-            for _ in 0..ids.len(){
-                let (id,result)=loop {
-                    input::check(cancel)?;
-                    match rx.recv_timeout(Duration::from_millis(35)){
-                        Ok(result)=>break result,
-                        Err(mpsc::RecvTimeoutError::Timeout)=>continue,
-                        Err(_) =>return Err("PDOK-tegelwerker is gestopt".into()),
-                    }
-                };
-                let (tile,modified,stale)=result?;
-                on_tile(id,tile,modified,stale)?;
-            }
-            Ok(())
+            // Always release the receiver before scoped worker threads join.
+            // Otherwise a cancelled or failed render may leave workers blocked
+            // forever on a full bounded channel.
+            let result=(|| -> Result<(),String> {
+                for _ in 0..ids.len(){
+                    let (id,result)=loop {
+                        input::check(cancel)?;
+                        match rx.recv_timeout(Duration::from_millis(35)){
+                            Ok(result)=>break result,
+                            Err(mpsc::RecvTimeoutError::Timeout)=>continue,
+                            Err(_) =>return Err("PDOK-tegelwerker is gestopt".into()),
+                        }
+                    };
+                    let (tile,modified,stale)=result?;
+                    on_tile(id,tile,modified,stale)?;
+                }
+                Ok(())
+            })();
+            drop(rx);
+            result
         })
     }
     fn reproject(&self,b:Bounds,width:u32,height:u32,cancel:&AtomicBool)
@@ -314,7 +321,7 @@ impl ViewportRenderer {
             for col in 0..width {
                 let wx=bounds.min_x+(f64::from(col)+0.5)*dx;
                 let source_col=((wx-ORIGIN_X)/span).floor() as i64;
-                if source_row<0||source_col<0 || source_row>=1i64<<zoom ||source_col>=1i64<<zoom {
+                if source_row<0||source_col<0 || source_row>=(1i64<<zoom) ||source_col>=(1i64<<zoom) {
                     continue;
                 }
                 let id=TileId{zoom,col:source_col as u32,row:source_row as u32};
