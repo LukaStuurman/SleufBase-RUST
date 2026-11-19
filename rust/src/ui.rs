@@ -170,6 +170,10 @@ struct LiveJobsRefresh {
     owner:sleufbase_rust::jobs_cache::SnapshotOwner,
     events:Receiver<LiveJobsRefreshResult>,
 }
+enum LiveBatchEvent {
+    Item(u64,RemoteFileKind,Result<PathBuf,String>),
+    Finished(KickTheMapLiveClient),
+}
 
 fn kickthemap_login_required(error:&str)->bool {
     error==sleufbase_rust::kickthemap_live::INTERACTIVE_LOGIN_REQUIRED
@@ -255,6 +259,7 @@ pub struct SleufBaseApp {
     live_rx:Option<Receiver<Result<(KickTheMapLiveClient,Vec<Job>),String>>>,
     live_refresh:Option<LiveJobsRefresh>,
     live_download_rx:Option<Receiver<(KickTheMapLiveClient,Result<(RemoteFileKind,PathBuf),String>)>>,
+    live_batch_rx:Option<Receiver<LiveBatchEvent>>,
     live_busy:bool,
     jobs_query:String,
     comments:Vec<Comment>,
@@ -365,6 +370,7 @@ impl Default for SleufBaseApp {
             live_rx:None,
             live_refresh:None,
             live_download_rx:None,
+            live_batch_rx:None,
             live_busy:false,
             jobs_query:String::new(),
             comments:Vec::new(),
@@ -446,7 +452,9 @@ impl SleufBaseApp {
         // happens to reuse the same overlay and feature indices.
         self.found_layers.clear();
         self.clear_cable_candidate_groups();
-        if self.live_download_rx.is_some(){self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);}
+        if self.live_download_rx.is_some()||self.live_batch_rx.is_some(){
+            self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
+        }
         self.map_requests.invalidate();
         self.pdok_busy=false;self.osm_busy=false;
         self.osm_texture=None; self.osm_bounds=None; self.osm_visible=false;
@@ -1090,6 +1098,46 @@ impl SleufBaseApp {
     }
 
 
+    /// Batch selected verified jobs with at most three concurrent downloads.
+    /// Files are still signed, validated and published individually through
+    /// the original safe KickTheMap download path.
+    fn download_live_batch(&mut self) {
+        if self.live_operation_busy() || self.live_batch_rx.is_some() {return;}
+        if self.live_session.as_ref().is_some_and(|session|
+            self.live_jobs_owner.as_ref()!=Some(session.snapshot_owner())) {
+            self.browser_ui.status="Vernieuw eerst de jobs van de huidige KickTheMap-sessie.".into();
+            self.browser_ui.batch_mode=false;
+            return;
+        }
+        let Some(client)=self.live_session.take() else {
+            self.browser_ui.status="Meld je opnieuw aan voor het downloaden.".into();
+            self.browser_ui.batch_mode=false;
+            return;
+        };
+        let jobs=self.browser_ui.queue.drain(..).filter_map(|(id,kind)|
+            self.live_jobs.iter().find(|job|job.job_id==id).cloned()
+                .map(|job|(job,kind))).collect::<Vec<_>>();
+        if jobs.is_empty() {
+            self.live_session=Some(client);
+            self.browser_ui.batch_mode=false;
+            return;
+        }
+        self.live_busy=true;
+        self.live_download_generation=self.project_generation;
+        let (tx,rx)=mpsc::channel();
+        self.live_batch_rx=Some(rx);
+        let browser=self.browser_ui.browser.as_ref().map(|b|b.channel());
+        let cancel=std::sync::Arc::clone(&self.browser_ui.cancel);
+        self.browser_ui.status=format!("{} bestanden ophalen met maximaal 3 gelijktijdige downloads…",jobs.len());
+        std::thread::spawn(move || {
+            let root=kickthemap_cache_dir().join("Rust");
+            client.download_jobs_batch_with_browser(&jobs,&root,&cancel,browser.as_ref(),|id,kind,result|{
+                let _=tx.send(LiveBatchEvent::Item(id,kind,result));
+            });
+            let _=tx.send(LiveBatchEvent::Finished(client));
+        });
+    }
+
     fn download_live_job(&mut self,id:u64,kind:RemoteFileKind) {
         if self.live_operation_busy() {return;}
         self.browser_ui.download_notice=None;
@@ -1142,7 +1190,64 @@ impl SleufBaseApp {
                 }
     }
 
+    fn poll_live_batch(&mut self,ctx:&egui::Context) {
+        loop {
+            let event=self.live_batch_rx.as_ref().map(Receiver::try_recv);
+            match event {
+                Some(Ok(LiveBatchEvent::Item(id,kind,result))) => {
+                    if self.live_download_generation!=self.project_generation
+                        ||self.browser_ui.batch_generation!=self.project_generation
+                        ||self.browser_ui.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        continue;
+                    }
+                    self.browser_ui.completed+=1;
+                    match result {
+                        Ok(path)=>match kind {
+                            RemoteFileKind::GeoTiff=>self.browser_ui.downloaded_tiffs.push(path),
+                            RemoteFileKind::JobFeatures=>self.browser_ui.downloaded_json.push(path),
+                        },
+                        Err(error)=>self.browser_ui.failures.push(format!("Job {id}: {error}")),
+                    }
+                    self.browser_ui.status=format!("{} bestanden gereed · {} fouten · downloads lopen…",
+                        self.browser_ui.completed,self.browser_ui.failures.len());
+                    ctx.request_repaint();
+                }
+                Some(Ok(LiveBatchEvent::Finished(client)))=>{
+                    self.live_batch_rx=None;
+                    self.live_busy=false;
+                    if self.live_jobs_owner.as_ref()!=Some(client.snapshot_owner()) {
+                        self.message="De KickTheMap-aanmelding is veranderd; oude downloads blijven op schijf, maar zijn niet in het nieuwe project geladen.".into();
+                        self.browser_ui.batch_mode=false;
+                        self.browser_ui.downloaded_json.clear();
+                        self.browser_ui.downloaded_tiffs.clear();
+                    } else {
+                        self.live_session=Some(client);
+                        if self.browser_ui.failures.iter().any(|s|
+                            s.to_lowercase().contains("sessie verlopen")) {
+                            self.live_session=None;
+                            self.browser_ui.batch_mode=false;
+                            self.browser_ui.queue.clear();
+                            self.message="KickTheMap-sessie verlopen. Meld je opnieuw aan; reeds gedownloade bestanden blijven behouden.".into();
+                        }
+                    }
+                    break;
+                }
+                Some(Err(TryRecvError::Disconnected))=>{
+                    self.live_batch_rx=None;
+                    self.live_busy=false;
+                    self.browser_ui.batch_mode=false;
+                    self.message="Parallelle KickTheMap-download onderbroken; meld je opnieuw aan. Al opgeslagen bestanden blijven intact.".into();
+                    break;
+                }
+                Some(Err(TryRecvError::Empty))|None=>break,
+            }
+        }
+        if self.live_batch_rx.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
     fn poll_live_download(&mut self,ctx:&egui::Context) {
+        if self.live_batch_rx.is_some() {self.poll_live_batch(ctx);}
         let event=self.live_download_rx.as_ref().map(|rx|rx.try_recv());
         match event {
             Some(Ok((client,result)))=>{

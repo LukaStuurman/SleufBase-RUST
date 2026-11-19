@@ -580,3 +580,10 @@ Een coördinatenstelsel kiezen **zet de coördinaten niet automatisch om**. Je k
 Wanneer je **Acties → Proefsleuven sjabloon DXF** opent, staat **Beide kijkrichtingen** standaard aan. Normaal en Reverse worden dus beide meegenomen. Je kunt de optie voor één export uitschakelen; wanneer je het exportvenster later opnieuw opent, staat deze weer aan.
 
 In de gemaakte DXF-dwarsprofielen staat de tekst **Maaiveld: … N.A.P.** nu onder de maaiveldlijn, in plaats van boven de lijn. De N.A.P.-referentie en de overige gegevens blijven behouden.
+
+
+### Snellere KickTheMap-batches en DXF-afbeeldingen
+
+Bij **KickTheMap → Jobs → Laad geselecteerde jobs** verwerkt SleufBase voortaan maximaal drie downloads tegelijk. Als je zowel objectgegevens als GeoTIFFs selecteert, worden die per job gevalideerd en daarna in de juiste volgorde in het project opgenomen. Een geannuleerde batch bewaart reeds volledig opgeslagen bestanden. Bij een verlopen accountaanmelding moet je je opnieuw aanmelden.
+
+Voor **Acties → Proefsleuven sjabloon DXF** worden grote kaart- en TIFF-afbeeldingen sneller lossless gecomprimeerd. Gedeelde overzichtskaarten worden bij twee kijkrichtingen niet opnieuw gedecodeerd. De weergegeven kaart, kabels en dwarsprofielen blijven hetzelfde. De verbetering is het grootst bij veel jobs of grote rasterafbeeldingen; de snelheid hangt ook af van de KickTheMap-server en de computer.

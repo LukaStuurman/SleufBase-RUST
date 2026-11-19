@@ -129,7 +129,7 @@ impl<'a> Batch<'a> {
                     batch.check()?;
                     match &job.kind {
                         Kind::Copy(source) => {
-                            copy_asset(source, &job.destination, &batch, &budget)?;
+                            copy_asset(source, &job.destination, &batch, &budget, true)?;
                         }
                         Kind::Tiff {
                             source,
@@ -211,7 +211,11 @@ impl<'a> Batch<'a> {
                         }
                     }
                     for alias in &job.aliases {
-                        copy_asset(&job.destination, alias, &batch, &budget)?;
+                        // An alias is made from an image already validated
+                        // (Copy) or freshly encoded (Map/Tiff/Virtual/Photo).
+                        // Avoid decoding the same large PNG again for each
+                        // normal/reverse output path.
+                        copy_asset(&job.destination, alias, &batch, &budget, false)?;
                     }
                     batch.check()
                 },
@@ -239,6 +243,7 @@ fn copy_asset(
     destination: &Path,
     control: &Control,
     budget: &Budget,
+    validate_png: bool,
 ) -> Result<u64, String> {
     control.check()?;
     let mut source =
@@ -255,7 +260,7 @@ fn copy_asset(
         .create_new(true)
         .open(destination)
         .map_err(|e| e.to_string())?;
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = [0u8; 512 * 1024];
     let mut copied = 0u64;
     loop {
         control.check()?;
@@ -287,6 +292,7 @@ fn copy_asset(
     if copied == 0 {
         return Err("Voorbereide afbeelding is leeg".into());
     }
+    if !validate_png {return Ok(copied);}
     let mut reader = image::ImageReader::open(destination).map_err(|e| e.to_string())?;
     reader.set_format(image::ImageFormat::Png);
     let mut limits = image::Limits::default();

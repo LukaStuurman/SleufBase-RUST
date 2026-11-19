@@ -416,7 +416,13 @@ fn save_image_inner(
                 budget,
                 failure: &mut failure,
             };
-            PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
+            // High-resolution orthophotos and map sheets spend significant
+            // time evaluating PNG's adaptive row filters. A fixed Sub filter
+            // is still lossless and dramatically reduces work on large images.
+            let filter = if u64::from(image.width())*u64::from(image.height()) >= 2_000_000 {
+                FilterType::Sub
+            } else { FilterType::Adaptive };
+            PngEncoder::new_with_quality(writer, CompressionType::Fast, filter)
                 .write_image(
                     image.as_raw(),
                     image.width(),

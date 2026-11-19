@@ -28,7 +28,7 @@ impl Identity {
         Ok(key)
     }
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct Credentials {
     #[serde(rename = "aws_access_key")]
     access: String,

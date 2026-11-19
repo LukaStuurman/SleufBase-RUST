@@ -653,7 +653,7 @@ impl SleufBaseApp {
         });
     }
     pub(super) fn live_operation_busy(&self)->bool{
-        self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.is_opening_job()
+        self.live_busy||self.live_rx.is_some()||self.live_refresh.is_some()||self.live_download_rx.is_some()||self.live_batch_rx.is_some()||self.browser_ui.capturing.is_some()||self.browser_ui.is_opening_job()
             ||self.browser_ui.reloading.is_some()||self.browser_ui.tools.writing()
     }
     pub(super) fn open_kickthemap_workspace(&mut self) {

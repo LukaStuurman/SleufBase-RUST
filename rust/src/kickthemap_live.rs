@@ -218,6 +218,7 @@ fn inline_payload(html:&str)->Result<Value,String>{
 /// Session cookies stay in memory. An explicit browser action can transfer a
 /// narrowed session to this process's own WebView2; never to project/cache files.
 /// The caller should drop the client and its browser on logout.
+#[derive(Clone)]
 pub struct KickTheMapLiveClient {
     client: Client,
     cookie_jar: Arc<Jar>,
@@ -226,6 +227,8 @@ pub struct KickTheMapLiveClient {
     api_origin:String,
     account_email:String,
     download_strategy:Option<strategy::Strategy>,
+    /// Reuse the last confirmed encoding before trying ordinary fallbacks.
+    preferred_download_mode:Option<&'static str>,
     repair_in_progress:bool,
     snapshot_owner:crate::jobs_cache::SnapshotOwner,
     download_prefixes:HashMap<u64,crate::kickthemap_s3::Identity>,
@@ -317,7 +320,12 @@ impl KickTheMapLiveClient {
             }
         }
 
-        for mode in ["multipart","form","json"]{
+        let modes=match self.preferred_download_mode {
+            Some("form")=>["form","multipart","json"],
+            Some("json")=>["json","multipart","form"],
+            _=>["multipart","form","json"],
+        };
+        for mode in modes{
             for auth_attempt in 0..2{
                 crate::input::check(cancel)?;
                 let mut request=self.client.post(format!("{}/jobs/get-file-url",self.api_origin))
@@ -341,7 +349,7 @@ impl KickTheMapLiveClient {
                     self.csrf=html_token(&html,"meta","csrf-token").ok_or("KickTheMap-sessie verlopen; geen vernieuwd CSRF-token")?;
                     continue;
                 }
-                if response.status().is_success(){if let Ok(text)=response_text(response,512*1024){if let Ok(url)=extract_signed_url(&text){return Ok(Some(url));}}}
+                if response.status().is_success(){if let Ok(text)=response_text(response,512*1024){if let Ok(url)=extract_signed_url(&text){self.preferred_download_mode=Some(mode);return Ok(Some(url));}}}
                 break;
             }
         }
@@ -466,7 +474,7 @@ impl KickTheMapLiveClient {
         }
         let csrf = html_token(&homepage,"meta","csrf-token")
             .ok_or("KickTheMap sessie bevat geen CSRF-token")?;
-        Ok(Self{client,cookie_jar,csrf,browser_user_agent:None,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,browser_user_agent:None,api_origin:ORIGIN.into(),account_email:email.trim().into(),snapshot_owner:crate::jobs_cache::SnapshotOwner::authenticated_login(email),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,preferred_download_mode:None,repair_in_progress:false})
     }
 
     /// Adopt cookies only from the Edge profile launched by this Rust process.
@@ -529,7 +537,7 @@ impl KickTheMapLiveClient {
         html_token(&page,"meta","csrf-token")
             .ok_or("KickTheMap-browser heeft geen actieve CSRF-sessie")?
         };
-        Ok(Self{client,cookie_jar,csrf,browser_user_agent:browser_user_agent.map(str::to_owned),api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false})
+        Ok(Self{client,cookie_jar,csrf,browser_user_agent:browser_user_agent.map(str::to_owned),api_origin:ORIGIN.into(),account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session()?,download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,preferred_download_mode:None,repair_in_progress:false})
     }
     /// Compatibility entry point: the editable account hint is not identity proof.
     /// Browser sessions always receive an independent snapshot owner.
@@ -679,7 +687,7 @@ mod tests {
         });
         let cookie_jar=Arc::new(Jar::default());
         let client=Client::builder().cookie_provider(Arc::clone(&cookie_jar)).redirect(redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
-        (KickTheMapLiveClient{client,cookie_jar,csrf:"old-token".into(),browser_user_agent:None,api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,repair_in_progress:false},rx,handle)
+        (KickTheMapLiveClient{client,cookie_jar,csrf:"old-token".into(),browser_user_agent:None,api_origin:origin,account_email:String::new(),snapshot_owner:crate::jobs_cache::SnapshotOwner::browser_session().unwrap(),download_prefixes:HashMap::new(),browser_job_urls:HashMap::new(),storage_config:None,known_jobs_nonempty:false,download_strategy:None,preferred_download_mode:None,repair_in_progress:false},rx,handle)
     }
     #[test]
     fn embedded_handoff_only_copies_root_account_cookies_without_persistent_expiry() {
@@ -959,6 +967,47 @@ fn verify_download(path:&std::path::Path,kind:RemoteFileKind)->Result<(),String>
     Ok(())
 }
 impl KickTheMapLiveClient {
+    /// Download selected account-owned jobs with a small, bounded number of
+    /// independent streams. Workers clone only the in-memory verified session;
+    /// no cookies or signed URLs are stored in project files. The existing
+    /// validated no-overwrite download path remains the single file writer.
+    ///
+    /// A confirmed expired session stops scheduling further requests. Actual
+    /// in-flight requests finish or observe cancellation before returning.
+    pub fn download_jobs_batch_with_browser(
+        &self,
+        jobs:&[(Job, RemoteFileKind)],
+        root:&std::path::Path,
+        cancel:&std::sync::atomic::AtomicBool,
+        browser:Option<&crate::kickthemap_browser::BrowserChannel>,
+        on_result:impl Fn(u64,RemoteFileKind,Result<std::path::PathBuf,String>)+Sync,
+    ) {
+        use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
+        let workers=crate::resource_policy::get().network_workers.clamp(1,3).min(jobs.len());
+        if workers==0 {return;}
+        let cursor=AtomicUsize::new(0);
+        let expired=AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let mut client=self.clone();
+                let cursor=&cursor;
+                let expired=&expired;
+                let on_result=&on_result;
+                scope.spawn(move || loop {
+                    if cancel.load(Ordering::Acquire)||expired.load(Ordering::Acquire){break;}
+                    let index=cursor.fetch_add(1,Ordering::Relaxed);
+                    let Some((job,kind))=jobs.get(index) else{break;};
+                    let result=client.download_job_with_browser(job,*kind,root,cancel,browser);
+                    if result.as_ref().err().is_some_and(|error|
+                        error.to_ascii_lowercase().contains("sessie verlopen")) {
+                        expired.store(true,Ordering::Release);
+                    }
+                    on_result(job.job_id,*kind,result);
+                });
+            }
+        });
+    }
+
     /// Download only via the established account session and signed HTTPS URL.
     /// Writes atomically with no overwrite of existing Python/Rust source files.
     pub fn download_job(
