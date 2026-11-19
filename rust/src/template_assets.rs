@@ -1,11 +1,14 @@
 //! Prepare independent assets in bounded light/heavy phases. DXF mutation and
 //! publication remain on the export coordinator after every worker has joined.
 use super::Request;
+#[path = "template_asset_cache.rs"]
+mod image_cache;
 use crate::{
     asset_budget::Budget, export_control::Control, map_export, resource_policy::ResourcePolicy,
     template_photo, template_raster, virtual_raster, Bounds,
 };
 use std::{
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -92,6 +95,26 @@ impl<'a> Batch<'a> {
         // export can be retried. The scheduler propagates parent cancellation
         // to this batch flag before joining all in-flight workers.
         let batch = Control::default();
+        // Count every physical read, including both profile directions and
+        // the map fallback. Free decoded pixels after the last consumer.
+        let mut tiff_uses = HashMap::<PathBuf,usize>::new();
+        for job in &self.jobs {
+            let source = match &job.kind {
+                Kind::Tiff {source,..} => Some(*source),
+                Kind::Map {source,fallback,..} if source.include_tiff => {
+                    source.tiff.as_ref().or_else(|| match fallback {
+                        Some(map_export::Raster::Tiff(source)) => Some(*source),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(source) = source {
+                *tiff_uses.entry(source.path.clone()).or_insert(0) += 1;
+            }
+        }
+        let decoded_tiffs = template_raster::DecodeCache::new(tiff_uses);
+        let image_cache = image_cache::Persistent::open();
         let mut completed = 0;
         for heavy in [false, true] {
             let indices = self
@@ -127,6 +150,13 @@ impl<'a> Batch<'a> {
                 |worker, index, _| {
                     let job = &self.jobs[indices[index]];
                     batch.check()?;
+                    let key = image_cache.as_ref().and_then(|cache|
+                        cache.key(&job.kind, request, &batch));
+                    let restored = match (image_cache.as_ref(),key.as_deref()) {
+                        (Some(cache),Some(key)) => cache.restore(key,&job.destination,&batch,&budget)?,
+                        _ => false,
+                    };
+                    if !restored {
                     match &job.kind {
                         Kind::Copy(source) => {
                             copy_asset(source, &job.destination, &batch, &budget, true)?;
@@ -139,12 +169,13 @@ impl<'a> Batch<'a> {
                         } => {
                             let mut oriented = (*source).clone();
                             oriented.reverse_orientation = *reverse;
-                            let raster = template_raster::from_tiff_with_lines(
+                            let raster = template_raster::from_tiff_with_lines_cached(
                                 &oriented,
                                 &request.roads,
                                 &request.terrain_boundaries,
                                 *axis,
                                 lines,
+                                Some(&decoded_tiffs),
                                 batch.flag(),
                             )?;
                             template_raster::save_image_budgeted(
@@ -186,12 +217,13 @@ impl<'a> Batch<'a> {
                             let page = renderers[worker]
                                 .lock()
                                 .map_err(|_| "Kaartwerker is onverwacht gestopt")?
-                                .render_template_with_raster_and_rules(
+                                .render_template_with_raster_and_rules_cached(
                                     source,
                                     *bounds,
                                     fallback,
                                     *reference,
                                     &request.rules,
+                                    Some(&decoded_tiffs),
                                     batch.flag(),
                                 )?;
                             template_raster::save_image_budgeted(
@@ -209,6 +241,11 @@ impl<'a> Batch<'a> {
                                 &budget,
                             )?;
                         }
+                    }
+                    if let (Some(cache),Some(key)) = (image_cache.as_ref(),key.as_deref()) {
+                        // Best effort. An unwritable cache never blocks an export.
+                        cache.remember(key,&job.destination,&batch);
+                    }
                     }
                     for alias in &job.aliases {
                         // An alias is made from an image already validated
@@ -234,6 +271,7 @@ impl<'a> Batch<'a> {
             )?;
         }
         control.check()?;
+        if let Some(cache) = image_cache.as_ref() { cache.prune(); }
         Ok(initial_total + budget.used())
     }
 }
