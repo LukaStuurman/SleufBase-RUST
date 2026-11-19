@@ -101,6 +101,21 @@ impl SleufBaseApp {
             self.map_requests.source = source;
             self.map_requests.complete_image = false;
         }
+        // Close-up parcel backgrounds are rendered from real WFS paths.
+        // At broader zoom levels, and when WFS is unavailable, retain the
+        // bounded raster/WMTS provider rather than fetching huge vector sets.
+        let canvas_bounds = viewport(view, Provider::Cadastral).bounds;
+        let vector_close = cadastral_vector_ui::State::wants(
+            self.project_view.provider(), canvas_bounds)
+            && !self.cadastral_vectors.fallback();
+        let source = if vector_close {
+            match self.project_view.provider() {
+                B::PdokAerialCadastral => Some(Provider::Aerial),
+                B::OpenStreetMapCadastral => Some(Provider::Osm),
+                B::Cadastral if self.cadastral_vectors.ready_for(canvas_bounds) => None,
+                _ => source,
+            }
+        } else { source };
         let desired = source.map(|s| viewport(view, s));
         let dragging = view.response.dragged()
             && (!self.navigation.pointer_tool
