@@ -422,7 +422,7 @@ impl WmsClient {
             let url = url.clone();
             let result = crate::cadastral::cancellable_request(cancel, move |stop| {
                 let response = http
-                    .get(url)
+                    .get(url.clone())
                     .send()
                     .map_err(|e| format!("PDOK onbereikbaar: {e}"))?
                     .error_for_status()
