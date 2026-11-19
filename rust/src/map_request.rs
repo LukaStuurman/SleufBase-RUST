@@ -640,6 +640,16 @@ impl Worker {
             + Send
             + 'static,
     ) -> Result<Self, String> {
+        Self::with_fetcher_updates(move |request,cancel,full,_patch| {
+            fetch(request,cancel,full)
+        })
+    }
+    fn with_fetcher_updates(
+        mut fetch: impl FnMut(Request,&AtomicBool,
+            &mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+            &mut dyn FnMut(MapPatch,usize,usize)->Result<(),String>)
+            ->Result<Pixels,String>+Send+'static,
+    )->Result<Self,String>{
         let (tx, input) = mpsc::sync_channel::<Task>(1);
         let (output, rx) = mpsc::sync_channel(1);
         let preview: Arc<Mutex<Preview>> = Arc::new(Mutex::new(None));
@@ -648,17 +658,49 @@ impl Worker {
             .name("sleufbase-map-view".into())
             .spawn(move || {
                 while let Ok(task) = input.recv() {
-                    let mut publish = |pixels, completed, total| {
+                    let full_slot=Arc::clone(&slot);
+                    let patch_slot=Arc::clone(&slot);
+                    let mut publish=|pixels,completed,total|{
                         crate::input::check(&task.cancel)?;
-                        let mut latest =
-                            slot.lock().map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
+                        let mut latest=full_slot.lock()
+                            .map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
                         crate::input::check(&task.cancel)?;
-                        *latest = Some((task.epoch, task.request, pixels, completed, total));
+                        *latest=Some((task.epoch,task.request,
+                            PendingPreview::Full(pixels),completed,total));
+                        Ok(())
+                    };
+                    let mut publish_patch=|patch:MapPatch,completed,total|{
+                        crate::input::check(&task.cancel)?;
+                        let mut latest=patch_slot.lock()
+                            .map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
+                        crate::input::check(&task.cancel)?;
+                        if let Some((epoch,request,body,done,count))=latest.as_mut(){
+                            if *epoch==task.epoch && *request==task.request {
+                                match body {
+                                    PendingPreview::Full(frame)=>{
+                                        // A pending first full frame must never
+                                        // be overwritten by a partial update.
+                                        // Merge only the tiny patch in place.
+                                        patch.apply_to(frame)?;
+                                        *done=completed;*count=total;
+                                        return Ok(());
+                                    }
+                                    PendingPreview::Patches(patches) if patches.len()<16=>{
+                                        patches.push(patch);
+                                        *done=completed;*count=total;
+                                        return Ok(());
+                                    }
+                                    _=>{},
+                                }
+                            }
+                        }
+                        *latest=Some((task.epoch,task.request,
+                            PendingPreview::Patches(vec![patch]),completed,total));
                         Ok(())
                     };
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         crate::input::check(&task.cancel)?;
-                        fetch(task.request, &task.cancel, &mut publish)
+                        fetch(task.request, &task.cancel, &mut publish,&mut publish_patch)
                     }))
                     .unwrap_or_else(|_| Err("Kaarttaak is onverwacht gestopt".into()));
                     let mut message = (task.epoch, task.request, result);
@@ -738,12 +780,15 @@ impl Worker {
             .lock()
             .ok()
             .and_then(|mut p| p.take())
-            .and_then(|(epoch, request, pixels, completed, total)| {
-                (epoch == self.epoch).then_some(Event::Preview {
-                    request,
-                    pixels,
-                    completed,
-                    total,
+            .and_then(|(epoch, request, payload, completed, total)| {
+                if epoch!=self.epoch{return None;}
+                Some(match payload {
+                    PendingPreview::Full(pixels)=>Event::Preview{
+                        request,pixels,completed,total,
+                    },
+                    PendingPreview::Patches(patches)=>Event::Patches{
+                        request,patches,completed,total,
+                    },
                 })
             })
     }
