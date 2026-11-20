@@ -316,7 +316,9 @@ impl Dialog {
             && settings.viewer.offline_aerial_area.is_none(){
             // An explicit opt-in may use the current map extent on Save,
             // without requiring a separate manual download first.
-            settings.viewer.offline_aerial_area=self.offline_area;
+            settings.viewer.offline_aerial_area=if settings.viewer.offline_aerial_whole_country {
+                Some(sleufbase_rust::offline_zoom::NETHERLANDS_AREA)
+            }else{self.offline_area};
         }
         settings.validate()?;
         Ok(Saved {
