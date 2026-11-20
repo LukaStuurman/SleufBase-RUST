@@ -7,9 +7,9 @@
 //! An explicit safety limit prevents accidentally requesting millions of
 //! copyrighted/third-party service tiles for all of the Netherlands.
 use crate::{model::Bounds,offline_overview,storage};
-use image::{ImageDecoder,ImageFormat,RgbaImage};
+use image::{ImageFormat,RgbaImage};
 use std::{
-    collections::HashSet,fs,io::{Cursor,Read,Write},path::{Path,PathBuf},
+    fs,io::{Cursor,Read,Write},path::{Path,PathBuf},
     sync::atomic::{AtomicBool,Ordering},
     time::{Duration,SystemTime},
 };
@@ -256,27 +256,43 @@ pub fn refresh_at(
         .user_agent(concat!("SleufBase-Rust/",env!("CARGO_PKG_VERSION")," offline WMTS"))
         .build().map_err(|e|e.to_string())?;
     let now=SystemTime::now();
-    let mut failures=0usize;
+    let mut consecutive_failures=0usize;
+    let mut total_failed=0usize;
     let mut done=0u64;
     for id in ids{
         if cancel.load(Ordering::Relaxed){return Err("Offlinedownload geannuleerd".into());}
         let fresh=cached_tile(root,id).is_some_and(|stamp|
             !offline_overview::needs_refresh(stamp,now));
         if force || !fresh {
-            match fetch_one(&http,root,id,cancel){
-                Ok(())=>failures=0,
+            let mut result=Err("PDOK-tegel nog niet opgehaald".to_string());
+            for attempt in 0..3 {
+                if cancel.load(Ordering::Relaxed){
+                    return Err("Offlinedownload geannuleerd".into());
+                }
+                result=fetch_one(&http,root,id,cancel);
+                if result.is_ok(){break;}
+                if attempt<2{
+                    std::thread::sleep(Duration::from_millis(150*(attempt+1)));
+                }
+            }
+            match result {
+                Ok(())=>consecutive_failures=0,
                 Err(error)=>{
-                    failures+=1;
-                    if failures>=4{
-                        return Err(format!("Offline PDOK mislukt na meerdere fouten: {error}"));
+                    total_failed+=1;
+                    consecutive_failures+=1;
+                    if consecutive_failures>=4{
+                        return Err(format!("Offline PDOK niet beschikbaar na meerdere fouten: {error}"));
                     }
                 }
             }
         }
         done+=1;
         on_tile(done,plan.tiles);
-        // A single sequential background fetch gives interactive WMTS room.
-        // Do not introduce an unbounded request fan-out.
+        // One low-priority sequential background connection leaves capacity
+        // for the interactive live PDOK map and other cadastral operations.
+    }
+    if total_failed>0 {
+        return Err(format!("{total_failed} offline luchtfototegels konden niet worden bijgewerkt"));
     }
     Ok(())
 }
