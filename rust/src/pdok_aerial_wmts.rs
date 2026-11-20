@@ -206,7 +206,8 @@ fn neighbor_preview_ids(bounds:Bounds,target:Grid)->Vec<TileId>{
     // network work even on unusually large 4K/ultrawide viewports.
     if first.zoom>0 {
         if let Some(second)=grid(padded,first.zoom-1) {
-            ids.extend(second.ids().take(MAX_NEIGHBOR_TILES-ids.len()));
+            let remaining=MAX_NEIGHBOR_TILES.saturating_sub(ids.len());
+            ids.extend(second.ids().take(remaining));
         }
     }
     ids
