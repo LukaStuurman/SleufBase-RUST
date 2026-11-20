@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
     fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -289,11 +289,42 @@ impl PointCloudSource {
         if !inspected.same_file_state(&after) {
             return Err("Het bronbestand veranderde tijdens het controleren. Probeer opnieuw.".into());
         }
+        // Re-linking an older scan also adopts the external source into the
+        // managed AppData directory, without modifying that original file.
         let cloud = cloud_directory(&self.id)?;
-        if cloud.parent().is_some_and(Path::is_dir) {
-            write_stamp(&cloud, &SourceStamp::from_inspected(&after, fingerprint))?;
+        let parent = cloud.parent().ok_or("Ongeldige puntenwolkmap")?;
+        fs::create_dir_all(parent).map_err(|error|format!("Puntenwolkmap maken: {error}"))?;
+        let staging = tempfile::Builder::new().prefix(".source-relink-").tempdir_in(parent)
+            .map_err(|error|format!("Tijdelijke puntenwolkmap maken: {error}"))?;
+        let extension = after.path.extension().and_then(|ext|ext.to_str())
+            .unwrap_or("las").to_ascii_lowercase();
+        let name = format!("source.{extension}");
+        let staged_path = staging.path().join(&name);
+        let copied = copy_managed_source(&after, &staged_path, &fingerprint, cancel, &mut |_|{})?;
+        let target = parent.join(&name);
+        let backup = parent.join(format!(".source-backup-{}",new_id()?));
+        let had_previous = target.exists();
+        if had_previous {
+            fs::rename(&target, &backup).map_err(|error|format!("Eerdere bronkopie bewaren: {error}"))?;
         }
-        self.source_path = after.path;
+        if let Err(error) = fs::rename(&staged_path, &target) {
+            if had_previous { let _ = fs::rename(&backup, &target); }
+            return Err(format!("Bronkopie in AppData plaatsen: {error}"));
+        }
+        if cloud.is_dir() {
+            if let Err(error) = write_stamp(&cloud, &SourceStamp::from_inspected(&copied, fingerprint)) {
+                let _ = fs::remove_file(&target);
+                if had_previous { let _ = fs::rename(&backup, &target); }
+                return Err(error);
+            }
+        }
+        if had_previous { let _ = fs::remove_file(&backup); }
+        // Clean up a previous app-owned copy of the *other* extension; never
+        // remove a path outside the validated per-scan AppData directory.
+        if self.source_path.parent()==Some(parent) && self.source_path!=target {
+            let _ = fs::remove_file(&self.source_path);
+        }
+        self.source_path = target;
         Ok(())
     }
 }
@@ -586,6 +617,51 @@ fn wkt_horizontal_epsg(wkt: &str) -> Option<u32> {
     None
 }
 
+/// Atomically stage a full, verified LAS/LAZ copy alongside the converted
+/// cloud. Cancellation and disk failures leave the source untouched.
+fn copy_managed_source(
+    original: &InspectedLas, target: &Path, expected_hash: &str,
+    cancel: &AtomicBool, progress: &mut impl FnMut(String)
+) -> Result<InspectedLas, String> {
+    check_cancel(cancel)?;
+    let mut input = File::open(&original.path)
+        .map_err(|error|format!("LAS/LAZ-bron openen: {error}"))?;
+    let mut output = File::options().write(true).create_new(true).open(target)
+        .map_err(|error|format!("LAS/LAZ-kopie in AppData maken: {error}"))?;
+    let mut buffer = vec![0u8; 1024 * 1024];
+    let mut written = 0u64;
+    let mut next_report = 32 * 1024 * 1024u64;
+    loop {
+        check_cancel(cancel)?;
+        let count = input.read(&mut buffer)
+            .map_err(|error|format!("Bronbestand kopiëren: {error}"))?;
+        if count==0 { break; }
+        output.write_all(&buffer[..count])
+            .map_err(|error|format!("Puntenwolk in AppData opslaan: {error}"))?;
+        written += count as u64;
+        if written >= next_report {
+            progress(format!("LAS/LAZ in AppData opslaan: {:.0}%",
+                100. * written as f64 / original.size.max(1) as f64));
+            next_report = written.saturating_add(32 * 1024 * 1024);
+        }
+    }
+    if written != original.size {
+        return Err("Puntenwolkbron veranderde tijdens kopiëren".into());
+    }
+    output.sync_all().map_err(|error|format!("LAS/LAZ-kopie wegschrijven: {error}"))?;
+    drop(output);
+    let after = inspect_las(&original.path)?;
+    if !original.same_file_state(&after) {
+        return Err("Het originele LAS/LAZ-bestand veranderde tijdens de opslag".into());
+    }
+    let stored = inspect_las(target)?;
+    if fingerprint_file(&stored.path,cancel,|_|{})? != expected_hash {
+        return Err("De gekopieerde LAS/LAZ heeft een andere SHA-256-controlesom".into());
+    }
+    check_cancel(cancel)?;
+    Ok(stored)
+}
+
 fn fingerprint_file(path: &Path, cancel: &AtomicBool, mut progress: impl FnMut(String)) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let size = file.metadata().map_err(|error| error.to_string())?.len();
@@ -831,6 +907,16 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
     if !inspected.same_file_state(&after) {
         return Err("Het LAS/LAZ-bestand veranderde tijdens de verwerking. Probeer opnieuw.".into());
     }
+    // Store the actual original file together with the Potree conversion.
+    // The temporary directory is on the AppData volume and is only renamed
+    // after the conversion, full copy and checksum have all succeeded.
+    let extension = inspected.path.extension().and_then(|ext|ext.to_str())
+        .unwrap_or("las").to_ascii_lowercase();
+    let name = format!("source.{extension}");
+    progress("LAS/LAZ-bronbestand naar SleufBase AppData kopiëren…".into());
+    let copied = copy_managed_source(
+        &inspected, &staging.path().join(&name), &fingerprint, cancel, progress)?;
+    let managed_path = cache_root.join(&id).join(&name);
     let crs = match (crs, inspected.epsg) {
         (CloudCrs::Unknown, Some(28992)) => CloudCrs::RdNew,
         (CloudCrs::Unknown, Some(4326 | 4979)) => CloudCrs::Wgs84,
@@ -838,7 +924,7 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
         (value, _) => value,
     };
     let source = PointCloudSource {
-        id: id.clone(), title: title.into(), source_path: inspected.path.clone(), source_size: inspected.size,
+        id: id.clone(), title: title.into(), source_path: managed_path, source_size: inspected.size,
         source_fingerprint: fingerprint.clone(), point_count: inspected.point_count,
         bounds_min: inspected.bounds_min, bounds_max: inspected.bounds_max,
         projection: if inspected.projection.is_empty() { metadata.projection } else { inspected.projection.clone() },
@@ -856,7 +942,7 @@ fn import_inner(path: &Path, title: &str, crs: CloudCrs, previous: Option<&Point
             progress(format!("De 3D-scan is klaar, maar de orthofoto kon niet worden gemaakt: {error}"));
         }
     }
-    write_stamp(&output, &SourceStamp::from_inspected(&after, fingerprint))?;
+    write_stamp(&output, &SourceStamp::from_inspected(&copied, fingerprint))?;
     let destination = cache_root.join(&id);
     let backup = cache_root.join(format!(".replaced-{id}-{}", new_id()?));
     check_cancel(cancel)?;
