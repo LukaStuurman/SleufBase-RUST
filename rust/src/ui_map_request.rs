@@ -192,7 +192,7 @@ impl SleufBaseApp {
         // WMTS sends small texture patches once the base frame is visible.
         // A stale zoom/pan generation or a patch for a different texture size
         // is ignored; a complete final image is still delivered normally.
-        if let Event::Patches {request,patches,completed,total}=&event {
+        if let Event::Patches {request,patches,..}=&event {
             if !self.map_requests.scheduler.accepts(*request) {return;}
             let mut applied=false;
             for patch in patches {
@@ -216,19 +216,15 @@ impl SleufBaseApp {
             }
             if applied {
                 self.map_requests.scheduler.preview(*request);
-                self.message=format!("Luchtfoto laden: {completed}/{total} tegels");
+                // Tile counts are internal progress, never a persistent
+                // status-bar message. Repaint silently when pixels arrive.
                 ctx.request_repaint();
             }
             return;
         }
-        let (request, result, terminal, progress) = match event {
-            Event::Preview {
-                request,
-                pixels,
-                completed,
-                total,
-            } => (request, Ok(pixels), false, Some((completed, total))),
-            Event::Complete { request, result } => (request, result, true, None),
+        let (request, result, terminal) = match event {
+            Event::Preview {request,pixels,..} => (request,Ok(pixels),false),
+            Event::Complete {request,result} => (request,result,true),
             Event::Patches { .. } => unreachable!("PDOK patches handled above"),
         };
         if !self.map_requests.scheduler.accepts(request) {
@@ -247,14 +243,6 @@ impl SleufBaseApp {
                 return;
             }
             self.map_requests.scheduler.preview(request);
-        }
-        if let Some((completed, total)) = progress {
-            self.message = match request.view.source {
-                Provider::AerialCadastral => "Luchtfoto geladen; percelen ophalen…".into(),
-                Provider::OsmCadastral if total > 0 && completed == total =>
-                    "OpenStreetMap geladen; percelen ophalen…".into(),
-                _ => format!("Kaartachtergrond ophalen: {completed}/{total} tegels"),
-            };
         }
         match result {
             Ok(pixels) => {
@@ -295,11 +283,9 @@ impl SleufBaseApp {
                 if terminal {
                     self.map_requests.complete_image = true;
                     self.map_requests.scheduler.complete(request, true);
-                    self.message = if pixels.stale_cache {
-                        "Kaart geladen uit verouderde cache; netwerk niet beschikbaar".into()
-                    } else {
-                        "Kaartachtergrond geladen".into()
-                    };
+                    // A successful asynchronous refresh is silent. Do not
+                    // overwrite messages about user work with tile status.
+                    // Errors below are still shown when recovery is needed.
                 }
             }
             Err(error) => {
