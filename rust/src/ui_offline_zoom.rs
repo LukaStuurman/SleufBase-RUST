@@ -30,11 +30,12 @@ pub(super) struct State {
     decoder:Option<SyncSender<cache::TileId>>,
     decoded:Option<Receiver<Decoded>>,
     active_zoom:u8,
+    active_quality:u8,
     auto_enabled:bool,
     configured_area:Option<[i32;4]>,
     pending:Option<(u8,bool,Receiver<Result<(),String>>)>,
     cancel:Option<Arc<AtomicBool>>,
-    queued:Option<(u8,[i32;4])>,
+    queued:Option<(u8,[i32;4],u8)>,
     progress:Arc<AtomicU64>,
     total:u64,
     notice:Option<String>,
@@ -45,7 +46,7 @@ impl Default for State{
         Self{
             loaded:VecDeque::new(),visible:Vec::new(),
             decoding:HashSet::new(),decoder:None,decoded:None,
-            active_zoom:cache::DEFAULT_ZOOM,auto_enabled:false,
+            active_zoom:cache::DEFAULT_ZOOM,active_quality:cache::DEFAULT_QUALITY,auto_enabled:false,
             configured_area:None,pending:None,cancel:None,queued:None,
             progress:Arc::new(AtomicU64::new(0)),total:0,
             notice:None,next_check:Instant::now(),
@@ -54,30 +55,35 @@ impl Default for State{
 }
 impl State{
     pub(super) fn tiles(&self)->&[(egui::TextureHandle,Bounds)]{&self.visible}
+    pub(super) fn invalidate_cached_images(&mut self){
+        self.loaded.clear();
+        self.visible.clear();
+        self.decoding.clear();
+        self.next_check=Instant::now()+AUTO_RESCAN;
+    }
     pub(super) fn manual_active(&self)->bool{
         self.queued.is_some() || self.pending.as_ref().is_some_and(|(_,manual,_)|*manual)
     }
     pub(super) fn manual_status(&self)->Option<String>{
-        if let Some((zoom,_))=self.queued{
+        if let Some((zoom,_,_))=self.queued{
             return Some(format!("PDOK niveau {zoom}: offline kaart wordt voorbereid…"));
         }
         if let Some((zoom,true,_))=&self.pending{
             let done=self.progress.load(Ordering::Relaxed);
-            return Some(format!("Offline luchtfoto · zoom {zoom}: {done}/{} stappen (scherpe foto's downloaden en lokaal verkleinen). Bestaande kaart blijft beschikbaar.",self.total));
+            return Some(format!("Offline luchtfoto · zoom {zoom}: {done}/{} originele JPEG-tegels gedownload of hergebruikt. Bestaande kaart blijft beschikbaar.",self.total));
         }
         self.notice.clone()
     }
-    /// Downloads only the selected highest-resolution level for this area.
-    /// All lower zoom levels are synthesized on disk from sharp JPEGs,
-    /// without additional requests to PDOK or changing auto-update opt-in.
-    pub(super) fn download_now(&mut self,zoom:u8,area:[i32;4])->Result<(),String>{
+    /// Downloads only the selected highest-resolution level; no downsampling.
+    pub(super) fn download_now(&mut self,zoom:u8,area:[i32;4],quality:u8)->Result<(),String>{
+        if !cache::supported_quality(quality){return Err("Ongeldige JPEG-kwaliteit".into());}
         let estimate=cache::estimate(area,zoom)
             .ok_or("Ongeldig PDOK-kaartgebied")?;
         if !estimate.allowed {
             return Err(format!("Dit gebied vraagt ongeveer {} en {} tegels. Zoom verder in op de kaart of kies een lager detailniveau.",
                 cache::format_mb(estimate.expected_bytes),estimate.tiles));
         }
-        self.queued=Some((zoom,area));
+        self.queued=Some((zoom,area,quality));
         self.total=estimate.steps();
         self.progress.store(0,Ordering::Relaxed);
         self.notice=None;
@@ -109,7 +115,7 @@ impl State{
             self.decoded=Some(rx);
         }
     }
-    fn begin_download(&mut self,ctx:&egui::Context,zoom:u8,area:[i32;4],manual:bool){
+    fn begin_download(&mut self,ctx:&egui::Context,zoom:u8,area:[i32;4],quality:u8,manual:bool){
         if self.pending.is_some(){return;}
         let plan=match cache::estimate(area,zoom){
             Some(plan) if plan.allowed =>plan,
@@ -131,7 +137,8 @@ impl State{
         let started=std::thread::Builder::new()
             .name(if manual {"sleufbase-manual-wmts-download"}else{"sleufbase-auto-wmts-refresh"}.into())
             .spawn(move||{
-                let result=cache::refresh(area,zoom,manual,&worker_cancel,
+                // Reuse valid recent tiles, even for manual downloads.
+                let result=cache::refresh_with_quality(area,zoom,quality,false,&worker_cancel,
                     |done,_total|{
                         progress.store(done,Ordering::Relaxed);
                         if done%5==0 || done==plan.steps(){
@@ -187,11 +194,11 @@ impl State{
     fn poll_download(&mut self,ctx:&egui::Context){
         self.poll_job(ctx);
         if self.pending.is_some() || Instant::now()<self.next_check{return;}
-        if let Some((zoom,area))=self.queued{
-            self.begin_download(ctx,zoom,area,true);
+        if let Some((zoom,area,quality))=self.queued{
+            self.begin_download(ctx,zoom,area,quality,true);
         }else if self.auto_enabled {
             if let Some(area)=self.configured_area{
-                self.begin_download(ctx,self.active_zoom,area,false);
+                self.begin_download(ctx,self.active_zoom,area,self.active_quality,false);
             }
         }
     }
@@ -202,9 +209,12 @@ impl State{
         if width<=0.||height<=0.||display.width()<=0. {return Vec::new();}
         let mpp=(width/display.width() as f64)
             .max(height/display.height().max(1.) as f64);
-        let best=((3440.64/mpp).log2().ceil())
+        let _display_zoom=((3440.64/mpp).log2().ceil())
             .clamp(0.,cache::MAX_ZOOM as f64) as u8;
-        let target=self.active_zoom.min(best);
+        // Keep original full-detail files whenever the region fits within
+        // the bounded visible tile budget, even if the screen is zoomed out.
+        // At very broad zooms the bundled nationwide overview remains behind.
+        let target=self.active_zoom;
         // A complete tile layer is preferred over the low-res overview.
         // Never queue thousands of textures for a very broad view.
         let highest=(0..=target).rev()
@@ -283,7 +293,7 @@ impl State{
         }
     }
     pub(super) fn poll(&mut self,ctx:&egui::Context,view:Option<Bounds>,
-        auto_enabled:bool,zoom:u8,area:Option<[i32;4]>){
+        auto_enabled:bool,zoom:u8,area:Option<[i32;4]>,quality:u8){
         if self.active_zoom!=zoom {
             self.active_zoom=zoom.min(cache::MAX_ZOOM);
             self.loaded.clear();
@@ -291,9 +301,10 @@ impl State{
             if let Some(cancel)=&self.cancel{cancel.store(true,Ordering::Relaxed);}
             self.next_check=Instant::now();
         }
-        if self.auto_enabled!=auto_enabled || self.configured_area!=area {
+        if self.auto_enabled!=auto_enabled || self.configured_area!=area || self.active_quality!=quality {
             if let Some(cancel)=&self.cancel{cancel.store(true,Ordering::Relaxed);}
             self.auto_enabled=auto_enabled;
+            self.active_quality=quality;
             self.configured_area=area;
             if auto_enabled {self.next_check=Instant::now();}
         }
@@ -311,11 +322,11 @@ mod tests{
     fn manual_zoom_refresh_is_opt_in_independent_and_bounded(){
         let mut state=State::default();
         assert!(!state.auto_enabled);
-        assert!(state.download_now(15,[155000,463000,155250,463200]).is_ok());
+        assert!(state.download_now(15,[155000,463000,155250,463200],100).is_ok());
         assert!(state.manual_active());
         assert!(!state.auto_enabled);
         let oversized=[155000,463000,156000,464000];
-        assert!(state.download_now(19,oversized).is_err());
+        assert!(state.download_now(19,oversized,100).is_err());
         state.cancel_manual();
         assert!(!state.manual_active());
     }
