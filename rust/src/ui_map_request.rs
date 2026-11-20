@@ -434,7 +434,7 @@ mod tests {
         let ctx=egui::Context::default();
         let mut app=SleufBaseApp::default();
         app.project_view.use_background=true;
-        app.project_view.background_source="PDOK luchtfoto + percelen".into();
+        app.project_view.background_source="PDOK Luchtfoto + percelen".into();
         app.map_requests.source=Some(Provider::Aerial);
         let old=Bounds{min_x:154500.,max_x:155500.,min_y:462500.,max_y:463500.};
         app.pdok_bounds=Some(old);
