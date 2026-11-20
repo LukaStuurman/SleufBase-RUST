@@ -99,17 +99,17 @@ impl SleufBaseApp {
         } else {
             match self.project_view.provider() {
                 B::PdokAerial => Some(Provider::Aerial),
-                B::PdokAerialCadastral => Some(Provider::AerialCadastral),
+                B::PdokAerialCadastral => Some(Provider::Aerial), // WFS vectors, never raster parcels.
                 B::OfflineAerial => None, // Strictly local, never start WMTS/WMS/WFS.
-                B::Cadastral => Some(Provider::Cadastral),
+                B::Cadastral => None, // Always WFS vectors; never raster/WMTS Kadaster.
                 B::OpenStreetMap => Some(Provider::Osm),
-                B::OpenStreetMapCadastral => Some(Provider::OsmCadastral),
+                B::OpenStreetMapCadastral => Some(Provider::Osm), // WFS vectors, never raster parcels.
                 _ => None,
             }
         };
-        // Close-up parcel backgrounds are rendered from real WFS paths.
-        // At broader zoom levels, and when WFS is unavailable, retain the
-        // bounded raster/WMTS provider rather than fetching huge vector sets.
+        // Kadaster always uses native WFS features. At broad zooms, pure
+        // Kadaster stays free of raster fallback; hybrid views retain only
+        // their non-cadastral imagery/OSM background.
         let canvas_bounds = viewport(view, Provider::Cadastral).bounds;
         // The pure Kadaster choice is vector-only at parcel scale. A WFS
         // network error must not resurrect the old empty raster basemap.
