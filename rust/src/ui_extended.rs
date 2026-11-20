@@ -700,6 +700,9 @@ impl SleufBaseApp {
         let vector_layer = if self.project_view.use_background {
             self.cadastral_vectors.layer_for(self.project_view.provider())
         } else { None };
+        let show_offline_aerial=self.project_view.use_background
+            && matches!(self.project_view.provider(),B::PdokAerial|B::PdokAerialCadastral)
+            && !self.geotiffs.iter().any(|r|r.epsg.is_some_and(|e|e!=28992));
         let view = canvas(
             ui,
             &self.datasets,
@@ -711,6 +714,7 @@ impl SleufBaseApp {
             &self.bgt_layers,
             vector_layer.or(self.cadastral.as_ref()),
             &self.comments,
+            if show_offline_aerial {self.offline_overview.texture()} else {None},
             if self.osm_visible && self.osm_texture.is_some() {
                 self.osm_texture.as_ref()
             } else {
@@ -783,11 +787,25 @@ impl SleufBaseApp {
                 let credit = view.painter.layout_no_wrap("Kadaster / PDOK".into(),
                     egui::FontId::proportional(12.), INK);
                 // The OSM credit is already painted ten points above the bottom.
-                let bottom = if osm { 30. } else { 10. };
+                let bottom = if osm || show_offline_aerial { 30. } else { 10. };
                 let position = view.rect.right_bottom() + egui::vec2(-10., -bottom) - credit.size();
                 let backing = egui::Rect::from_min_size(position, credit.size()).expand2(egui::vec2(4., 2.));
                 view.painter.rect_filled(backing, 3_u8, Color32::from_rgba_unmultiplied(255, 255, 255, 235));
                 view.painter.galley(position, credit, INK);
+            }
+            if show_offline_aerial {
+                // CC BY attribution is required for the bundled low-res photo
+                // as well as the live PDOK high-resolution photographs.
+                let credit=view.painter.layout_no_wrap(
+                    sleufbase_rust::offline_overview::CREDIT.into(),
+                    egui::FontId::proportional(11.),INK);
+                let position=view.rect.right_bottom()
+                    +egui::vec2(-10.,-10.)-credit.size();
+                let background=egui::Rect::from_min_size(position,credit.size())
+                    .expand2(egui::vec2(4.,2.));
+                view.painter.rect_filled(background,3_u8,
+                    Color32::from_rgba_unmultiplied(255,255,255,235));
+                view.painter.galley(position,credit,INK);
             }
         }
         self.show_location_on_map(ui, canvas_rect);
