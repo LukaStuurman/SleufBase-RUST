@@ -159,7 +159,18 @@ impl State{
         // burst of expensive GPU uploads when first opening a cached project.
         for _ in 0..DECODES_PER_FRAME {
             let next=self.decoded.as_ref().map(|rx|rx.try_recv());
-            let Some(Ok((id,result)))=next else{break;};
+            let (id,result)=match next {
+                Some(Ok(tile))=>tile,
+                Some(Err(TryRecvError::Disconnected))=>{
+                    // Recreate a stopped decoder instead of scheduling a
+                    // repaint every 60 ms forever with stuck pending IDs.
+                    self.decoding.clear();
+                    self.decoder=None;
+                    self.decoded=None;
+                    break;
+                }
+                _=>break,
+            };
             self.decoding.remove(&id);
             if let Ok(Some(tile))=result {
                 // Keep only the textures needed for the current camera. Old
