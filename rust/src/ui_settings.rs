@@ -504,12 +504,12 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
                 }
             });
         if let Some(area)=offline_area{
-            ui.small(format!("Gebied: huidige kaartuitsnede ({}). De download bevat ook alle grovere zoomniveaus.",
+            ui.small(format!("Gebied: huidige kaartuitsnede ({}). Alleen de gekozen scherpste PDOK-tegels worden gedownload; bij uitzoomen maakt SleufBase zelf de lagere resoluties.",
                 sleufbase_rust::offline_zoom::describe_area(area)));
         }else{
             ui.small("De getoonde MB zijn een voorbeeld voor 1 × 1 km. Open eerst de kaart, zoom naar het gewenste gebied en open Instellingen opnieuw voor de werkelijke gebiedsschatting.");
         }
-        ui.small("Schatting: circa 50 KB per JPEG-tegel. Het werkelijke aantal MB hangt af van de luchtfoto en het gekozen gebied; er is geen vaste limiet van 50 MB.");
+        ui.small("Geschatte download: circa 50 KB per JPEG-tegel op het gekozen hoogste zoomniveau. Lagere resoluties worden zonder extra PDOK-download lokaal gemaakt; ze gebruiken wel aanvullende schijfruimte.");
         if zoom>=17 {
             ui.small("Niveau 17–19 biedt meestal geen extra echte scherpte: de oorspronkelijke PDOK-luchtfoto is ongeveer 5–8 cm per pixel.");
         }
