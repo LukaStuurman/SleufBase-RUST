@@ -2,12 +2,13 @@
 //! Unlike the legacy 10/25/50 MiB country WMS mosaic, the chosen detail is
 //! *actual* PDOK WMTS zoom level 0..19. File sizes are estimated, not quotas.
 //!
-//! A manual job captures the currently visible map extent; every level from
-//! 0 up to the requested level is stored so zooming in/out works offline.
+//! A manual job downloads ONLY the chosen highest-detail WMTS level. The
+//! zoomed-out levels are generated locally from those JPEGs, not downloaded.
 //! An explicit safety limit prevents accidentally requesting millions of
 //! copyrighted/third-party service tiles for all of the Netherlands.
 use crate::{model::Bounds,offline_overview,storage};
 use image::{ImageFormat,RgbaImage};
+use image::imageops::{resize,FilterType};
 use std::{
     fs,io::{Cursor,Read,Write},path::{Path,PathBuf},
     sync::atomic::{AtomicBool,Ordering},
@@ -90,6 +91,17 @@ impl TileId{
         root.join(self.zoom.to_string()).join(self.col.to_string())
             .join(format!("{}.jpg",self.row))
     }
+    /// Lower-resolution display tile assembled locally from sharper photos.
+    /// PNG retains transparency outside the downloaded user area.
+    pub fn derived_path(self,root:&Path)->PathBuf{
+        root.join("derived").join(self.zoom.to_string())
+            .join(self.col.to_string()).join(format!("{}.png",self.row))
+    }
+    pub fn parent(self)->Option<Self>{
+        (self.zoom>0).then_some(Self{
+            zoom:self.zoom.saturating_sub(1),col:self.col/2,row:self.row/2,
+        })
+    }
     pub fn url(self)->Result<reqwest::Url,String>{
         if !self.valid(){return Err("Ongeldige PDOK-offlinetegel".into());}
         let mut url=reqwest::Url::parse(URL).map_err(|e|e.to_string())?;
@@ -140,15 +152,26 @@ pub fn grid(bounds:Bounds,zoom:u8)->Option<Grid>{
         min_row:row_min as u32,max_row:row_max as u32})
 }
 #[derive(Clone,Copy,Debug)]
-pub struct Estimate {pub tiles:u64,pub expected_bytes:u64,pub allowed:bool}
+pub struct Estimate {
+    /// Only highest-resolution PDOK JPEGs are downloaded.
+    pub tiles:u64,
+    /// Lower-resolution PNGs are made locally from the downloaded JPEGs.
+    pub derived_tiles:u64,
+    pub expected_bytes:u64,
+    pub allowed:bool,
+}
+impl Estimate{
+    pub fn steps(self)->u64{self.tiles.saturating_add(self.derived_tiles)}
+}
 pub fn estimate(area:[i32;4],zoom:u8)->Option<Estimate>{
     let bounds=from_area(area)?;
     if zoom>MAX_ZOOM {return None;}
-    let mut count=0u64;
-    for level in MIN_ZOOM..=zoom{
-        count=count.saturating_add(grid(bounds,level)?.count());
+    let count=grid(bounds,zoom)?.count();
+    let mut generated=0u64;
+    for level in MIN_ZOOM..zoom{
+        generated=generated.saturating_add(grid(bounds,level)?.count());
     }
-    Some(Estimate{tiles:count,
+    Some(Estimate{tiles:count,derived_tiles:generated,
         expected_bytes:count.saturating_mul(EXPECTED_JPEG_BYTES),
         allowed:count<=MAX_DOWNLOAD_TILES})
 }
@@ -161,7 +184,7 @@ pub fn format_mb(bytes:u64)->String {
 }
 pub fn format_estimate(area:[i32;4],zoom:u8)->String{
     match estimate(area,zoom){
-        Some(e)=>format!("Niveau {zoom} · {} · ~{} ({} tegels){}",
+        Some(e)=>format!("Niveau {zoom} · {} · ~{} download ({} tegels){}",
             format_resolution(zoom),format_mb(e.expected_bytes),
             e.tiles,if e.allowed{""}else{" · te groot"}),
         None=>format!("Niveau {zoom} · buiten PDOK-dekking"),
@@ -178,11 +201,45 @@ fn cached_tile(root:&Path,id:TileId)->Option<SystemTime>{
         .then(||meta.modified().ok()).flatten()
 }
 pub struct ImageTile{pub image:RgbaImage,pub modified:SystemTime}
+fn derived_stamp(root:&Path,id:TileId)->Option<SystemTime>{
+    let meta=fs::metadata(id.derived_path(root)).ok()?;
+    (meta.is_file() && meta.len()>128 && meta.len()<=MAX_JPEG_BYTES as u64)
+        .then(||meta.modified().ok()).flatten()
+}
+fn decode_derived(bytes:&[u8])->Result<RgbaImage,String>{
+    if bytes.len()<128 || bytes.len()>MAX_JPEG_BYTES{
+        return Err("Lokaal verkleinde PDOK-tegel heeft ongeldige grootte".into());
+    }
+    let mut reader=image::ImageReader::with_format(Cursor::new(bytes),ImageFormat::Png);
+    let mut limits=image::Limits::default();
+    limits.max_image_width=Some(256);
+    limits.max_image_height=Some(256);
+    limits.max_alloc=Some(2*1024*1024);
+    reader.limits(limits);
+    let image=reader.decode().map_err(|e|format!("Lokaal verkleinde PNG lezen: {e}"))?;
+    if image.width()!=256 || image.height()!=256{
+        return Err("Verkleinde PDOK-tegel heeft verkeerde afmetingen".into());
+    }
+    Ok(image.to_rgba8())
+}
+/// A real WMTS JPEG wins if it is newer; otherwise use the locally derived
+/// photo. Older, downloaded lower levels remain readable but are never
+/// fetched again by the new offline downloader.
 pub fn read_tile(root:&Path,id:TileId)->Result<Option<ImageTile>,String>{
-    let Some(modified)=cached_tile(root,id) else{return Ok(None);};
-    let bytes=fs::read(id.path(root)).map_err(|e|e.to_string())?;
-    let image=decode(&bytes)?;
-    Ok(Some(ImageTile{image,modified}))
+    let jpg=cached_tile(root,id);
+    let derived=derived_stamp(root,id);
+    let order=if derived>jpg{[true,false]}else{[false,true]};
+    for png in order {
+        let timestamp=if png{derived}else{jpg};
+        let Some(modified)=timestamp else{continue;};
+        let path=if png{id.derived_path(root)}else{id.path(root)};
+        if let Ok(bytes)=fs::read(path){
+            if let Ok(image)=if png{decode_derived(&bytes)}else{decode(&bytes)}{
+                return Ok(Some(ImageTile{image,modified}));
+            }
+        }
+    }
+    Ok(None)
 }
 fn decode(bytes:&[u8])->Result<RgbaImage,String>{
     if bytes.len()<256||bytes.len()>MAX_JPEG_BYTES
@@ -227,6 +284,69 @@ fn fetch_one(http:&reqwest::blocking::Client,root:&Path,id:TileId,
     storage::atomic_write(&target,true,|out|
         out.write_all(&bytes).map_err(|e|e.to_string()))
 }
+/// Build each less-detailed level from four already stored sharper child
+/// tiles. Missing child quadrants stay transparent, revealing the bundled
+/// nationwide preview instead of an opaque blank square. Existing derived
+/// pixels outside the current download area are retained.
+fn downsample_parent(root:&Path,id:TileId)->Result<bool,String>{
+    let mut output=match fs::read(id.derived_path(root)){
+        Ok(bytes)=>decode_derived(&bytes).unwrap_or_else(|_|RgbaImage::new(256,256)),
+        Err(_)=>RgbaImage::new(256,256),
+    };
+    let mut any=false;
+    for dy in 0..2u32{
+        for dx in 0..2u32{
+            let child=TileId{zoom:id.zoom+1,
+                col:id.col*2+dx,row:id.row*2+dy};
+            let Some(child)=read_tile(root,child)?.map(|v|v.image) else{continue;};
+            let reduced=resize(&child,128,128,FilterType::Triangle);
+            for y in 0..128u32{
+                for x in 0..128u32{
+                    let color=*reduced.get_pixel(x,y);
+                    if color[3]>0 {
+                        output.put_pixel(dx*128+x,dy*128+y,color);
+                        any=true;
+                    }
+                }
+            }
+        }
+    }
+    if !any{return Ok(false);}
+    let mut buf=Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(output)
+        .write_to(&mut buf,ImageFormat::Png)
+        .map_err(|e|format!("Verkleinde offline luchtfoto opslaan: {e}"))?;
+    let target=id.derived_path(root);
+    fs::create_dir_all(target.parent().ok_or("Ongeldige offline tegelmap")?)
+        .map_err(|e|e.to_string())?;
+    storage::atomic_write(&target,true,|writer|
+        writer.write_all(&buf.into_inner()).map_err(|e|e.to_string()))?;
+    Ok(true)
+}
+/// Derive the complete multiscale pyramid locally. PDOK is never contacted
+/// for these levels. Regeneration is possible with no internet connection.
+pub fn build_local_overviews(
+    root:&Path,area:[i32;4],maximum_zoom:u8,cancel:&AtomicBool,
+    mut on_step:impl FnMut(u64,u64),
+)->Result<(),String>{
+    let estimate=estimate(area,maximum_zoom).ok_or("Ongeldig overzichtsgebied")?;
+    if !estimate.allowed{return Err("Offline gebied bevat te veel tegels".into());}
+    let bounds=from_area(area).ok_or("Ongeldige offline uitsnede")?;
+    let mut completed=0u64;
+    for level in (MIN_ZOOM..maximum_zoom).rev(){
+        let cells=grid(bounds,level).ok_or("Offline overzichtsniveau buiten kaart")?;
+        for id in cells.ids(){
+            if cancel.load(Ordering::Relaxed){
+                return Err("Offline overzicht maken geannuleerd".into());
+            }
+            downsample_parent(root,id)?;
+            completed+=1;
+            on_step(completed,estimate.derived_tiles);
+        }
+    }
+    Ok(())
+}
+
 /// Fetches only the user-approved, bounded area. Never enumerate or download
 /// an unbounded high-resolution nationwide pyramid by accident.
 pub fn refresh(
@@ -246,10 +366,10 @@ pub fn refresh_at(
             plan.tiles,MAX_DOWNLOAD_TILES));
     }
     let bounds=from_area(area).ok_or("Ongeldige offline kaartuitsnede")?;
-    let mut ids=Vec::with_capacity(plan.tiles as usize);
-    for level in MIN_ZOOM..=maximum_zoom{
-        ids.extend(grid(bounds,level).ok_or("Ongeldige WMTS-uitsnede")?.ids());
-    }
+    // Fetch only the highest WMTS resolution from PDOK. Smaller zoom levels
+    // are produced by the CPU from these sharp images after the download.
+    let ids=grid(bounds,maximum_zoom)
+        .ok_or("Ongeldige WMTS-uitsnede")?.ids();
     let http=reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(6))
         .timeout(Duration::from_secs(20))
@@ -287,10 +407,16 @@ pub fn refresh_at(
             }
         }
         done+=1;
-        on_tile(done,plan.tiles);
+        on_tile(done,plan.steps());
         // One low-priority sequential background connection leaves capacity
         // for the interactive live PDOK map and other cadastral operations.
     }
+    // Build the zoomed-out view from the sharp images on this computer;
+    // this works offline and makes zero additional requests to PDOK.
+    // Even if one image failed, use any good sharp images saved so far.
+    build_local_overviews(root,area,maximum_zoom,cancel,|local,_total|{
+        on_tile(plan.tiles+local,plan.steps());
+    })?;
     if total_failed>0 {
         return Err(format!("{total_failed} offline luchtfototegels konden niet worden bijgewerkt"));
     }
@@ -307,6 +433,8 @@ mod tests{
             let estimate=estimate(area,level).unwrap();
             assert!(estimate.tiles>=last);
             last=estimate.tiles;
+            assert_eq!(estimate.steps(),estimate.tiles+estimate.derived_tiles);
+            assert_eq!(estimate.expected_bytes,estimate.tiles*EXPECTED_JPEG_BYTES);
             assert!(resolution(level)>0.);
             assert!(format_estimate(area,level).contains(&format!("Niveau {level}")));
         }
