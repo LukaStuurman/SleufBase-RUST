@@ -293,7 +293,11 @@ impl KickTheMapLiveClient {
         match result{Ok(jobs)=>{self.known_jobs_nonempty=!jobs.is_empty();Ok(jobs)},Err(e)=>{self.download_prefixes=previous;self.browser_job_urls=previous_urls;Err(e)}}
     }
     fn remote_file_name(&self,job:&Job,kind:RemoteFileKind)->Result<String,String>{
-        if kind==RemoteFileKind::GeoTiff&&job.prefix.trim().is_empty(){self.download_prefixes.get(&job.job_id).map(|identity|format!("{}.tiff",identity.prefix)).ok_or_else(||"KickTheMap-job mist zowel prefix als volledige downloadidentiteit".into())}else{kind.remote_name(job)}
+        if kind!=RemoteFileKind::JobFeatures&&job.prefix.trim().is_empty(){
+            self.download_prefixes.get(&job.job_id)
+                .map(|identity|format!("{}.{}",identity.prefix,kind.extension()))
+                .ok_or_else(||"KickTheMap-job mist zowel prefix als volledige downloadidentiteit".into())
+        }else{kind.remote_name(job)}
     }
     fn remember_download_identities(&mut self,payload:&str){
         let Ok(raw)=serde_json::from_str::<Value>(payload)else{return};let Some(entries)=jobs_list(&raw)else{return};
@@ -817,6 +821,10 @@ mod tests {
 pub enum RemoteFileKind {
     GeoTiff,
     JobFeatures,
+    /// KickTheMap v2.42+ native compressed point cloud export.
+    PointCloudLaz,
+    /// Legacy (before September 2026) point cloud export fallback.
+    PointCloudLas,
 }
 impl RemoteFileKind {
     fn remote_name(self,job:&Job)->Result<String,String> {
@@ -824,16 +832,20 @@ impl RemoteFileKind {
             Self::GeoTiff if !job.prefix.trim().is_empty() =>
                 Ok(format!("{}.tiff", job.prefix.trim())),
             Self::GeoTiff => Err("KickTheMap-job heeft geen bestands-prefix".into()),
+            Self::PointCloudLaz if !job.prefix.trim().is_empty() => Ok(format!("{}.laz",job.prefix.trim())),
+            Self::PointCloudLas if !job.prefix.trim().is_empty() => Ok(format!("{}.las",job.prefix.trim())),
+            Self::PointCloudLaz|Self::PointCloudLas => Err("KickTheMap-job heeft geen puntenwolk-bestands-prefix".into()),
             Self::JobFeatures => Ok("jobFeatures.json".into())
         }
     }
     fn extension(self)->&'static str {
-        match self {Self::GeoTiff=>"tiff",Self::JobFeatures=>"json"}
+        match self {Self::GeoTiff=>"tiff",Self::JobFeatures=>"json",
+            Self::PointCloudLaz=>"laz",Self::PointCloudLas=>"las"}
     }
     pub(crate) fn download_fields(self,job_id:u64,remote:String,export:String)->[(&'static str,String);4] {
         [
             ("job_id",job_id.to_string()),
-            ("folder",match self { Self::GeoTiff|Self::JobFeatures=>"cloud" }.into()),
+            ("folder",match self { Self::GeoTiff|Self::JobFeatures|Self::PointCloudLaz|Self::PointCloudLas=>"cloud" }.into()),
             ("fileName",remote),
             ("exportName",export),
         ]
@@ -908,7 +920,8 @@ fn download_to_temp(signed:reqwest::Url,root:&std::path::Path,kind:RemoteFileKin
             .error_for_status().map_err(|e|format!("KickTheMap-download HTTP-fout: {}",e.without_url()))?;
         let max_bytes=match kind{
             RemoteFileKind::GeoTiff=>2_000_000_000u64,
-            RemoteFileKind::JobFeatures=>64*1024*1024u64
+            RemoteFileKind::JobFeatures=>64*1024*1024u64,
+            RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas=>5_000_000_000u64
         };
         if response.content_length().is_some_and(|len|len>max_bytes) {
             return Err("Downloadbestand is groter dan de toegestane limiet".into());
@@ -945,6 +958,16 @@ fn verify_download(path:&std::path::Path,kind:RemoteFileKind)->Result<(),String>
     use std::io::Read;
     let mut file=std::fs::File::open(path).map_err(|e|e.to_string())?;
     match kind {
+        RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas=>{
+            if file.metadata().map_err(|e|e.to_string())?.len()<227 {
+                return Err("De gedownloade LAS/LAZ-puntenwolk is te klein".into());
+            }
+            let mut magic=[0u8;4];
+            file.read_exact(&mut magic).map_err(|_|"Puntenwolk-header ontbreekt".to_owned())?;
+            if magic!=*b"LASF"{
+                return Err("KickTheMap heeft geen LAS/LAZ-puntenwolk teruggegeven".into());
+            }
+        }
         RemoteFileKind::GeoTiff=>{
             let mut magic=[0u8;4];
             file.read_exact(&mut magic).map_err(|_|"GeoTIFF-download te klein".to_owned())?;
@@ -997,7 +1020,19 @@ impl KickTheMapLiveClient {
                     if cancel.load(Ordering::Acquire)||expired.load(Ordering::Acquire){break;}
                     let index=cursor.fetch_add(1,Ordering::Relaxed);
                     let Some((job,kind))=jobs.get(index) else{break;};
-                    let result=client.download_job_with_browser(job,*kind,root,cancel,browser);
+                    let result=client.download_job_with_browser(job,*kind,root,cancel,browser)
+                        .or_else(|primary| {
+                            // LAZ is standard since KickTheMap 2.42 (Sep 2026).
+                            // Older completed jobs may still expose LAS.
+                            if *kind!=RemoteFileKind::PointCloudLaz
+                                || cancel.load(Ordering::Acquire)
+                                || primary.to_ascii_lowercase().contains("sessie verlopen") {
+                                return Err(primary);
+                            }
+                            client.download_job_with_browser(job,RemoteFileKind::PointCloudLas,
+                                root,cancel,browser).map_err(|secondary|
+                                    format!("LAZ: {primary}; oudere LAS-export: {secondary}"))
+                        });
                     if result.as_ref().err().is_some_and(|error|
                         error.to_ascii_lowercase().contains("sessie verlopen")) {
                         expired.store(true,Ordering::Release);
@@ -1038,13 +1073,17 @@ impl KickTheMapLiveClient {
         let name=safe_file_stem(&job.title,job.job_id);
         let export_name=match kind {
             RemoteFileKind::GeoTiff=>format!("{name}.tiff"),
-            RemoteFileKind::JobFeatures=>format!("{name}_jobFeatures.json")
+            RemoteFileKind::JobFeatures=>format!("{name}_jobFeatures.json"),
+            RemoteFileKind::PointCloudLaz=>format!("{name}.laz"),
+            RemoteFileKind::PointCloudLas=>format!("{name}.las"),
         };
         let filename=match kind {
             RemoteFileKind::GeoTiff=>
                 format!("{name}_{}.tiff",job.job_id),
             RemoteFileKind::JobFeatures=>
-                format!("{name}_{}_jobFeatures.json",job.job_id)
+                format!("{name}_{}_jobFeatures.json",job.job_id),
+            RemoteFileKind::PointCloudLaz=>format!("{name}_{}.laz",job.job_id),
+            RemoteFileKind::PointCloudLas=>format!("{name}_{}.las",job.job_id),
         };
         let destination=root.join(filename);
         if destination.exists() {
