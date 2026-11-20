@@ -2,23 +2,29 @@
 //! Unlike the legacy 10/25/50 MiB country WMS mosaic, the chosen detail is
 //! *actual* PDOK WMTS zoom level 0..19. File sizes are estimated, not quotas.
 //!
-//! A manual job downloads ONLY the chosen highest-detail WMTS level. The
-//! zoomed-out levels are generated locally from those JPEGs, not downloaded.
-//! An explicit safety limit prevents accidentally requesting millions of
-//! copyrighted/third-party service tiles for all of the Netherlands.
+//! Original 256x256 WMTS JPEGs are downloaded at every requested level.
+//! No resampling or lower-resolution cache generation occurs after download.
+//! A hard, visible limit prevents an accidental multi-terabyte national job.
 use crate::{model::Bounds,offline_overview,storage};
-use image::{ImageFormat,RgbaImage};
-use image::imageops::{resize,FilterType};
+use image::{codecs::jpeg::JpegEncoder,DynamicImage,ImageFormat,RgbaImage};
+use serde::{Deserialize,Serialize};
 use std::{
     fs,io::{Cursor,Read,Write},path::{Path,PathBuf},
-    sync::atomic::{AtomicBool,Ordering},
-    time::{Duration,SystemTime},
+    sync::{atomic::{AtomicBool,AtomicUsize,Ordering},mpsc},
+    time::{Duration,SystemTime,UNIX_EPOCH},
 };
 
 pub const MIN_ZOOM:u8=0;
 pub const MAX_ZOOM:u8=19;
 pub const DEFAULT_ZOOM:u8=15;
 pub const MAX_DOWNLOAD_TILES:u64=4096;
+/// European Netherlands in RD coordinates, conservatively including surrounding water.
+pub const NETHERLANDS_AREA:[i32;4]=[0,300_000,290_000,630_000];
+pub const DEFAULT_QUALITY:u8=100;
+pub fn supported_quality(value:u8)->bool{matches!(value,100|95|85|70)}
+pub fn quality_label(value:u8)->&'static str{
+    match value{100=>"Origineel JPEG (geen extra compressie)",95=>"JPEG kwaliteit 95",85=>"JPEG kwaliteit 85",70=>"JPEG kwaliteit 70",_=>"Ongeldige compressie"}
+}
 pub const EXPECTED_JPEG_BYTES:u64=50*1024;
 pub const MAX_JPEG_BYTES:usize=3*1024*1024;
 pub const FRESH_FOR:Duration=offline_overview::REFRESH_AFTER;
@@ -155,7 +161,7 @@ pub fn grid(bounds:Bounds,zoom:u8)->Option<Grid>{
 pub struct Estimate {
     /// Only highest-resolution PDOK JPEGs are downloaded.
     pub tiles:u64,
-    /// Lower-resolution PNGs are made locally from the downloaded JPEGs.
+    /// Additional original JPEGs needed at the lower WMTS zoom levels.
     pub derived_tiles:u64,
     pub expected_bytes:u64,
     pub allowed:bool,
@@ -172,8 +178,8 @@ pub fn estimate(area:[i32;4],zoom:u8)->Option<Estimate>{
         generated=generated.saturating_add(grid(bounds,level)?.count());
     }
     Some(Estimate{tiles:count,derived_tiles:generated,
-        expected_bytes:count.saturating_mul(EXPECTED_JPEG_BYTES),
-        allowed:count<=MAX_DOWNLOAD_TILES})
+        expected_bytes:count.saturating_add(generated).saturating_mul(EXPECTED_JPEG_BYTES),
+        allowed:count.saturating_add(generated)<=MAX_DOWNLOAD_TILES})
 }
 pub fn format_mb(bytes:u64)->String {
     let mb=bytes as f64/1_000_000.;
@@ -184,9 +190,9 @@ pub fn format_mb(bytes:u64)->String {
 }
 pub fn format_estimate(area:[i32;4],zoom:u8)->String{
     match estimate(area,zoom){
-        Some(e)=>format!("Niveau {zoom} · {} · ~{} download ({} tegels){}",
+        Some(e)=>format!("Niveau {zoom} · {} · ~{} download ({} originele tegels, alle zoomniveaus){}",
             format_resolution(zoom),format_mb(e.expected_bytes),
-            e.tiles,if e.allowed{""}else{" · te groot"}),
+            e.steps(),if e.allowed{""}else{" · te groot"}),
         None=>format!("Niveau {zoom} · buiten PDOK-dekking"),
     }
 }
@@ -201,53 +207,14 @@ fn cached_tile(root:&Path,id:TileId)->Option<SystemTime>{
         .then(||meta.modified().ok()).flatten()
 }
 pub struct ImageTile{pub image:RgbaImage,pub modified:SystemTime}
-fn derived_stamp(root:&Path,id:TileId)->Option<SystemTime>{
-    let meta=fs::metadata(id.derived_path(root)).ok()?;
-    (meta.is_file() && meta.len()>128 && meta.len()<=MAX_JPEG_BYTES as u64)
-        .then(||meta.modified().ok()).flatten()
-}
-pub fn tile_modified(root:&Path,id:TileId)->Option<SystemTime>{
-    match (cached_tile(root,id),derived_stamp(root,id)){
-        (Some(a),Some(b))=>Some(a.max(b)),
-        (Some(a),None)|(None,Some(a))=>Some(a),
-        (None,None)=>None,
-    }
-}
-pub fn has_tile(root:&Path,id:TileId)->bool{tile_modified(root,id).is_some()}
-fn decode_derived(bytes:&[u8])->Result<RgbaImage,String>{
-    if bytes.len()<128 || bytes.len()>MAX_JPEG_BYTES{
-        return Err("Lokaal verkleinde PDOK-tegel heeft ongeldige grootte".into());
-    }
-    let mut reader=image::ImageReader::with_format(Cursor::new(bytes),ImageFormat::Png);
-    let mut limits=image::Limits::default();
-    limits.max_image_width=Some(256);
-    limits.max_image_height=Some(256);
-    limits.max_alloc=Some(2*1024*1024);
-    reader.limits(limits);
-    let image=reader.decode().map_err(|e|format!("Lokaal verkleinde PNG lezen: {e}"))?;
-    if image.width()!=256 || image.height()!=256{
-        return Err("Verkleinde PDOK-tegel heeft verkeerde afmetingen".into());
-    }
-    Ok(image.to_rgba8())
-}
-/// A real WMTS JPEG wins if it is newer; otherwise use the locally derived
-/// photo. Older, downloaded lower levels remain readable but are never
-/// fetched again by the new offline downloader.
+/// Only genuine WMTS JPEG tiles are eligible for display. Previously generated
+/// downsized PNG overviews are intentionally ignored.
+pub fn tile_modified(root:&Path,id:TileId)->Option<SystemTime>{cached_tile(root,id)}
+pub fn has_tile(root:&Path,id:TileId)->bool{cached_tile(root,id).is_some()}
 pub fn read_tile(root:&Path,id:TileId)->Result<Option<ImageTile>,String>{
-    let jpg=cached_tile(root,id);
-    let derived=derived_stamp(root,id);
-    let order=if derived>jpg{[true,false]}else{[false,true]};
-    for png in order {
-        let timestamp=if png{derived}else{jpg};
-        let Some(modified)=timestamp else{continue;};
-        let path=if png{id.derived_path(root)}else{id.path(root)};
-        if let Ok(bytes)=fs::read(path){
-            if let Ok(image)=if png{decode_derived(&bytes)}else{decode(&bytes)}{
-                return Ok(Some(ImageTile{image,modified}));
-            }
-        }
-    }
-    Ok(None)
+    let Some(modified)=cached_tile(root,id) else{return Ok(None);};
+    let bytes=fs::read(id.path(root)).map_err(|e|format!("Offline JPEG lezen: {e}"))?;
+    Ok(Some(ImageTile{image:decode(&bytes)?,modified}))
 }
 fn decode(bytes:&[u8])->Result<RgbaImage,String>{
     if bytes.len()<256||bytes.len()>MAX_JPEG_BYTES
@@ -267,7 +234,7 @@ fn decode(bytes:&[u8])->Result<RgbaImage,String>{
     Ok(image.to_rgba8())
 }
 fn fetch_one(http:&reqwest::blocking::Client,root:&Path,id:TileId,
-    cancel:&AtomicBool)->Result<(),String>{
+    quality:u8,cancel:&AtomicBool)->Result<(),String>{
     if cancel.load(Ordering::Relaxed){return Err("Offline aanvraag geannuleerd".into());}
     let mut response=http.get(id.url()?)
         .header(reqwest::header::ACCEPT,"image/jpeg")
@@ -284,7 +251,16 @@ fn fetch_one(http:&reqwest::blocking::Client,root:&Path,id:TileId,
     let mut bytes=Vec::new();
     response.take((MAX_JPEG_BYTES+1) as u64)
         .read_to_end(&mut bytes).map_err(|e|format!("Tegel lezen: {e}"))?;
-    decode(&bytes)?;
+    let pixels=decode(&bytes)?;
+    // JPEG quality changes coding only. Never change the WMTS pixel dimensions.
+    if quality!=DEFAULT_QUALITY{
+        let mut compressed=Vec::new();
+        JpegEncoder::new_with_quality(&mut compressed,quality)
+            .encode_image(&DynamicImage::ImageRgb8(DynamicImage::ImageRgba8(pixels).to_rgb8()))
+            .map_err(|e|format!("Volledige PDOK-tegel comprimeren: {e}"))?;
+        decode(&compressed)?;
+        bytes=compressed;
+    }
     if cancel.load(Ordering::Relaxed){return Err("Offline aanvraag geannuleerd".into());}
     let target=id.path(root);
     let dir=target.parent().ok_or("Ongeldige offline-kaartmap")?;
@@ -292,157 +268,202 @@ fn fetch_one(http:&reqwest::blocking::Client,root:&Path,id:TileId,
     storage::atomic_write(&target,true,|out|
         out.write_all(&bytes).map_err(|e|e.to_string()))
 }
-/// Build each less-detailed level from four already stored sharper child
-/// tiles. Missing child quadrants stay transparent, revealing the bundled
-/// nationwide preview instead of an opaque blank square. Existing derived
-/// pixels outside the current download area are retained.
-fn downsample_parent(root:&Path,id:TileId)->Result<bool,String>{
-    let mut output=match fs::read(id.derived_path(root)){
-        Ok(bytes)=>decode_derived(&bytes).unwrap_or_else(|_|RgbaImage::new(256,256)),
-        Err(_)=>RgbaImage::new(256,256),
-    };
-    let mut any=false;
-    for dy in 0..2u32{
-        for dx in 0..2u32{
-            let child=TileId{zoom:id.zoom+1,
-                col:id.col*2+dx,row:id.row*2+dy};
-            let Some(child)=read_tile(root,child)?.map(|v|v.image) else{continue;};
-            let reduced=resize(&child,128,128,FilterType::Triangle);
-            for y in 0..128u32{
-                for x in 0..128u32{
-                    let color=*reduced.get_pixel(x,y);
-                    if color[3]>0 {
-                        output.put_pixel(dx*128+x,dy*128+y,color);
-                        any=true;
-                    }
-                }
-            }
-        }
-    }
-    if !any{return Ok(false);}
-    let mut buf=Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(output)
-        .write_to(&mut buf,ImageFormat::Png)
-        .map_err(|e|format!("Verkleinde offline luchtfoto opslaan: {e}"))?;
-    let target=id.derived_path(root);
-    fs::create_dir_all(target.parent().ok_or("Ongeldige offline tegelmap")?)
-        .map_err(|e|e.to_string())?;
-    storage::atomic_write(&target,true,|writer|
-        writer.write_all(&buf.into_inner()).map_err(|e|e.to_string()))?;
-    Ok(true)
+/// Persist a bounded catalog of the user-approved downloads. All packages
+/// share the same physical JPEG tiles, allowing overlapping areas to reuse them.
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct Download {
+    pub id:u64,
+    pub area:[i32;4],
+    pub zoom:u8,
+    pub quality:u8,
+    pub created_secs:u64,
+    pub bytes:u64,
 }
-/// Derive the complete multiscale pyramid locally. PDOK is never contacted
-/// for these levels. Regeneration is possible with no internet connection.
-pub fn build_local_overviews(
-    root:&Path,area:[i32;4],maximum_zoom:u8,cancel:&AtomicBool,
-    mut on_step:impl FnMut(u64,u64),
-)->Result<(),String>{
-    let estimate=estimate(area,maximum_zoom).ok_or("Ongeldig overzichtsgebied")?;
-    if !estimate.allowed{return Err("Offline gebied bevat te veel tegels".into());}
-    let bounds=from_area(area).ok_or("Ongeldige offline uitsnede")?;
-    let mut completed=0u64;
-    for level in (MIN_ZOOM..maximum_zoom).rev(){
-        let cells=grid(bounds,level).ok_or("Offline overzichtsniveau buiten kaart")?;
-        for id in cells.ids(){
-            if cancel.load(Ordering::Relaxed){
-                return Err("Offline overzicht maken geannuleerd".into());
+#[derive(Default,Serialize,Deserialize)]
+#[serde(default)]
+struct Catalog{entries:Vec<Download>}
+fn catalog_path(root:&Path)->PathBuf{root.join("downloads.json")}
+fn catalog(root:&Path)->Result<Catalog,String>{
+    let path=catalog_path(root);
+    let bytes=match fs::read(path){
+        Ok(bytes)=>bytes,
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(Catalog::default()),
+        Err(e)=>return Err(format!("Offline kaartlijst openen: {e}")),
+    };
+    if bytes.len()>1024*1024{return Err("Offline kaartlijst is te groot".into());}
+    let data:Catalog=serde_json::from_slice(&bytes)
+        .map_err(|e|format!("Offline kaartlijst is beschadigd: {e}"))?;
+    if data.entries.len()>2048 || data.entries.iter().any(|d|
+        from_area(d.area).is_none() || d.zoom>MAX_ZOOM || !supported_quality(d.quality))
+    {return Err("Offline kaartlijst bevat ongeldige gegevens".into());}
+    Ok(data)
+}
+fn save_catalog(root:&Path,data:&Catalog)->Result<(),String>{
+    fs::create_dir_all(root).map_err(|e|e.to_string())?;
+    let bytes=serde_json::to_vec_pretty(data).map_err(|e|e.to_string())?;
+    storage::atomic_write(&catalog_path(root),true,|file|
+        file.write_all(&bytes).map_err(|e|e.to_string()))
+}
+pub fn list_downloads()->Result<Vec<Download>,String>{
+    let mut entries=catalog(&root())?.entries;
+    entries.sort_by(|a,b|b.created_secs.cmp(&a.created_secs));
+    Ok(entries)
+}
+fn ids_in_area(area:[i32;4],maximum_zoom:u8)->Result<Vec<TileId>,String>{
+    let bounds=from_area(area).ok_or("Ongeldige offline kaartuitsnede")?;
+    let mut ids=Vec::new();
+    for zoom in MIN_ZOOM..=maximum_zoom{
+        ids.extend(grid(bounds,zoom).ok_or("Ongeldige WMTS-uitsnede")?.ids());
+    }
+    Ok(ids)
+}
+fn register_download(root:&Path,area:[i32;4],zoom:u8,quality:u8)->Result<(),String>{
+    let mut data=catalog(root)?;
+    let bytes=ids_in_area(area,zoom)?.into_iter().filter_map(|id|
+        fs::metadata(id.path(root)).ok().map(|info|info.len())).sum();
+    let now=SystemTime::now().duration_since(UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    // Re-downloading the same coverage refreshes its existing catalog entry.
+    if let Some(entry)=data.entries.iter_mut().find(|e|e.area==area&&e.zoom==zoom){
+        entry.quality=quality;entry.bytes=bytes;entry.created_secs=now;
+    }else{
+        let id=data.entries.iter().map(|entry|entry.id).max()
+            .unwrap_or(now.saturating_mul(1000))
+            .saturating_add(1);
+        data.entries.push(Download{id,area,zoom,quality,created_secs:now,bytes});
+    }
+    save_catalog(root,&data)
+}
+fn overlaps_tile(download:&Download,id:TileId)->bool{
+    if id.zoom>download.zoom {return false;}
+    let Some(bounds)=from_area(download.area) else{return false;};
+    grid(bounds,id.zoom).is_some_and(|range|
+        id.col>=range.min_col&&id.col<=range.max_col
+            &&id.row>=range.min_row&&id.row<=range.max_row)
+}
+/// Remove one downloaded area without erasing tiles shared with other packages.
+pub fn remove_download(id:u64)->Result<(),String>{
+    let root=root();
+    let mut data=catalog(&root)?;
+    let index=data.entries.iter().position(|entry|entry.id==id)
+        .ok_or("Offline download is niet meer aanwezig")?;
+    let removed=data.entries.remove(index);
+    for tile in ids_in_area(removed.area,removed.zoom)?{
+        if data.entries.iter().any(|entry|overlaps_tile(entry,tile)){continue;}
+        let path=tile.path(&root);
+        if let Err(e)=fs::remove_file(path){
+            if e.kind()!=std::io::ErrorKind::NotFound {
+                return Err(format!("Offline tegel verwijderen mislukt: {e}"));
             }
-            downsample_parent(root,id)?;
-            completed+=1;
-            on_step(completed,estimate.derived_tiles);
         }
     }
+    save_catalog(&root,&data)
+}
+/// Remove all user-downloaded WMTS areas and old WMS-derived offline archives.
+/// The built-in, always-available overview image is part of the executable.
+pub fn remove_all_downloads()->Result<(),String>{
+    let current=root();
+    if current.exists(){fs::remove_dir_all(&current).map_err(|e|e.to_string())?;}
+    for quality in [10,25,50]{
+        let old=crate::offline_detail::root_for(quality);
+        if old.exists(){fs::remove_dir_all(old).map_err(|e|e.to_string())?;}
+    }
+    let old=offline_overview::cache_path();
+    if old.exists(){fs::remove_file(old).map_err(|e|e.to_string())?;}
     Ok(())
 }
 
-/// Fetches only the user-approved, bounded area. Never enumerate or download
-/// an unbounded high-resolution nationwide pyramid by accident.
+/// A manual refresh requests original JPEG tiles at each WMTS zoom level.
+/// Compression may reduce *bytes* but not image width/height.
 pub fn refresh(
     area:[i32;4],maximum_zoom:u8,force:bool,cancel:&AtomicBool,
     on_tile:impl FnMut(u64,u64),
 )->Result<(),String>{
-    refresh_at(&root(),area,maximum_zoom,force,cancel,on_tile)
+    refresh_with_quality(area,maximum_zoom,DEFAULT_QUALITY,force,cancel,on_tile)
+}
+pub fn refresh_with_quality(
+    area:[i32;4],maximum_zoom:u8,quality:u8,force:bool,cancel:&AtomicBool,
+    on_tile:impl FnMut(u64,u64),
+)->Result<(),String>{
+    refresh_at_with_quality(&root(),area,maximum_zoom,quality,force,cancel,on_tile)
 }
 pub fn refresh_at(
     root:&Path,area:[i32;4],maximum_zoom:u8,force:bool,cancel:&AtomicBool,
+    on_tile:impl FnMut(u64,u64),
+)->Result<(),String>{
+    refresh_at_with_quality(root,area,maximum_zoom,DEFAULT_QUALITY,force,cancel,on_tile)
+}
+pub fn refresh_at_with_quality(
+    root:&Path,area:[i32;4],maximum_zoom:u8,quality:u8,force:bool,cancel:&AtomicBool,
     mut on_tile:impl FnMut(u64,u64),
 )->Result<(),String>{
+    if !supported_quality(quality){return Err("Ongeldige offline JPEG-compressie".into());}
     let plan=estimate(area,maximum_zoom)
         .ok_or("Ongeldige kaartuitsnede voor offline PDOK")?;
     if !plan.allowed{
-        return Err(format!("{} benodigde tegels is te groot. Zoom verder in op de kaart of kies een lager niveau (maximum {} tegels)",
-            plan.tiles,MAX_DOWNLOAD_TILES));
+        return Err(format!("{} originele WMTS-tegels is te groot (maximum {}). Kies een lager zoomniveau of een kleiner gebied; de resolutie wordt niet automatisch verlaagd.",
+            plan.steps(),MAX_DOWNLOAD_TILES));
     }
-    let bounds=from_area(area).ok_or("Ongeldige offline kaartuitsnede")?;
-    // Fetch only the highest WMTS resolution from PDOK. Smaller zoom levels
-    // are produced by the CPU from these sharp images after the download.
-    let ids=grid(bounds,maximum_zoom)
-        .ok_or("Ongeldige WMTS-uitsnede")?.ids();
+    let ids=ids_in_area(area,maximum_zoom)?;
     let http=reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(6))
         .timeout(Duration::from_secs(20))
+        .pool_max_idle_per_host(4)
         .user_agent(concat!("SleufBase-Rust/",env!("CARGO_PKG_VERSION")," offline WMTS"))
         .build().map_err(|e|e.to_string())?;
     let now=SystemTime::now();
-    let mut consecutive_failures=0usize;
-    let mut total_failed=0usize;
+    let next=AtomicUsize::new(0);
+    let failures=AtomicUsize::new(0);
+    let (tx,rx)=mpsc::sync_channel::<Result<(),String>>(16);
     let mut done=0u64;
-    let mut updated=0u64;
-    let mut fatal_error=None;
-    for id in ids{
-        if cancel.load(Ordering::Relaxed){return Err("Offlinedownload geannuleerd".into());}
-        let fresh=cached_tile(root,id).is_some_and(|stamp|
-            !offline_overview::needs_refresh(stamp,now));
-        if force || !fresh {
-            let mut result=Err("PDOK-tegel nog niet opgehaald".to_string());
-            for attempt in 0..3 {
-                if cancel.load(Ordering::Relaxed){
-                    return Err("Offlinedownload geannuleerd".into());
+    let mut last_error=None;
+    // Four bounded, shared-connection downloads. Progress callbacks still
+    // run on the calling thread so UI ownership and cancellation remain safe.
+    std::thread::scope(|scope|{
+        for _ in 0..4{
+            let sender=tx.clone();
+            let next=&next;
+            let failures=&failures;
+            let ids=&ids;
+            let http=&http;
+            scope.spawn(move||{
+                loop{
+                    if cancel.load(Ordering::Relaxed)||failures.load(Ordering::Relaxed)>=8 {break;}
+                    let index=next.fetch_add(1,Ordering::Relaxed);
+                    let Some(id)=ids.get(index).copied() else{break;};
+                    let fresh=!force&&cached_tile(root,id).is_some_and(|stamp|
+                        !offline_overview::needs_refresh(stamp,now));
+                    let result=if fresh{Ok(())}else{
+                        let mut result=Err("PDOK-tegel nog niet opgehaald".to_string());
+                        for attempt in 0..3{
+                            if cancel.load(Ordering::Relaxed){break;}
+                            result=fetch_one(http,root,id,quality,cancel);
+                            if result.is_ok(){break;}
+                            if attempt<2{
+                                std::thread::sleep(Duration::from_millis(150*(attempt+1)));
+                            }
+                        }
+                        result
+                    };
+                    if result.is_err(){failures.fetch_add(1,Ordering::Relaxed);}
+                    if sender.send(result).is_err(){break;}
                 }
-                result=fetch_one(&http,root,id,cancel);
-                if result.is_ok(){break;}
-                if attempt<2{
-                    std::thread::sleep(Duration::from_millis(150*(attempt+1)));
-                }
-            }
-            match result {
-                Ok(())=>{
-                    consecutive_failures=0;
-                    updated+=1;
-                },
-                Err(error)=>{
-                    total_failed+=1;
-                    consecutive_failures+=1;
-                    if consecutive_failures>=4{
-                        fatal_error=Some(format!("Offline PDOK niet beschikbaar na meerdere fouten: {error}"));
-                        break;
-                    }
-                }
-            }
+            });
         }
-        done+=1;
-        on_tile(done,plan.steps());
-        // One low-priority sequential background connection leaves capacity
-        // for the interactive live PDOK map and other cadastral operations.
+        drop(tx);
+        for result in rx{
+            done+=1;
+            if let Err(error)=result{last_error=Some(error);}
+            on_tile(done,plan.steps());
+        }
+    });
+    if cancel.load(Ordering::Relaxed){return Err("Offlinedownload geannuleerd".into());}
+    if failures.load(Ordering::Relaxed)>0{
+        return Err(format!("Offline download niet volledig ({done}/{}): {}",
+            plan.steps(),last_error.unwrap_or_else(||"PDOK niet bereikbaar".into())));
     }
-    // Build the zoomed-out view from the sharp images on this computer;
-    // this works offline and makes zero additional requests to PDOK.
-    // Regeneration is needed only when new sharp files arrived, or when a
-    // previous interrupted run left some generated parent tiles missing.
-    let missing_parent=(MIN_ZOOM..maximum_zoom).any(|level|
-        grid(bounds,level).is_some_and(|g|
-            g.ids().any(|id|!id.derived_path(root).is_file())));
-    if updated>0 || missing_parent {
-        build_local_overviews(root,area,maximum_zoom,cancel,|local,_total|{
-            on_tile(done+local,plan.steps());
-        })?;
-    }else if fatal_error.is_none(){
-        on_tile(plan.steps(),plan.steps());
-    }
-    if let Some(error)=fatal_error {return Err(error);}
-    if total_failed>0 {
-        return Err(format!("{total_failed} offline luchtfototegels konden niet worden bijgewerkt"));
-    }
+    if done!=plan.steps(){return Err("Offline download onverwacht onderbroken".into());}
+    register_download(root,area,maximum_zoom,quality)?;
     Ok(())
 }
 #[cfg(test)]
@@ -457,7 +478,7 @@ mod tests{
             assert!(estimate.tiles>=last);
             last=estimate.tiles;
             assert_eq!(estimate.steps(),estimate.tiles+estimate.derived_tiles);
-            assert_eq!(estimate.expected_bytes,estimate.tiles*EXPECTED_JPEG_BYTES);
+            assert_eq!(estimate.expected_bytes,estimate.steps()*EXPECTED_JPEG_BYTES);
             assert!(resolution(level)>0.);
             assert!(format_estimate(area,level).contains(&format!("Niveau {level}")));
         }
@@ -466,42 +487,43 @@ mod tests{
         assert_eq!(format_resolution(19),"0.66 cm/px");
         let high=estimate(area,19).unwrap();
         assert!(!high.allowed);
+        assert!(estimate(NETHERLANDS_AREA,7).unwrap().allowed);
+        assert!(!estimate(NETHERLANDS_AREA,15).unwrap().allowed);
     }
     #[test]
-    fn local_zoom_out_uses_sharp_photo_pixels_without_network_requests(){
-        let root=tempfile::tempdir().unwrap();
-        let parent=TileId{zoom:0,col:0,row:0};
-        let palette=[
-            [220,20,20,255],[20,220,20,255],
-            [20,20,220,255],[220,220,20,255],
-        ];
-        for row in 0..2u32{
-            for col in 0..2u32{
-                let id=TileId{zoom:1,col,row};
-                let color=image::Rgba(palette[(row*2+col) as usize]);
-                let png=image::DynamicImage::ImageRgba8(
-                    RgbaImage::from_pixel(256,256,color));
-                let mut bytes=Cursor::new(Vec::new());
-                png.write_to(&mut bytes,ImageFormat::Png).unwrap();
-                let dest=id.derived_path(root.path());
-                fs::create_dir_all(dest.parent().unwrap()).unwrap();
-                fs::write(dest,bytes.into_inner()).unwrap();
-            }
-        }
-        let cancel=AtomicBool::new(false);
+    fn all_levels_are_original_jpegs_not_later_downsampled(){
         let area=[154900,462900,155100,463100];
-        build_local_overviews(root.path(),area,1,&cancel,|_,_|{}).unwrap();
-        let image=read_tile(root.path(),parent).unwrap().unwrap().image;
-        for row in 0..2u32{
-            for col in 0..2u32{
-                assert_eq!(image.get_pixel(64+col*128,64+row*128).0,
-                    palette[(row*2+col) as usize]);
-            }
-        }
-        assert!(has_tile(root.path(),parent));
-        let estimate=estimate(area,1).unwrap();
-        assert_eq!(estimate.tiles,4,"only highest-level JPEGs need downloading");
-        assert_eq!(estimate.derived_tiles,1);
+        let total=estimate(area,1).unwrap();
+        assert_eq!(total.tiles,4);
+        assert_eq!(total.derived_tiles,1);
+        assert_eq!(total.steps(),5);
+        let root=tempfile::tempdir().unwrap();
+        let sample=image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            256,256,image::Rgb([71,80,92])));
+        let mut bytes=Vec::new();
+        JpegEncoder::new_with_quality(&mut bytes,92).encode_image(&sample).unwrap();
+        let stored=TileId{zoom:1,col:0,row:0};
+        let destination=stored.path(root.path());
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination,&bytes).unwrap();
+        assert!(has_tile(root.path(),stored));
+        assert_eq!(fs::read(destination).unwrap(),bytes,
+            "original PDOK JPEG bytes must be preserved at quality 100");
+        assert!(!has_tile(root.path(),TileId{zoom:0,col:0,row:0}),
+            "never use a synthesized low-resolution tile");
+    }
+    #[test]
+    fn catalog_deletes_one_area_without_other_downloads(){
+        let root=tempfile::tempdir().unwrap();
+        let a=[154900,462900,155100,463100];
+        let b=[155000,463000,155200,463200];
+        register_download(root.path(),a,1,100).unwrap();
+        register_download(root.path(),b,1,85).unwrap();
+        let mut entries=catalog(root.path()).unwrap();
+        assert_eq!(entries.entries.len(),2);
+        assert_eq!(entries.entries.remove(0).area,a);
+        assert!(supported_quality(70));
+        assert!(!supported_quality(20));
     }
     #[test]
     fn bounds_are_correct_and_user_area_is_bounded(){
