@@ -70,11 +70,17 @@ impl State{
     pub(super) fn tiles(&self)->&[(egui::TextureHandle,Bounds)]{
         &self.tiles
     }
-    pub(super) fn download_zoom_now(&mut self,zoom:u8,area:[i32;4])->Result<(),String>{
-        self.zoom_map.download_now(zoom,area)?;
-        self.force_overview=true;
-        self.retry_after=Instant::now();
-        Ok(())
+    pub(super) fn download_zoom_now(&mut self,zoom:u8,area:[i32;4],quality:u8)->Result<(),String>{
+        self.zoom_map.download_now(zoom,area,quality)
+    }
+    pub(super) fn invalidate_cached_images(&mut self){
+        // Existing GPU textures must never display a deleted offline JPEG.
+        self.zoom_map.invalidate_cached_images();
+        self.loaded.clear();
+        self.decoding.clear();
+        self.tiles.clear();
+        self.texture=None;
+        self.initialized=false;
     }
     /// A manual refresh never changes the scheduled-update opt-in.
     /// It is requested explicitly from Settings and rebuilds all tiles,
@@ -304,7 +310,7 @@ impl State{
         }
     }
     pub(super) fn poll(&mut self,ctx:&egui::Context,view:Option<Bounds>,
-        auto_backup:bool,detail_mb:u16,zoom:u8,area:Option<[i32;4]>){
+        auto_backup:bool,detail_mb:u16,zoom:u8,area:Option<[i32;4]>,quality:u8){
         let mb=if offline_detail::valid_level(detail_mb){detail_mb}else{50};
         // Old 10/25/50 MiB national WMS mosaics remain as a read-only
         // fallback, but no longer consume background network requests.
@@ -386,7 +392,7 @@ impl State{
         self.poll_detail_downloads(ctx,mb);
         self.poll_visible_tiles(ctx,view,mb);
         // Render zoom-tile layers above the legacy cache when available.
-        self.zoom_map.poll(ctx,view,auto_backup,zoom,area);
+        self.zoom_map.poll(ctx,view,auto_backup,zoom,area,quality);
         self.tiles.extend(self.zoom_map.tiles().iter().cloned());
         if self.pending.is_some(){
             ctx.request_repaint_after(Duration::from_secs(1));
