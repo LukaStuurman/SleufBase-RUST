@@ -136,12 +136,7 @@ impl SleufBaseApp {
                 return;
             }
         }
-        if self.map_requests.scheduler.suppressed() {
-            self.pdok_texture = None;
-            self.pdok_bounds = None;
-            self.message = "Zoom verder in om de kadastrale kaart te bekijken".into();
-        }
-        if let Some(request) = self.map_requests.scheduler.due(now) {
+         if let Some(request) = self.map_requests.scheduler.due(now) {
             #[cfg(test)]
             if self.map_requests.worker.is_none() {
                 self.map_requests.scheduler.complete(request, false);
@@ -352,13 +347,13 @@ mod tests {
         });
     }
     #[test]
-    fn actual_canvas_dpi_zoom_resize_and_logical_cadastral_threshold() {
+    fn actual_canvas_dpi_zoom_resize_and_fully_supported_cadastral() {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(2.);
         let mut scheduler = map_request::Scheduler::default();
         frame(&ctx, [180., 140.], Provider::Cadastral, |view, v| {
             assert_eq!(v.logical_meters_per_pixel, Some(2.));
-            assert!(!v.cadastral_too_far());
+            assert_eq!(v.source,Provider::Cadastral);
             assert_eq!(
                 v.size[0],
                 (view.rect.width() * ctx.pixels_per_point()).ceil() as u32
@@ -389,7 +384,7 @@ mod tests {
             Provider::Cadastral,
             1. / 1.99,
             |_, v| {
-                assert!(!v.cadastral_too_far());
+                assert_eq!(v.source,Provider::Cadastral);
             },
         );
     }
