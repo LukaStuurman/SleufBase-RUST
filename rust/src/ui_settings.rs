@@ -9,14 +9,16 @@ use std::{collections::BTreeMap, path::PathBuf, sync::mpsc, time::Duration};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Category {
     Maps,
+    PointClouds,
     Dxf,
     Trenches,
     KickTheMap,
     Backups,
 }
 impl Category {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Maps,
+        Self::PointClouds,
         Self::Dxf,
         Self::Trenches,
         Self::KickTheMap,
@@ -26,6 +28,7 @@ impl Category {
         match self {
             Self::Backups => "Back-ups",
             Self::Maps => "Kaarten",
+            Self::PointClouds => "Puntenwolken",
             Self::Dxf => "DXF-export",
             Self::Trenches => "Proefsleuven",
             Self::KickTheMap => "KickTheMap",
@@ -311,6 +314,7 @@ impl Dialog {
             // Keep global working-map preferences from the staged draft.
             settings.viewer.background_source = viewer.background_source.clone();
             settings.viewer.use_background = viewer.use_background;
+            settings.viewer.explicit_background_choice = true;
         }
         if settings.viewer.offline_aerial_auto_backup
             && settings.viewer.offline_aerial_area.is_none(){
@@ -481,6 +485,27 @@ fn viewer_fields(ui: &mut egui::Ui, viewer: &mut ViewerDraft) {
     checkbox(ui,&mut viewer.use_background,"Achtergrondkaart tonen op het kaartscherm");
     ui.small("Na Opslaan wordt deze keuze toegepast en bewaard voor de volgende start en nieuwe projecten. Opgeslagen projecten behouden hun eigen kaartkeuze.");
 }
+fn pointcloud_fields(ui: &mut egui::Ui, state: &mut Dialog) {
+    use sleufbase_rust::pointcloud::CloudCrs;
+    section(ui, "Standaard coördinatenstelsel voor puntenwolken", |ui| {
+        ui.label("Deze instelling wordt automatisch gebruikt voor nieuwe LAS/LAZ-imports, ook bij het downloaden van scans uit de KickTheMap-joblijst.");
+        let current = &mut state.draft.pointcloud_default_crs;
+        let label = |crs| match crs {
+            CloudCrs::RdNew => "RD New (EPSG:28992) · standaard",
+            CloudCrs::Wgs84 => "WGS 84 (EPSG:4326 / 4979)",
+            CloudCrs::Other => "Ander / lokaal coördinatenstelsel",
+            CloudCrs::Unknown => "Uit LAS/LAZ-metadata bepalen / onbekend",
+        };
+        egui::ComboBox::from_id_salt("pointcloud-default-crs")
+            .selected_text(label(*current)).show_ui(ui, |ui| {
+                for crs in [CloudCrs::RdNew, CloudCrs::Wgs84, CloudCrs::Other, CloudCrs::Unknown] {
+                    ui.selectable_value(current, crs, label(crs));
+                }
+            });
+        ui.small("RD New is de standaard. Coördinaten worden niet automatisch omgerekend. Als EPSG-metadata van een bron niet overeenkomt, verschijnt een foutmelding.");
+        ui.small("Nieuwe puntenwolken worden met bronbestand en 3D-conversie in SleufBase AppData opgeslagen. Verwijderen uit de puntenwolkenlijst wist beide beheerde bestanden, niet het externe origineel.");
+    });
+}
 fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
     if let Some(viewer)=&mut state.viewer {
         super::theme::strong(ui,"Achtergrond op het kaartscherm");
@@ -547,13 +572,13 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             ui.small("Niveau 17–19 kan meer pixels opleveren dan de bronfoto aan details bevat (PDOK: ongeveer 5–8 cm/pixel).");
         }
         if ui.add_enabled(!state.manual_offline_busy && estimate.is_some_and(|e|e.allowed),
-            egui::Button::new("Offline luchtfoto nu downloaden en gebruiken")).clicked(){
+            egui::Button::new("Offline luchtfoto downloaden voor offline gebruik")).clicked(){
             if let Some(area)=area {
                 state.manual_offline_download=Some((zoom,area,state.draft.viewer.offline_aerial_quality));
             }
         }
         if let Some(status)=&state.manual_offline_status {ui.small(status);}
-        ui.small("Snellere download met maximaal vier verbindingen. Reeds aanwezige recente JPEG's worden overgeslagen; het programma maakt na afloop geen kleinere cachebeelden.");
+        ui.small("Snellere download met maximaal vier verbindingen. De hoogste resolutie blijft als originele JPEG beschikbaar; voor uitzoomen maakt SleufBase lokaal verkleinde weergavetegels zonder nieuwe downloads.");
 
         ui.separator();
         ui.strong("Gedownloade offline kaarten beheren");
@@ -929,6 +954,7 @@ pub(crate) fn show(
                         }
                         ui.small(match state.category {
                             Category::Maps => "Kies de achtergrond voor het kaartscherm en voor je kaartuitvoer.",
+                            Category::PointClouds => "Standaardcoördinaten, AppData-opslag en verwijderen van LAS/LAZ-puntenwolken.",
                             Category::Dxf => "Beheer je DXF-sjabloon, opdrachtgeverslogo’s, proefsleufweergave, kleuren en contactgegevens op de bladen.",
                             Category::Trenches => "Stel dwarsprofielen, maaiveld en automatische uitvoer in.",
                             Category::KickTheMap => "Beheer materiaalkeuzes, kabelnamen en de woordenlijst voor DXF-lagen.",
@@ -975,6 +1001,7 @@ pub(crate) fn show(
                                     }
                                 }),
                                 Category::Maps => map_fields(ui, state),
+                                Category::PointClouds => pointcloud_fields(ui, state),
                                 Category::Dxf => dxf_fields(ui, state),
                                 Category::Trenches => section(ui,"Proefsleuven en uitvoer",|ui| trench_fields(ui,state)),
                                 Category::KickTheMap => section(ui,"Keuzes en naamkoppelingen",|ui| {
@@ -1078,7 +1105,7 @@ mod tests {
                 assert!(text.contains("Woorden of codes"));
                 assert!(!text.contains("Achtergrond op het kaartscherm"));
             } else {
-                let labels = ["Kaarten", "DXF-export", "Proefsleuven", "KickTheMap", "Back-ups"];
+                let labels = ["Kaarten", "Puntenwolken", "DXF-export", "Proefsleuven", "KickTheMap", "Back-ups"];
                 let positions = labels.map(|label| text.find(label).expect("original category rendered"));
                 assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
                 assert!(text.contains("Achtergrond op het kaartscherm"));

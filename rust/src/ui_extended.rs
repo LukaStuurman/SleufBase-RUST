@@ -798,9 +798,8 @@ impl SleufBaseApp {
                 // The OSM credit is already painted ten points above the bottom.
                 let bottom = if osm || show_offline_aerial { 30. } else { 10. };
                 let position = view.rect.right_bottom() + egui::vec2(-10., -bottom) - credit.size();
-                let backing = egui::Rect::from_min_size(position, credit.size()).expand2(egui::vec2(4., 2.));
-                view.painter.rect_filled(backing, 3_u8, Color32::from_rgba_unmultiplied(255, 255, 255, 235));
-                view.painter.galley(position, credit, INK);
+                view.painter.galley(position+egui::vec2(1.,1.),credit.clone(),Color32::BLACK);
+                view.painter.galley(position,credit,Color32::WHITE);
             }
             if show_offline_aerial {
                 // CC BY attribution is required for the bundled low-res photo
@@ -810,11 +809,10 @@ impl SleufBaseApp {
                     egui::FontId::proportional(11.),INK);
                 let position=view.rect.right_bottom()
                     +egui::vec2(-10.,-10.)-credit.size();
-                let background=egui::Rect::from_min_size(position,credit.size())
-                    .expand2(egui::vec2(4.,2.));
-                view.painter.rect_filled(background,3_u8,
-                    Color32::from_rgba_unmultiplied(255,255,255,235));
-                view.painter.galley(position,credit,INK);
+                // CC BY 4.0 credits must remain visible, but require no
+                // opaque white rectangle. Shadow preserves readability.
+                view.painter.galley(position+egui::vec2(1.,1.),credit.clone(),Color32::BLACK);
+                view.painter.galley(position,credit,Color32::WHITE);
             }
         }
         self.show_location_on_map(ui, canvas_rect);

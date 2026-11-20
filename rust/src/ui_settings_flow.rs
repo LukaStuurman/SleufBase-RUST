@@ -139,7 +139,6 @@ impl SleufBaseApp {
         let manual=self.settings_dialog.as_mut()
             .and_then(|dialog|dialog.manual_offline_download.take());
         if let Some((zoom,area,quality))=manual {
-            use sleufbase_rust::project_view::BackgroundProvider as B;
             let plan=sleufbase_rust::offline_zoom::estimate(area,zoom);
             if !plan.is_some_and(|p|p.allowed){
                 if let Some(dialog)=self.settings_dialog.as_mut(){
@@ -152,18 +151,15 @@ impl SleufBaseApp {
                 settings.viewer.offline_aerial_whole_country=
                     area==sleufbase_rust::offline_zoom::NETHERLANDS_AREA;
                 settings.viewer.offline_aerial_area=Some(area);
-                settings.viewer.background_source=B::OfflineAerial.label().into();
-                settings.viewer.use_background=true;
                 match settings_store::save_pair(
                     &project::app_data_directory(),&settings,&self.backup_settings){
                     Ok(())=>{
                         match self.offline_overview.download_zoom_now(zoom,area,quality){
                             Ok(())=>{
                                 self.migrated_settings=settings;
-                                self.project_view.background_source=B::OfflineAerial.label().into();
-                                self.project_view.use_background=true;
-                                self.dirty=true;
-                                self.request_selected_background();
+                                // Saved offline tiles are used under the online
+                                // PDOK map; downloading doesn't change the
+                                // user's preferred startup background.
                                 if let Some(dialog)=self.settings_dialog.as_mut(){
                                     dialog.draft.viewer.offline_aerial_zoom_level=zoom;
                                     dialog.draft.viewer.offline_aerial_quality=quality;
@@ -172,10 +168,6 @@ impl SleufBaseApp {
                                     dialog.draft.viewer.offline_aerial_area=Some(area);
                                     dialog.manual_offline_status=Some(
                                         format!("Offline luchtfoto niveau {zoom} wordt gedownload…"));
-                                    if let Some(viewer)=dialog.viewer.as_mut(){
-                                        viewer.background_source=B::OfflineAerial.label().into();
-                                        viewer.use_background=true;
-                                    }
                                 }
                                 ctx.request_repaint();
                             }
