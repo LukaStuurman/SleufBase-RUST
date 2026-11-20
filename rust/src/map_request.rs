@@ -105,15 +105,7 @@ impl Viewport {
             max_x:right*tile,max_y:top*tile},size:[width as u32,height as u32],..self};
         if planned.validate().is_ok() && planned.covers(self) {planned} else {self}
     }
-    pub fn cadastral_too_far(self) -> bool {
-        // WMTS supports several zoom levels. Restrict only country-scale
-        // requests, instead of hiding the raster map past 2 m per pixel.
-        self.source == Provider::Cadastral
-            && self.logical_meters_per_pixel.unwrap_or(
-                (self.bounds.max_x - self.bounds.min_x) / self.size[0].max(1) as f64
-            ) >= 250.
-    }
-}
+ }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Request {
     pub generation: u64,
@@ -145,7 +137,7 @@ impl Scheduler {
         }
         let same = match (self.desired, view) {
             (Some(a), Some(b)) => {
-                a.key() == b.key() && a.cadastral_too_far() == b.cadastral_too_far()
+                a.key() == b.key()
             }
             (None, None) => true,
             _ => false,
@@ -165,9 +157,9 @@ impl Scheduler {
         }
         // A pan inside the active/cached buffer must not cancel its fetch.
         // Drag transitions alone never invalidate a usable world-space image.
-        if !provider_changed && view.is_some_and(|v| !v.cadastral_too_far()
-            && (self.active.is_some_and(|r| r.view.covers(v))
-                || (self.active.is_none() && self.cached.is_some_and(|c| c.covers(v))))) {
+        if !provider_changed && view.is_some_and(|v|
+            self.active.is_some_and(|r| r.view.covers(v))
+                || (self.active.is_none() && self.cached.is_some_and(|c| c.covers(v)))) {
             self.deadline=None;
             return Ok(false);
         }
@@ -175,7 +167,6 @@ impl Scheduler {
             .filter(|v| {
                 v.size[0] >= 20
                     && v.size[1] >= 20
-                    && !v.cadastral_too_far()
                     && !self.cached.is_some_and(|c| c.covers(*v) || c.key() == v.key())
             })
             .map(|_| {
@@ -202,7 +193,7 @@ impl Scheduler {
         }
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
-        if provider_changed || view.is_none() || view.is_some_and(Viewport::cadastral_too_far) {
+        if provider_changed || view.is_none() {
             self.cached = None;
         }
         self.deadline = deadline;
@@ -250,8 +241,7 @@ impl Scheduler {
     /// A failed request should retry with bounded exponential backoff even
     /// when the user doesn't move the map. Call after complete(..., false).
     pub fn retry_after_failure(&mut self, now: Duration) {
-        if self.active.is_some() || self.desired.is_none()
-            || self.desired.is_some_and(Viewport::cadastral_too_far) {
+        if self.active.is_some() || self.desired.is_none() {
             return;
         }
         let shift=self.retry_failures.min(5);
@@ -273,14 +263,11 @@ impl Scheduler {
         // deadline must not create a 1 ms repaint loop while it finishes.
         if self.active.is_some() { None } else { self.deadline }
     }
-    pub fn suppressed(&self) -> bool {
-        self.desired.is_some_and(Viewport::cadastral_too_far)
-    }
-}
+ }
 fn useful_during_pan(active: Viewport, desired: Viewport) -> bool {
     let a = active.bounds;
     let b = desired.bounds;
-    if active.source != desired.source || desired.cadastral_too_far()
+    if active.source != desired.source
         || a.max_x <= b.min_x || b.max_x <= a.min_x
         || a.max_y <= b.min_y || b.max_y <= a.min_y
     {
@@ -1028,23 +1015,22 @@ mod tests {
         assert!(s.due(Duration::from_secs(1)).is_none());
     }
     #[test]
-    fn identical_physical_view_threshold_transition_invalidates_suppressed_cache() {
-        let mut v = view();
-        v.source = Provider::Cadastral;
-        v.logical_meters_per_pixel = Some(1.9);
-        let mut s = Scheduler::default();
-        s.update(Some(v), false, Duration::ZERO).unwrap();
-        let first = s.due(Duration::from_millis(45)).unwrap();
-        assert!(s.complete(first, true));
-        v.logical_meters_per_pixel = Some(2.);
-        assert!(s.update(Some(v), false, Duration::from_millis(50)).unwrap());
-        assert!(s.suppressed());
-        assert!(s.due(Duration::from_secs(1)).is_none());
-        v.logical_meters_per_pixel = Some(1.9);
-        assert!(s.update(Some(v), false, Duration::from_secs(2)).unwrap());
-        assert!(s.due(Duration::from_millis(2045)).is_some());
-        v.logical_meters_per_pixel = Some(f64::NAN);
-        assert!(s.update(Some(v), false, Duration::ZERO).is_err());
+    fn cadastral_zoom_beyond_old_cutoff_still_fetches_raster() {
+        let mut view=view();
+        view.source=Provider::Cadastral;
+        view.logical_meters_per_pixel=Some(250.);
+        let mut scheduler=Scheduler::default();
+        assert!(scheduler.update(Some(view),false,Duration::ZERO).unwrap());
+        let first=scheduler.due(Duration::from_millis(45)).unwrap();
+        assert_eq!(first.view.source,Provider::Cadastral);
+        assert!(scheduler.complete(first,true));
+        view.logical_meters_per_pixel=Some(1000.);
+        view.bounds.max_x+=200000.;
+        view.bounds.max_y+=200000.;
+        assert!(scheduler.update(Some(view),false,Duration::from_millis(100)).unwrap());
+        let second=scheduler.due(Duration::from_millis(145)).unwrap();
+        assert_eq!(second.view.source,Provider::Cadastral);
+        assert!(scheduler.complete(second,true));
     }
     #[test]
     fn latest_worker_replaces_preview_and_cancels_stale_project() {
