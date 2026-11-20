@@ -416,6 +416,27 @@ mod project_override_tests{
 mod viewer_preferences_tests {
     use super::*;
     #[test]
+    fn offline_downloads_are_opt_in_and_detail_levels_are_durable() {
+        let mut settings=MigratedSettings::default();
+        assert!(!settings.viewer.offline_aerial_auto_backup);
+        assert_eq!(settings.viewer.offline_aerial_detail_mb,50);
+        settings.viewer.background_source="Offline luchtfoto".into();
+        settings.viewer.offline_aerial_auto_backup=true;
+        settings.viewer.offline_aerial_detail_mb=25;
+        settings.validate().unwrap();
+        let serial=serde_json::to_value(&settings).unwrap();
+        let restored: MigratedSettings=serde_json::from_value(serial).unwrap();
+        assert_eq!(restored.viewer,settings.viewer);
+        settings.viewer.offline_aerial_detail_mb=11;
+        assert!(settings.validate().is_err());
+        let mut old=serde_json::to_value(MigratedSettings::default()).unwrap();
+        old["viewer"].as_object_mut().unwrap().remove("offline_aerial_auto_backup");
+        old["viewer"].as_object_mut().unwrap().remove("offline_aerial_detail_mb");
+        let migrated: MigratedSettings=serde_json::from_value(old).unwrap();
+        assert!(!migrated.viewer.offline_aerial_auto_backup);
+        assert_eq!(migrated.viewer.offline_aerial_detail_mb,50);
+    }
+    #[test]
     fn old_settings_without_viewer_keep_the_previous_startup_defaults() {
         let mut json = serde_json::to_value(MigratedSettings::default()).unwrap();
         json.as_object_mut().unwrap().remove("viewer");
