@@ -165,6 +165,7 @@ impl State{
                 .is_some_and(|flag|flag.load(Ordering::Relaxed));
             self.cancel=None;
             self.pending=None;
+            let success=result.is_ok();
             if manual&&!cancelled{
                 let done=self.progress.load(Ordering::Relaxed);
                 self.notice=Some(match result{
@@ -174,7 +175,7 @@ impl State{
             }
             self.next_check=if self.queued.is_some() || (cancelled&&self.auto_enabled){
                 Instant::now()
-            }else if result.is_ok(){Instant::now()+AUTO_RESCAN}
+            }else if success{Instant::now()+AUTO_RESCAN}
             else{Instant::now()+RETRY_AFTER_FAILURE};
             ctx.request_repaint();
         }
