@@ -481,24 +481,24 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         ui.separator();
     }
     let offline_area=state.offline_area;
+    // Before the first map render, display a clearly labelled example
+    // footprint. Every one of the 20 entries still shows an MB estimate.
+    const EXAMPLE_AREA:[i32;4]=[154500,462500,155500,463500];
+    let estimate_area=offline_area.unwrap_or(EXAMPLE_AREA);
     section(ui,"Offline luchtfoto en lokale kaartback-up",|ui|{
         checkbox(ui,&mut state.draft.viewer.offline_aerial_auto_backup,
             "Offline luchtfoto automatisch bijwerken (elke 6 maanden)");
         ui.small("Standaard uit. De kleine meegeleverde luchtfoto werkt altijd zonder internet. Automatisch bijwerken geldt alleen voor het eerder gekozen en opgeslagen kaartgebied.");
         ui.label("PDOK-luchtfoto: kies het echte WMTS-zoomniveau");
         let zoom=state.draft.viewer.offline_aerial_zoom_level;
-        let selection=offline_area.map_or(
-            format!("Niveau {zoom} · {}",sleufbase_rust::offline_zoom::format_resolution(zoom)),
-            |area|sleufbase_rust::offline_zoom::format_estimate(area,zoom));
+        let selection=sleufbase_rust::offline_zoom::format_estimate(estimate_area,zoom);
         egui::ComboBox::from_id_salt("offline-photo-zoom-level")
             .width(ui.available_width().min(460.))
             .selected_text(selection)
             .show_ui(ui,|ui|{
                 for level in sleufbase_rust::offline_zoom::MIN_ZOOM
                     ..=sleufbase_rust::offline_zoom::MAX_ZOOM {
-                    let label=offline_area.map_or(
-                        format!("Niveau {level} · {}",sleufbase_rust::offline_zoom::format_resolution(level)),
-                        |area|sleufbase_rust::offline_zoom::format_estimate(area,level));
+                    let label=sleufbase_rust::offline_zoom::format_estimate(estimate_area,level);
                     ui.selectable_value(&mut state.draft.viewer.offline_aerial_zoom_level,
                         level,label);
                 }
@@ -507,7 +507,7 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
             ui.small(format!("Gebied: huidige kaartuitsnede ({}). De download bevat ook alle grovere zoomniveaus.",
                 sleufbase_rust::offline_zoom::describe_area(area)));
         }else{
-            ui.small("Voor een opslaginschatting: open eerst de kaart, zoom naar het gewenste gebied en open daarna deze instellingen opnieuw.");
+            ui.small("De getoonde MB zijn een voorbeeld voor 1 × 1 km. Open eerst de kaart, zoom naar het gewenste gebied en open Instellingen opnieuw voor de werkelijke gebiedsschatting.");
         }
         ui.small("Schatting: circa 50 KB per JPEG-tegel. Het werkelijke aantal MB hangt af van de luchtfoto en het gekozen gebied; er is geen vaste limiet van 50 MB.");
         if zoom>=17 {
