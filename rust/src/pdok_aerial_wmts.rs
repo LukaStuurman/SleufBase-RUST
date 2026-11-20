@@ -376,9 +376,9 @@ fn neighbor_service()->Option<&'static Arc<NeighborCache>> {
                     // A single prefetch request at a time leaves the other
                     // PDOK request slots free for the user's visible tiles.
                     if let Ok((tile,when,_))=load_tile(id,&job.root,&cancel) {
-                        if !cancel.load(Ordering::Relaxed){
-                            worker.insert(id,when,tile);
-                        }
+                        // A completed download stays reusable even if the
+                        // user changed the camera just before it finished.
+                        worker.insert(id,when,tile);
                     }
                 }
                 let Ok(mut guard)=worker.control.lock() else{return;};
