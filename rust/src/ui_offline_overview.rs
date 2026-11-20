@@ -77,6 +77,8 @@ impl State{
         self.manual_progress.store(0,Ordering::Relaxed);
         self.manual_notice=None;
         self.force_overview=true;
+        // A button press bypasses any earlier automatic retry-backoff.
+        self.retry_after=Instant::now();
         self.detail_next_sweep=Instant::now();
         if let Some(cancel)=&self.detail_cancel{
             cancel.store(true,Ordering::Relaxed);
