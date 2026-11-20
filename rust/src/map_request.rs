@@ -79,15 +79,40 @@ impl Viewport {
             && (a.max_y - a.min_y) / self.size[1].max(1) as f64
                 <= (b.max_y - b.min_y) / view.size[1].max(1) as f64 * 1.15
     }
-    /// Stable world-grid requests retain neighbouring pixels and share WMS
-    /// tiles across pans. Quarter-octave levels keep detail within 19%.
+    /// Keep a reserve of already *rendered* imagery outside the screen.
+    /// Previously only exact visible extents were rasterized, so a quick pan
+    /// exposed the white canvas until a newly assembled frame arrived. The
+    /// following buffer preserves the exact input meters-per-pixel, unlike
+    /// enlarging only the geographical BBOX (which would reduce resolution).
     pub fn buffered(self) -> Self {
-        // OSM and the PDOK aerial viewer use persistent world-aligned tile
-        // pyramids. Overscanning a WMS-style request forces a coarser WMTS
-        // level and unnecessary tile downloads on every scroll or zoom.
-        // Keep WMS buffering only for standalone cadastral raster maps.
-        if matches!(self.source, Provider::Osm | Provider::OsmCadastral
-            | Provider::Aerial | Provider::AerialCadastral) { return self; }
+        if matches!(self.source, Provider::Aerial | Provider::AerialCadastral) {
+            const PAD: f64 = 0.30;
+            const MAX_INTERACTIVE_PIXELS: u64 = 6_000_000;
+            let xpad=(f64::from(self.size[0])*PAD).ceil() as u32;
+            let ypad=(f64::from(self.size[1])*PAD).ceil() as u32;
+            let w=self.size[0].saturating_add(2*xpad);
+            let h=self.size[1].saturating_add(2*ypad);
+            if w>8192 || h>8192 || u64::from(w)*u64::from(h)>MAX_INTERACTIVE_PIXELS {
+                return self;
+            }
+            let dx=(self.bounds.max_x-self.bounds.min_x)/f64::from(self.size[0]);
+            let dy=(self.bounds.max_y-self.bounds.min_y)/f64::from(self.size[1]);
+            let buffered=Self {
+                bounds:Bounds{
+                    min_x:self.bounds.min_x-dx*f64::from(xpad),
+                    max_x:self.bounds.max_x+dx*f64::from(xpad),
+                    min_y:self.bounds.min_y-dy*f64::from(ypad),
+                    max_y:self.bounds.max_y+dy*f64::from(ypad),
+                },
+                size:[w,h],..self
+            };
+            return if buffered.validate().is_ok() {buffered}else{self};
+        }
+        // OSM's public tile service only allows on-demand visible tiles:
+        // do not add a speculative network buffer to that provider.
+        if matches!(self.source,Provider::Osm|Provider::OsmCadastral) {return self;}
+        // Standalone Kadaster raster keeps its existing WMS-style alignment.
+        // Stable world-grid requests retain neighboring pixels across pans.
         let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
             .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
         let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
@@ -104,6 +129,26 @@ impl Viewport {
         let planned=Self {bounds:Bounds{min_x:left*tile,min_y:bottom*tile,
             max_x:right*tile,max_y:top*tile},size:[width as u32,height as u32],..self};
         if planned.validate().is_ok() && planned.covers(self) {planned} else {self}
+    }
+    /// Request a replacement while the old raster still covers the screen.
+    /// A cached 30%-overscanned aerial canvas is refreshed when the spare edge
+    /// falls below 12% of the current view, not after the screen has reached it.
+    fn covers_with_headroom(self,view:Self)->bool{
+        if !self.covers(view){return false;}
+        if !matches!(view.source,Provider::Aerial|Provider::AerialCadastral|Provider::Cadastral) {
+            return true;
+        }
+        // An unbuffered fallback is still useful; avoid request loops on
+        // high-DPI devices when the 6M pixel budget prevents extra margins.
+        if self.key()==view.key(){return true;}
+        let pad_x=(view.bounds.max_x-view.bounds.min_x)*0.12;
+        let pad_y=(view.bounds.max_y-view.bounds.min_y)*0.12;
+        let eps=(view.bounds.max_x-view.bounds.min_x)
+            .max(view.bounds.max_y-view.bounds.min_y).max(1.)*1e-9;
+        self.bounds.min_x <= view.bounds.min_x-pad_x+eps
+            && self.bounds.max_x >= view.bounds.max_x+pad_x-eps
+            && self.bounds.min_y <= view.bounds.min_y-pad_y+eps
+            && self.bounds.max_y >= view.bounds.max_y+pad_y-eps
     }
  }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -158,8 +203,8 @@ impl Scheduler {
         // A pan inside the active/cached buffer must not cancel its fetch.
         // Drag transitions alone never invalidate a usable world-space image.
         if !provider_changed && view.is_some_and(|v|
-            self.active.is_some_and(|r| r.view.covers(v))
-                || (self.active.is_none() && self.cached.is_some_and(|c| c.covers(v)))) {
+            self.active.is_some_and(|r| r.view.covers_with_headroom(v))
+                || (self.active.is_none() && self.cached.is_some_and(|c| c.covers_with_headroom(v)))) {
             self.deadline=None;
             return Ok(false);
         }
@@ -167,7 +212,7 @@ impl Scheduler {
             .filter(|v| {
                 v.size[0] >= 20
                     && v.size[1] >= 20
-                    && !self.cached.is_some_and(|c| c.covers(*v) || c.key() == v.key())
+                    && !self.cached.is_some_and(|c| c.covers_with_headroom(*v) || c.key() == v.key())
             })
             .map(|_| {
                 let debounce = now + Duration::from_millis(45);
@@ -232,7 +277,7 @@ impl Scheduler {
         if success {
             self.retry_failures = 0;
             self.cached = Some(request.view);
-            if self.desired.is_some_and(|v| request.view.covers(v)) {
+            if self.desired.is_some_and(|v| request.view.covers_with_headroom(v)) {
                 self.deadline = None;
             }
         }
@@ -1125,6 +1170,54 @@ mod tests {
         zoom.source=Provider::Osm;
         assert!(scheduler.update(Some(zoom),false,Duration::from_secs(3)).unwrap());
         assert!(!scheduler.accepts(sharp));
+    }
+    #[test]
+    fn aerial_raster_has_real_overscan_without_losing_pixel_density() {
+        let mut v=view();
+        v.bounds=Bounds{min_x:155000.,max_x:156000.,min_y:463000.,max_y:463800.};
+        v.size=[1000,800];
+        for source in [Provider::Aerial,Provider::AerialCadastral] {
+            v.source=source;
+            let buffer=v.buffered();
+            assert!(buffer.covers(v));
+            assert!(buffer.bounds.min_x<v.bounds.min_x);
+            assert!(buffer.bounds.max_x>v.bounds.max_x);
+            assert!(buffer.bounds.min_y<v.bounds.min_y);
+            assert!(buffer.bounds.max_y>v.bounds.max_y);
+            assert_eq!(buffer.size,[1600,1280]);
+            let resolution=(buffer.bounds.max_x-buffer.bounds.min_x)
+                /f64::from(buffer.size[0]);
+            assert!((resolution-1.).abs()<1e-12);
+            let mut pan=v;
+            pan.bounds.min_x+=200.;pan.bounds.max_x+=200.;
+            assert!(buffer.covers(pan),"old texture should still cover a nearby pan");
+            assert!(!buffer.covers_with_headroom(pan),
+                "next fetch must start before the old raster boundary becomes visible");
+        }
+        v.source=Provider::Osm;
+        assert_eq!(v.buffered().bounds,v.bounds,"OSM must not prefetch outside viewport");
+        let very_large=Viewport {size:[4100,4000],..v};
+        let mut aerial=very_large;
+        aerial.source=Provider::Aerial;
+        assert_eq!(aerial.buffered(),aerial,"pixel budget must bound memory");
+    }
+    #[test]
+    fn early_refresh_starts_while_old_aerial_still_covers_visible_screen(){
+        let mut v=view();
+        v.bounds=Bounds{min_x:155000.,max_x:156000.,min_y:463000.,max_y:463800.};
+        v.size=[1000,800];
+        let mut scheduler=Scheduler::default();
+        assert!(scheduler.update(Some(v),false,Duration::ZERO).unwrap());
+        let first=scheduler.due(Duration::from_millis(45)).unwrap();
+        assert!(scheduler.complete(first,true));
+        let mut next=v;
+        next.bounds.min_x+=200.;next.bounds.max_x+=200.;
+        assert!(first.view.covers(next));
+        assert!(scheduler.update(Some(next),false,Duration::from_millis(60)).unwrap());
+        assert!(scheduler.due(Duration::from_millis(104)).is_none());
+        let refresh=scheduler.due(Duration::from_millis(105)).unwrap();
+        assert!(refresh.view.covers(next));
+        assert!(refresh.view.bounds.min_x>first.view.bounds.min_x);
     }
     #[test]
     fn world_grid_tiles_are_stable_across_pans_and_requests_remain_bounded() {
