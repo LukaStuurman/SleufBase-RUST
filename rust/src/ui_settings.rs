@@ -86,7 +86,11 @@ pub(crate) struct Dialog {
     /// Caller takes this request and opens its existing autosave selector.
     pub restore_autosave_requested: bool,
     /// Explicit action independent of Save and the automatic 183-day toggle.
-    pub manual_offline_download:Option<(u8,[i32;4])>,
+    pub manual_offline_download:Option<(u8,[i32;4],u8)>,
+    pub offline_delete:Option<Option<u64>>,
+    pub offline_delete_confirm:Option<Option<u64>>,
+    pub offline_downloads:Vec<sleufbase_rust::offline_zoom::Download>,
+    pub offline_catalog_notice:Option<String>,
     /// Current visible RD extent captured before opening Settings.
     pub offline_area:Option<[i32;4]>,
     pub manual_offline_busy:bool,
@@ -149,7 +153,8 @@ impl Dialog {
             autosave_count: None,
             project_scoped: false,
             restore_autosave_requested: false,
-            manual_offline_download:None,offline_area:None,
+            manual_offline_download:None,offline_delete:None,offline_delete_confirm:None,
+            offline_downloads:Vec::new(),offline_catalog_notice:None,offline_area:None,
             manual_offline_busy:false,
             manual_offline_status:None,
             template_task: None,
