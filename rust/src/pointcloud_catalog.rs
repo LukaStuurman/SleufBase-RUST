@@ -53,6 +53,19 @@ fn record_path(id: &str) -> Result<PathBuf, String> {
     if !pointcloud::valid_id(id) { return Err("Ongeldige puntenwolkidentiteit in de bronlijst.".into()); }
     Ok(directory().join(format!("{id}.json")))
 }
+/// A deletion marker prevents a saved project from silently re-importing a
+/// removed scan when that old project is opened again.
+fn deleted_path(id: &str) -> Result<PathBuf, String> {
+    Ok(record_path(id)?.with_extension("deleted"))
+}
+fn is_deleted(id: &str) -> Result<bool, String> {
+    match fs::symlink_metadata(deleted_path(id)?) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err("De verwijdermarkering van de puntenwolk is ongeldig.".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("De verwijdermarkering kan niet worden gelezen: {error}")),
+    }
+}
 
 fn check_directory(path: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
@@ -164,6 +177,11 @@ pub fn load() -> Result<Catalog, String> {
     }
     let mut total_bytes = 0_u64;
     for id in ids {
+        match is_deleted(&id) {
+            Ok(true) => continue,
+            Ok(false) => {},
+            Err(error) => { catalog.errors.push(format!("Bron {id}: {error}")); continue; }
+        }
         let path = directory.join(format!("{id}.json"));
         let result = (|| {
             let Some(size) = record_size(&path)? else { return Ok(None); };
@@ -185,7 +203,7 @@ pub fn load() -> Result<Catalog, String> {
 
 pub fn get(id: &str) -> Result<Option<PointCloudSource>, String> {
     let path = record_path(id)?;
-    if !check_directory(&directory())? { return Ok(None); }
+    if !check_directory(&directory())? || is_deleted(id)? { return Ok(None); }
     read_record(&path, id)
 }
 
@@ -230,6 +248,7 @@ pub fn save_if_current(source: &PointCloudSource, expected: Option<&PointCloudSo
         return Err("De verwachte bronidentiteit hoort niet bij deze puntenwolk.".into());
     }
     let locked = lock_source(&source.id)?;
+    if is_deleted(&source.id)? { return Err(CONFLICT_MESSAGE.into()); }
     let current = read_record(&locked.path, &source.id)?;
     if current.as_ref() == Some(source) { return Ok(()); }
     if current.as_ref() != expected { return Err(CONFLICT_MESSAGE.into()); }
@@ -243,6 +262,52 @@ pub fn save_if_current(source: &PointCloudSource, expected: Option<&PointCloudSo
 pub fn remember_if_missing(source: &PointCloudSource) -> Result<(), String> {
     source.validate()?;
     let locked = lock_source(&source.id)?;
+    if is_deleted(&source.id)? { return Ok(()); }
     if read_record(&locked.path, &source.id)?.is_some() { return Ok(()); }
     write_record(source, &locked, false)
+}
+
+/// Delete an entry with optimistic concurrency and an OS per-source lock.
+/// The original LAS/LAZ file is NEVER deleted. A tombstone prevents a saved
+/// project from automatically adding this scan back to the global catalog.
+pub fn remove_if_current(expected: &PointCloudSource) -> Result<(), String> {
+    expected.validate()?;
+    let locked = lock_source(&expected.id)?;
+    if is_deleted(&expected.id)? {
+        return Err("Deze puntenwolk is al uit het overzicht verwijderd.".into());
+    }
+    if read_record(&locked.path, &expected.id)?.as_ref() != Some(expected) {
+        return Err(CONFLICT_MESSAGE.into());
+    }
+    let deleted = deleted_path(&expected.id)?;
+    crate::storage::atomic_write(&deleted, false, |writer|
+        writer.write_all(b"deleted\n").map_err(|error| error.to_string()))?;
+    fs::remove_file(&locked.path)
+        .map_err(|error| format!("Het bronrecord kon niet worden gewist: {error}"))?;
+    remove_converted_cloud(&expected.id)
+}
+
+/// The prepared Potree octree may be huge; callers run this on a worker.
+/// Only the app-owned conversion is removed, never a user's LAS/LAZ file,
+/// imported drawings, or project orthophotos.
+fn remove_converted_cloud(id: &str) -> Result<(), String> {
+    let cloud = pointcloud::cloud_directory(id)?;
+    let parent = cloud.parent().ok_or("Ongeldige puntenwolkmap")?;
+    let outer = parent.parent().ok_or("Ongeldige puntenwolkmap")?;
+    for path in [outer, parent] {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {},
+            Ok(_) => return Err("Het pad naar de puntenwolkcache is geen gewone map; niets buiten deze map is verwijderd.".into()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Puntenwolkmap openen mislukt: {error}")),
+        }
+    }
+    match fs::symlink_metadata(&cloud) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() =>
+            fs::remove_dir_all(&cloud).map_err(|error|
+                format!("Puntenwolk uit de lijst verwijderd, maar lokale 3D-cache wissen mislukt: {error}")),
+        Ok(_) => Err("Puntenwolk uit de lijst verwijderd, maar de lokale 3D-cache is geen gewone map.".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Puntenwolk uit de lijst verwijderd, maar lokale 3D-cache controleren mislukt: {error}")),
+    }
 }
