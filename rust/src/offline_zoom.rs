@@ -2,8 +2,8 @@
 //! Unlike the legacy 10/25/50 MiB country WMS mosaic, the chosen detail is
 //! *actual* PDOK WMTS zoom level 0..19. File sizes are estimated, not quotas.
 //!
-//! Original 256x256 WMTS JPEGs are downloaded at every requested level.
-//! No resampling or lower-resolution cache generation occurs after download.
+//! Only the selected highest-resolution 256x256 WMTS JPEGs are downloaded.
+//! No background downsampling or lower-resolution file generation occurs.
 //! A hard, visible limit prevents an accidental multi-terabyte national job.
 use crate::{model::Bounds,offline_overview,storage};
 use image::{codecs::jpeg::JpegEncoder,DynamicImage,ImageFormat,RgbaImage};
@@ -161,7 +161,7 @@ pub fn grid(bounds:Bounds,zoom:u8)->Option<Grid>{
 pub struct Estimate {
     /// Only highest-resolution PDOK JPEGs are downloaded.
     pub tiles:u64,
-    /// Additional original JPEGs needed at the lower WMTS zoom levels.
+    /// Kept for backwards compatibility in progress accounting; always zero.
     pub derived_tiles:u64,
     pub expected_bytes:u64,
     pub allowed:bool,
@@ -173,13 +173,9 @@ pub fn estimate(area:[i32;4],zoom:u8)->Option<Estimate>{
     let bounds=from_area(area)?;
     if zoom>MAX_ZOOM {return None;}
     let count=grid(bounds,zoom)?.count();
-    let mut generated=0u64;
-    for level in MIN_ZOOM..zoom{
-        generated=generated.saturating_add(grid(bounds,level)?.count());
-    }
-    Some(Estimate{tiles:count,derived_tiles:generated,
-        expected_bytes:count.saturating_add(generated).saturating_mul(EXPECTED_JPEG_BYTES),
-        allowed:count.saturating_add(generated)<=MAX_DOWNLOAD_TILES})
+    Some(Estimate{tiles:count,derived_tiles:0,
+        expected_bytes:count.saturating_mul(EXPECTED_JPEG_BYTES),
+        allowed:count<=MAX_DOWNLOAD_TILES})
 }
 pub fn format_mb(bytes:u64)->String {
     let mb=bytes as f64/1_000_000.;
@@ -190,9 +186,9 @@ pub fn format_mb(bytes:u64)->String {
 }
 pub fn format_estimate(area:[i32;4],zoom:u8)->String{
     match estimate(area,zoom){
-        Some(e)=>format!("Niveau {zoom} · {} · ~{} download ({} originele tegels, alle zoomniveaus){}",
+        Some(e)=>format!("Niveau {zoom} · {} · ~{} download ({} originele tegels){}",
             format_resolution(zoom),format_mb(e.expected_bytes),
-            e.steps(),if e.allowed{""}else{" · te groot"}),
+            e.tiles,if e.allowed{""}else{" · te groot"}),
         None=>format!("Niveau {zoom} · buiten PDOK-dekking"),
     }
 }
@@ -312,9 +308,7 @@ pub fn list_downloads()->Result<Vec<Download>,String>{
 fn ids_in_area(area:[i32;4],maximum_zoom:u8)->Result<Vec<TileId>,String>{
     let bounds=from_area(area).ok_or("Ongeldige offline kaartuitsnede")?;
     let mut ids=Vec::new();
-    for zoom in MIN_ZOOM..=maximum_zoom{
-        ids.extend(grid(bounds,zoom).ok_or("Ongeldige WMTS-uitsnede")?.ids());
-    }
+    ids.extend(grid(bounds,maximum_zoom).ok_or("Ongeldige WMTS-uitsnede")?.ids());
     Ok(ids)
 }
 fn register_download(root:&Path,area:[i32;4],zoom:u8,quality:u8)->Result<(),String>{
@@ -335,7 +329,7 @@ fn register_download(root:&Path,area:[i32;4],zoom:u8,quality:u8)->Result<(),Stri
     save_catalog(root,&data)
 }
 fn overlaps_tile(download:&Download,id:TileId)->bool{
-    if id.zoom>download.zoom {return false;}
+    if id.zoom!=download.zoom {return false;}
     let Some(bounds)=from_area(download.area) else{return false;};
     grid(bounds,id.zoom).is_some_and(|range|
         id.col>=range.min_col&&id.col<=range.max_col
@@ -373,8 +367,8 @@ pub fn remove_all_downloads()->Result<(),String>{
     Ok(())
 }
 
-/// A manual refresh requests original JPEG tiles at each WMTS zoom level.
-/// Compression may reduce *bytes* but not image width/height.
+/// A manual refresh requests only the selected native WMTS zoom level.
+/// Compression may reduce *bytes* but never the tile's pixel width/height.
 pub fn refresh(
     area:[i32;4],maximum_zoom:u8,force:bool,cancel:&AtomicBool,
     on_tile:impl FnMut(u64,u64),
@@ -495,8 +489,8 @@ mod tests{
         let area=[154900,462900,155100,463100];
         let total=estimate(area,1).unwrap();
         assert_eq!(total.tiles,4);
-        assert_eq!(total.derived_tiles,1);
-        assert_eq!(total.steps(),5);
+        assert_eq!(total.derived_tiles,0);
+        assert_eq!(total.steps(),4);
         let root=tempfile::tempdir().unwrap();
         let sample=image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
             256,256,image::Rgb([71,80,92])));
