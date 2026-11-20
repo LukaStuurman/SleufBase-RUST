@@ -715,6 +715,7 @@ impl SleufBaseApp {
             vector_layer.or(self.cadastral.as_ref()),
             &self.comments,
             if show_offline_aerial {self.offline_overview.texture()} else {None},
+            if show_offline_aerial {self.offline_overview.tiles()} else {&[]},
             if self.osm_visible && self.osm_texture.is_some() {
                 self.osm_texture.as_ref()
             } else {
