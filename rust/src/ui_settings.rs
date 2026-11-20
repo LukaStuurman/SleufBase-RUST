@@ -85,6 +85,10 @@ pub(crate) struct Dialog {
     pub project_scoped: bool,
     /// Caller takes this request and opens its existing autosave selector.
     pub restore_autosave_requested: bool,
+    /// Explicit action independent of Save and the automatic 183-day toggle.
+    pub manual_offline_download:Option<u16>,
+    pub manual_offline_busy:bool,
+    pub manual_offline_status:Option<String>,
     rules: Vec<RuleRow>,
     materials: Vec<String>,
     extras: Vec<String>,
@@ -143,6 +147,9 @@ impl Dialog {
             autosave_count: None,
             project_scoped: false,
             restore_autosave_requested: false,
+            manual_offline_download:None,
+            manual_offline_busy:false,
+            manual_offline_status:None,
             template_task: None,
             template_notice: None,
             logo_task: None,
@@ -481,6 +488,14 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
                 });
         });
         ui.small("Dit is een maximale opslaggrootte. Een hoger niveau gebruikt meer pixels per tegel. De losse keuze ‘Offline luchtfoto’ op de kaart gebruikt alleen aanwezige lokale beelden.");
+        if ui.add_enabled(!state.manual_offline_busy,
+            egui::Button::new("Nu nieuwe offline luchtfoto downloaden en gebruiken")).clicked(){
+            state.manual_offline_download=Some(state.draft.viewer.offline_aerial_detail_mb);
+        }
+        if let Some(status)=&state.manual_offline_status{
+            ui.small(status);
+        }
+        ui.small("De knop start direct een nieuwe download met het gekozen detailniveau en schakelt naar de offline kaart. Dit werkt ook wanneer automatisch bijwerken uit staat.");
     });
     ui.separator();
     checkbox(ui,&mut state.draft.viewer.show_trench_labels,"Naambordjes van proefsleuven tonen");
