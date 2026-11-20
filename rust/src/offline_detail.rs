@@ -135,7 +135,7 @@ fn compress_within_budget(original:DynamicImage,mb:u16)->Result<Vec<u8>,String>{
         (target*4/5,65),(target*2/3,55),(target*2/3,42)
     ] {
         let scaled;
-        let image=if side==TILE {&original} else {
+        let image=if side==original.width()&&side==original.height() {&original} else {
             scaled=original.resize_exact(side,side,image::imageops::FilterType::Triangle);
             &scaled
         };
