@@ -635,7 +635,7 @@ impl ViewportRenderer {
         if missing.is_empty(){
             // A warm, fully cached view needs one rasterization and no
             // intermediate uploads or low-resolution network requests.
-            let mut rgba=vec![255; width as usize*height as usize*4];
+            let mut rgba=vec![0u8; width as usize*height as usize*4];
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
             let raster=Raster{bounds,width,height,rgba,stale_cache:false};
             if u64::from(width)*u64::from(height)<=12_000_000{
@@ -651,7 +651,7 @@ impl ViewportRenderer {
                 -bounds.min_y.max(old.bounds.min_y)).max(0.);
             w*h/((bounds.max_x-bounds.min_x)*(bounds.max_y-bounds.min_y))
         }).unwrap_or(0.);
-        let mut rgba=vec![255u8;width as usize*height as usize*4];
+        let mut rgba=vec![0u8;width as usize*height as usize*4];
         let mut preview_source=previous_coverage>0.;
         let mut stale=false;
         let mut parent_layers:Vec<(u8,HashMap<TileId,Arc<RgbaImage>>)>=Vec::new();
