@@ -109,6 +109,9 @@ impl ExportPreferences {
 pub struct ViewerPreferences {
     pub background_source:String,
     pub use_background:bool,
+    /// A choice made deliberately in Settings survives restarts.
+    #[serde(default)]
+    pub explicit_background_choice:bool,
     /// Global working-map preference; export maps never use these name badges.
     pub show_trench_labels:bool,
     /// Downloading/updating the larger offline archive is opt-in.
@@ -140,6 +143,7 @@ impl Default for ViewerPreferences {
     fn default()->Self {
         let view=crate::project_view::ProjectView::default();
         Self{background_source:view.background_source,use_background:view.use_background,
+            explicit_background_choice:false,
             show_trench_labels:true,offline_aerial_auto_backup:false,
             offline_aerial_detail_mb:default_offline_aerial_detail_mb(),
             offline_aerial_zoom_level:default_offline_aerial_zoom_level(),
@@ -182,6 +186,8 @@ impl ViewerPreferences {
 pub struct MigratedSettings {
     #[serde(default)]
     pub viewer:ViewerPreferences,
+    #[serde(default="default_pointcloud_crs")]
+    pub pointcloud_default_crs:crate::pointcloud::CloudCrs,
     #[serde(default)]
     pub export_preferences:ExportPreferences,
     #[serde(default)]
@@ -200,6 +206,7 @@ impl Default for MigratedSettings {
     fn default()->Self {
         Self {
             viewer:Default::default(),
+            pointcloud_default_crs:default_pointcloud_crs(),
             export_preferences:ExportPreferences::default(),
             map_export:Default::default(),
             dxf_label_gap:default_label_gap(),
@@ -211,6 +218,9 @@ impl Default for MigratedSettings {
             marxact_name_mappings:BTreeMap::new()
         }
     }
+}
+pub fn default_pointcloud_crs()->crate::pointcloud::CloudCrs {
+    crate::pointcloud::CloudCrs::RdNew
 }
 pub fn default_label_gap()->f64 {3.5}
 fn label_gap(value:Option<&Value>)->f64 {
@@ -302,6 +312,7 @@ pub fn from_legacy_json(content:&str)->Result<MigratedSettings,String> {
     let obj=value.as_object().ok_or("Instellingen moeten een JSON-object zijn")?;
     Ok(MigratedSettings{
         viewer:Default::default(),
+        pointcloud_default_crs:default_pointcloud_crs(),
         export_preferences:ExportPreferences::from_legacy(&value),
         map_export:crate::map_batch::Settings{
             background:obj.get("map_export_background_source").and_then(Value::as_str)

@@ -308,10 +308,19 @@ impl Default for SleufBaseApp {
         let loaded=settings_store::read_pair(&root);
         #[cfg(test)]
         let loaded:Result<_,String>=Ok((MigratedSettings::default(),AutosaveSettings::default()));
-        let (migrated_settings,backup_settings,message)=match loaded{
+        let (mut migrated_settings,backup_settings,message)=match loaded{
             Ok((settings,backup))=>(settings,backup,String::new()),
             Err(error)=>(MigratedSettings::default(),AutosaveSettings::default(),format!("Instellingen niet geladen: {error}")),
         };
+        // In earlier versions an offline download silently changed the saved
+        // startup map. Migrate this implicit selection back to online PDOK.
+        if !migrated_settings.viewer.explicit_background_choice
+            && sleufbase_rust::project_view::BackgroundProvider::from_label(
+                &migrated_settings.viewer.background_source)
+                == sleufbase_rust::project_view::BackgroundProvider::OfflineAerial {
+            migrated_settings.viewer.background_source =
+                sleufbase_rust::project_view::BackgroundProvider::PdokAerial.label().into();
+        }
         let app = Self {
             point_clouds:Vec::new(),pointcloud_ui:Default::default(),
             maaiveld_ui:Default::default(),
