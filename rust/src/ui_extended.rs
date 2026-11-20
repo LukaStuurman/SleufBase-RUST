@@ -704,9 +704,9 @@ impl SleufBaseApp {
             && matches!(self.project_view.provider(),B::PdokAerial|B::PdokAerialCadastral|B::OfflineAerial)
             && !self.geotiffs.iter().any(|r|r.epsg.is_some_and(|e|e!=28992));
         let offline_only=self.project_view.provider()==B::OfflineAerial;
-        let vector_cadastral_ready=self.project_view.provider()==B::Cadastral
+        let vector_cadastral_close=self.project_view.provider()==B::Cadastral
             && self.navigation.viewport.is_some_and(|v|
-                self.cadastral_vectors.ready_for(v));
+                cadastral_vector_ui::State::wants(B::Cadastral,v));
         let view = canvas(
             ui,
             &self.datasets,
@@ -720,14 +720,14 @@ impl SleufBaseApp {
             &self.comments,
             if show_offline_aerial {self.offline_overview.texture()} else {None},
             if show_offline_aerial {self.offline_overview.tiles()} else {&[]},
-            if offline_only||vector_cadastral_ready {
+            if offline_only||vector_cadastral_close {
                 None
             } else if self.osm_visible && self.osm_texture.is_some() {
                 self.osm_texture.as_ref()
             } else {
                 self.pdok_texture.as_ref()
             },
-            if offline_only||vector_cadastral_ready {
+            if offline_only||vector_cadastral_close {
                 None
             } else if self.osm_visible && self.osm_texture.is_some() {
                 self.osm_bounds
