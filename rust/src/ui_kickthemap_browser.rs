@@ -260,6 +260,7 @@ pub(super) struct BrowserUi {
     pub(super) batch_generation:u64,
     pub(super) downloaded_json:Vec<PathBuf>,
     pub(super) downloaded_tiffs:Vec<PathBuf>,
+    pub(super) downloaded_clouds:Vec<PathBuf>,
     pub(super) completed:usize,
     pub(super) failures:Vec<String>,
     pub(super) cancel:Arc<AtomicBool>,
@@ -322,7 +323,7 @@ impl Default for BrowserUi {
             tools:Default::default(),reloading:None,open_target:None,
             queue:VecDeque::new(),batch_mode:false,
             batch_generation:0,
-            downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),
+            downloaded_json:Vec::new(),downloaded_tiffs:Vec::new(),downloaded_clouds:Vec::new(),
             completed:0,failures:Vec::new(),cancel:Arc::new(AtomicBool::new(false)),
             download_notice:None,capture_status:None,manual_capture_job:None,status:String::new()}
     }
@@ -874,12 +875,14 @@ impl SleufBaseApp {
         }
         if (self.browser_ui.batch_mode ||
              !self.browser_ui.downloaded_json.is_empty() ||
-             !self.browser_ui.downloaded_tiffs.is_empty()) &&
+             !self.browser_ui.downloaded_tiffs.is_empty() ||
+             !self.browser_ui.downloaded_clouds.is_empty()) &&
             self.browser_ui.batch_generation!=self.project_generation {
             self.browser_ui.cancel.store(true,Ordering::SeqCst);
             self.browser_ui.queue.clear();
             self.browser_ui.downloaded_json.clear();
             self.browser_ui.downloaded_tiffs.clear();
+            self.browser_ui.downloaded_clouds.clear();
             self.browser_ui.batch_mode=false;
             self.browser_ui.status="Project gewijzigd tijdens downloads; bestanden blijven op schijf, maar zijn niet in het nieuwe project ingeladen".into();
         }
@@ -912,7 +915,8 @@ impl SleufBaseApp {
             }
         }
         // Prepare one kind at a time for FileLoader; otherwise starting TIFF
-        // import would cancel an unfinished jobFeatures import.
+        // import would cancel an unfinished jobFeatures import. LAS/LAZ are
+        // queued into the persistent pointcloud catalog, not map layers.
         if self.file_intent.is_none() && !self.live_busy &&
             !self.browser_ui.batch_mode && self.browser_ui.queue.is_empty() {
             if !self.browser_ui.downloaded_json.is_empty() {
@@ -921,6 +925,11 @@ impl SleufBaseApp {
             } else if !self.browser_ui.downloaded_tiffs.is_empty() {
                 let paths=std::mem::take(&mut self.browser_ui.downloaded_tiffs);
                 self.load_geotiffs(paths,ctx);
+            } else if !self.browser_ui.downloaded_clouds.is_empty()
+                && self.pointcloud_ui.editor.is_none() && self.trench_editor.is_none()
+                && self.pointcloud_ui.pending_catalog.is_none() {
+                let paths=std::mem::take(&mut self.browser_ui.downloaded_clouds);
+                self.queue_pointcloud_files(paths);
             }
         }
         if self.browser_ui.batch_mode && !self.live_busy && !self.browser_ui.queue.is_empty() {
@@ -976,6 +985,40 @@ impl SleufBaseApp {
             self.browser_ui.queue.len()
         );
     }
+    /// Add one authentic LAZ/LAS export per selected KickTheMap job to the
+    /// persistent pointcloud catalog. This never loads the scans directly
+    /// onto the active project map.
+    pub(super) fn queue_kickthemap_clouds(&mut self,selected:&[u64]) {
+        if self.live_session.is_none() || self.live_operation_busy() || self.browser_ui.batch_mode {
+            self.browser_ui.status="Log eerst in en rond de lopende download af.".into();
+            return;
+        }
+        if selected.len()>500 {
+            self.browser_ui.status="Selecteer maximaal 500 jobs per puntenwolk-downloadbatch.".into();
+            return;
+        }
+        let mut queued=VecDeque::new();
+        let mut unavailable=0usize;
+        for &id in selected {
+            match self.live_jobs.iter().find(|job|job.job_id==id) {
+                Some(job) if job.downloadable => queued.push_back((id,RemoteFileKind::PointCloudLaz)),
+                _=>unavailable+=1,
+            }
+        }
+        if queued.is_empty() {
+            self.browser_ui.status="De geselecteerde jobs bevatten geen downloadbare puntenwolk.".into();
+            return;
+        }
+        self.browser_ui.queue=queued;
+        self.browser_ui.completed=0;
+        self.browser_ui.failures.clear();
+        self.browser_ui.cancel.store(false,Ordering::SeqCst);
+        self.browser_ui.batch_mode=true;
+        self.browser_ui.batch_generation=self.project_generation;
+        self.browser_ui.status=format!("{} KickTheMap-puntenwolken downloaden als LAZ (oude jobs: LAS) en daarna aan Puntenwolken beheren toevoegen. {} niet beschikbaar.",
+            self.browser_ui.queue.len(),unavailable);
+    }
+
     pub(super) fn reset_kickthemap_editor(&mut self) {
         self.hide_kickthemap_job_window();
         self.browser_ui.opening_job=None; // Drop cancels the worker and rejects late results.
@@ -1180,6 +1223,10 @@ impl SleufBaseApp {
                             .on_hover_text("Download objectpunten en GeoTIFF en laad ze in dit project.").clicked(){
                             action=Some("both");
                         }
+                        if job_action_button(ui,if narrow{"Puntenwolken"}else{"Puntenwolken downloaden"},can,false)
+                            .on_hover_text("Download van elke geselecteerde job de originele LAZ/LAS-puntenwolk en voeg die toe aan Puntenwolken beheren. De scans worden niet vanzelf in dit project geladen.").clicked(){
+                            action=Some("clouds");
+                        }
                         if job_action_button(ui,if narrow{"Open browser"}else{"Open in KickTheMap-browser"},one,false)
                             .on_hover_text("Open één geselecteerde job in het aparte KickTheMap-venster.").clicked(){
                             action=Some("open-job");
@@ -1366,6 +1413,10 @@ impl SleufBaseApp {
                 self.browser_ui.cancel.store(true,Ordering::SeqCst);
                 self.browser_ui.queue.clear();
                 self.browser_ui.status="Downloadbatch geannuleerd".into();
+            }
+            Some("clouds")=>{
+                let selection=self.browser_ui.selected.iter().copied().collect::<Vec<_>>();
+                self.queue_kickthemap_clouds(&selection);
             }
             Some("objects")|Some("tiffs")|Some("both")=>{
                 let selection=self.browser_ui.selected.iter().copied().collect::<Vec<_>>();
