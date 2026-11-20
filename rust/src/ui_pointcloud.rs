@@ -427,18 +427,26 @@ impl SleufBaseApp {
             let mut removed=HashSet::new();
             let mut errors=Vec::new();
             for (id,result) in results {
-                if !id.is_empty() && catalog::get(&id).ok().flatten().is_none() {
-                    removed.insert(id);
+                if !id.is_empty() {
+                    match catalog::get(&id) {
+                        Ok(None) => { removed.insert(id); },
+                        Ok(Some(_)) => {},
+                        Err(error) => errors.push(error),
+                    }
                 }
                 if let Err(error)=result {errors.push(error);}
             }
             if !removed.is_empty() {
-                self.point_clouds.retain(|source|!removed.contains(&source.id));
-                self.sync_pointcloud_datasets();
+                let current_project_changed=self.point_clouds.iter()
+                    .any(|source|removed.contains(&source.id));
+                if current_project_changed {
+                    self.point_clouds.retain(|source|!removed.contains(&source.id));
+                    self.sync_pointcloud_datasets();
+                    self.dirty=true;
+                }
                 self.pointcloud_ui.selection.ids.retain(|id|!removed.contains(id));
                 self.pointcloud_ui.selection.reconcile();
                 self.pointcloud_ui.titles.retain(|id,_|!removed.contains(id));
-                self.dirty=true;
             }
             match catalog::load() {
                 Ok(catalog) => {
