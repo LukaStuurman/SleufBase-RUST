@@ -399,6 +399,13 @@ pub fn refresh_at_with_quality(
             plan.steps(),MAX_DOWNLOAD_TILES));
     }
     let ids=ids_in_area(area,maximum_zoom)?;
+    let records=catalog(root)?;
+    // A change in JPEG quality must actually update the stored bytes.
+    // No-op repeat downloads keep the original cached files.
+    let quality_changed=records.entries.iter().any(|entry|
+        entry.area==area && entry.zoom==maximum_zoom && entry.quality!=quality)
+        || (quality!=DEFAULT_QUALITY && !records.entries.iter().any(|entry|
+            entry.area==area && entry.zoom==maximum_zoom));
     let http=reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(6))
         .timeout(Duration::from_secs(20))
@@ -425,7 +432,7 @@ pub fn refresh_at_with_quality(
                     if cancel.load(Ordering::Relaxed)||failures.load(Ordering::Relaxed)>=8 {break;}
                     let index=next.fetch_add(1,Ordering::Relaxed);
                     let Some(id)=ids.get(index).copied() else{break;};
-                    let fresh=!force&&cached_tile(root,id).is_some_and(|stamp|
+                    let fresh=!force&&!quality_changed&&cached_tile(root,id).is_some_and(|stamp|
                         !offline_overview::needs_refresh(stamp,now));
                     let result=if fresh{Ok(())}else{
                         let mut result=Err("PDOK-tegel nog niet opgehaald".to_string());
