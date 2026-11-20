@@ -110,6 +110,7 @@ pub mod profile_leader_donor;
 pub mod profile_leaders;
 pub mod pdok_wms;
 pub mod pdok_aerial_wmts;
+pub mod offline_overview;
 pub mod map_request;
 pub mod resource_policy;
 pub mod cadastral_tiles;
