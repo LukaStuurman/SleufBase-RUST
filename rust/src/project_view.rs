@@ -6,18 +6,19 @@ use std::path::PathBuf;
 #[serde(deny_unknown_fields)]
 pub struct Camera {pub center:[f64;2],pub meters_per_pixel:f64}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum BackgroundProvider {PdokAerial,PdokAerialCadastral,OpenStreetMap,OpenStreetMapCadastral,Cadastral,Cyclomedia,Unknown}
+pub enum BackgroundProvider {PdokAerial,PdokAerialCadastral,OfflineAerial,OpenStreetMap,OpenStreetMapCadastral,Cadastral,Cyclomedia,Unknown}
 impl BackgroundProvider {
     pub fn from_label(label:&str)->Self{match label.trim(){
         "PDOK luchtfoto"|"pdok"|"Luchtfoto NL actueel (8 cm, deels 5 cm)"|"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)"=>Self::PdokAerial,
         "PDOK Luchtfoto + percelen"|"pdok_cadastral"=>Self::PdokAerialCadastral,
+        "Offline luchtfoto"|"offline_aerial"=>Self::OfflineAerial,
         "OpenStreetMap"|"osm"=>Self::OpenStreetMap,
         "OpenStreetMap + percelen"|"osm_cadastral"=>Self::OpenStreetMapCadastral,
         "PDOK kadastrale kaart"|"cadastral"=>Self::Cadastral,
         "Cyclomedia Luchtfoto NL (nieuwste jaar / laagste cm)"|"cyclomedia_aerial"=>Self::Cyclomedia,
         _=>Self::Unknown,
     }}
-    pub fn label(self)->&'static str{match self{Self::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",Self::PdokAerialCadastral=>"PDOK Luchtfoto + percelen",Self::OpenStreetMap=>"OpenStreetMap",Self::OpenStreetMapCadastral=>"OpenStreetMap + percelen",Self::Cadastral=>"PDOK kadastrale kaart",Self::Cyclomedia=>"Cyclomedia Luchtfoto NL (nieuwste jaar / laagste cm)",Self::Unknown=>"Onbekende achtergrondbron"}}
+    pub fn label(self)->&'static str{match self{Self::PdokAerial=>"PDOK Luchtfoto NL actueel (8 cm, deels 5 cm)",Self::PdokAerialCadastral=>"PDOK Luchtfoto + percelen",Self::OfflineAerial=>"Offline luchtfoto",Self::OpenStreetMap=>"OpenStreetMap",Self::OpenStreetMapCadastral=>"OpenStreetMap + percelen",Self::Cadastral=>"PDOK kadastrale kaart",Self::Cyclomedia=>"Cyclomedia Luchtfoto NL (nieuwste jaar / laagste cm)",Self::Unknown=>"Onbekende achtergrondbron"}}
 }
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(tag="kind",rename_all="snake_case",deny_unknown_fields)]

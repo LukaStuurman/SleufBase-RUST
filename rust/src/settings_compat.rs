@@ -111,18 +111,35 @@ pub struct ViewerPreferences {
     pub use_background:bool,
     /// Global working-map preference; export maps never use these name badges.
     pub show_trench_labels:bool,
+    /// Downloading/updating the larger offline archive is opt-in.
+    #[serde(default)]
+    pub offline_aerial_auto_backup:bool,
+    /// Disk budget and corresponding JPEG resolution of the offline archive.
+    #[serde(default="default_offline_aerial_detail_mb")]
+    pub offline_aerial_detail_mb:u16,
 }
+pub fn default_offline_aerial_detail_mb()->u16{50}
+pub fn supported_offline_aerial_detail_mb(mb:u16)->bool{matches!(mb,10|25|50)}
 impl Default for ViewerPreferences {
     fn default()->Self {
         let view=crate::project_view::ProjectView::default();
-        Self{background_source:view.background_source,use_background:view.use_background,show_trench_labels:true}
+        Self{background_source:view.background_source,use_background:view.use_background,
+            show_trench_labels:true,offline_aerial_auto_backup:false,
+            offline_aerial_detail_mb:default_offline_aerial_detail_mb()}
     }
 }
 impl ViewerPreferences {
     pub fn validate(&self)->Result<(),String>{
         use crate::project_view::BackgroundProvider as B;
-        if matches!(B::from_label(&self.background_source),B::PdokAerial|B::PdokAerialCadastral|B::Cadastral|B::OpenStreetMap|B::OpenStreetMapCadastral){Ok(())}
-        else{Err("Kies een geldige achtergrond op het kaartscherm".into())}
+        if !matches!(B::from_label(&self.background_source),
+            B::PdokAerial|B::PdokAerialCadastral|B::OfflineAerial|
+            B::Cadastral|B::OpenStreetMap|B::OpenStreetMapCadastral){
+            return Err("Kies een geldige achtergrond op het kaartscherm".into());
+        }
+        if !supported_offline_aerial_detail_mb(self.offline_aerial_detail_mb){
+            return Err("Kies 10, 25 of 50 MB als detailniveau voor de offline luchtfoto".into());
+        }
+        Ok(())
     }
     pub fn project_view(&self)->crate::project_view::ProjectView{
         crate::project_view::ProjectView{background_source:self.background_source.clone(),

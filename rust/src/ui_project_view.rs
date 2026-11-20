@@ -83,6 +83,7 @@ impl SleufBaseApp {
         match self.project_view.provider(){
             B::PdokAerial=>self.pdok_source=pdok_wms::Source::Aerial,
             B::PdokAerialCadastral=>self.pdok_source=pdok_wms::Source::AerialCadastral,
+            B::OfflineAerial=>{}, // Absolutely no live basemap request.
             B::Cadastral=>self.pdok_source=pdok_wms::Source::Cadastral,
             B::OpenStreetMap|B::OpenStreetMapCadastral=>self.osm_visible=true,
             B::Cyclomedia=>{self.project_view.normalize_removed_provider();self.request_selected_background();}
@@ -125,7 +126,7 @@ impl SleufBaseApp {
             let provider=self.project_view.provider();
             let selected=if provider==B::Unknown {self.project_view.background_source.as_str()} else {provider.label()};
             egui::ComboBox::from_id_salt("project-background-source").selected_text(selected).show_ui(ui,|ui|{
-                for source in [B::PdokAerial,B::PdokAerialCadastral,B::OpenStreetMap,B::OpenStreetMapCadastral,B::Cadastral]{
+                for source in [B::PdokAerial,B::PdokAerialCadastral,B::OfflineAerial,B::OpenStreetMap,B::OpenStreetMapCadastral,B::Cadastral]{
                     if ui.selectable_label(self.project_view.provider()==source,source.label()).clicked(){self.project_view.background_source=source.label().into();}
                 }
                 if self.project_view.provider()==B::Unknown{ui.label(format!("Niet ondersteund: {}",self.project_view.background_source));}

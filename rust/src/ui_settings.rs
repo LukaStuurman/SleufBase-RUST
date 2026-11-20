@@ -450,7 +450,7 @@ fn viewer_fields(ui: &mut egui::Ui, viewer: &mut ViewerDraft) {
     let display=|source:Background|source.label();
     egui::ComboBox::from_id_salt("settings-viewer-background")
         .selected_text(display(Background::from_label(&viewer.background_source))).show_ui(ui,|ui| {
-            for source in [Background::PdokAerial,Background::PdokAerialCadastral,Background::Cadastral,Background::OpenStreetMap,Background::OpenStreetMapCadastral] {
+            for source in [Background::PdokAerial,Background::PdokAerialCadastral,Background::OfflineAerial,Background::Cadastral,Background::OpenStreetMap,Background::OpenStreetMapCadastral] {
                 if ui.selectable_label(Background::from_label(&viewer.background_source)==source,display(source)).clicked(){
                     viewer.background_source=source.label().into();
                 }
@@ -465,6 +465,24 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         viewer_fields(ui,viewer);
         ui.separator();
     }
+    section(ui,"Offline luchtfoto en lokale kaartback-up",|ui|{
+        checkbox(ui,&mut state.draft.viewer.offline_aerial_auto_backup,
+            "Automatisch een gedetailleerde offline luchtfoto downloaden en elke 6 maanden vernieuwen");
+        ui.small("Standaard uit. De kleine ingebouwde overzichtsfoto is altijd beschikbaar, ook zonder internet. Eerder gedownloade kaarten blijven lokaal beschikbaar als je deze optie uitschakelt.");
+        ui.horizontal_wrapped(|ui|{
+            ui.label("Detailniveau offline luchtfoto");
+            egui::ComboBox::from_id_salt("offline-photo-detail-level")
+                .selected_text(match state.draft.viewer.offline_aerial_detail_mb{
+                    10=>"Laag · 10 MB",25=>"Normaal · 25 MB",_=>"Hoog · 50 MB"
+                }).show_ui(ui,|ui|{
+                    for (mb,label) in [(10,"Laag · 10 MB"),(25,"Normaal · 25 MB"),(50,"Hoog · 50 MB")]{
+                        ui.selectable_value(&mut state.draft.viewer.offline_aerial_detail_mb,mb,label);
+                    }
+                });
+        });
+        ui.small("Dit is een maximale opslaggrootte. Een hoger niveau gebruikt meer pixels per tegel. De losse keuze ‘Offline luchtfoto’ op de kaart gebruikt alleen aanwezige lokale beelden.");
+    });
+    ui.separator();
     checkbox(ui,&mut state.draft.viewer.show_trench_labels,"Naambordjes van proefsleuven tonen");
     ui.small("Toont namen bij TIFF-, KickTheMap-, MarXact- en virtuele proefsleuven. De bordjes zoeken vrije ruimte buiten de sleuven en TIFF-beelden; zonder ruimte worden ze verborgen.");
     ui.small("Deze keuze geldt alleen voor de werkkaart en wordt na Opslaan voor volgende sessies onthouden.");

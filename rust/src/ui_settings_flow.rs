@@ -17,6 +17,12 @@ impl SleufBaseApp {
         };
         // Labels are a global workspace preference, not a saved export override.
         effective.viewer.show_trench_labels = self.migrated_settings.viewer.show_trench_labels;
+        // Offline downloads are a global opt-in, never inherited from a
+        // project file's export-settings overrides.
+        effective.viewer.offline_aerial_auto_backup =
+            self.migrated_settings.viewer.offline_aerial_auto_backup;
+        effective.viewer.offline_aerial_detail_mb =
+            self.migrated_settings.viewer.offline_aerial_detail_mb;
         let mut dialog = settings_ui::Dialog::new(&effective, &self.backup_settings);
         dialog.project_scoped = self.has_project_settings_scope();
         dialog.viewer = Some(settings_ui::ViewerDraft {
