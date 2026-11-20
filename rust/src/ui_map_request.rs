@@ -42,6 +42,24 @@ impl State {
 fn is_osm(source: Provider) -> bool {
     matches!(source, Provider::Osm | Provider::OsmCadastral)
 }
+/// The same aerial/OSM base remains valid across a close-range WFS parcel
+/// transition. Never drop an already drawn image just to change the overlay.
+fn compatible_basemap(previous:Option<Provider>,next:Option<Provider>,
+    is_pure_cadastral:bool,has_cadastral_texture:bool)->bool
+{
+    if matches!((previous,next),
+        (Some(Provider::Aerial|Provider::AerialCadastral),
+         Some(Provider::Aerial|Provider::AerialCadastral))
+        | (Some(Provider::Osm|Provider::OsmCadastral),
+           Some(Provider::Osm|Provider::OsmCadastral))) {
+        return true;
+    }
+    // A pure Kadaster close-up can use WFS shapes without loading WMTS
+    // again. Retain an earlier WMTS image when going into/out of that mode.
+    is_pure_cadastral && has_cadastral_texture
+        && matches!(previous,None|Some(Provider::Cadastral))
+        && matches!(next,None|Some(Provider::Cadastral))
+}
 pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewport {
     let [left, top] = view.world(view.rect.left_top());
     let [right, bottom] = view.world(view.rect.right_bottom());
@@ -111,13 +129,22 @@ impl SleufBaseApp {
                 _ => source,
             }
         } else { source };
-        if source.is_none() || self.map_requests.source != source {
-            self.pdok_texture = None;
-            self.pdok_bounds = None;
-            self.osm_texture = None;
-            self.osm_bounds = None;
-            self.map_requests.source = source;
-            self.map_requests.complete_image = false;
+        let pure_cadastral=self.project_view.use_background
+            && self.project_view.provider()==B::Cadastral;
+        let has_cadastral_texture=self.pdok_texture.is_some()
+            && self.pdok_bounds.is_some()
+            && self.pdok_source==pdok_wms::Source::Cadastral;
+        let keep_image=compatible_basemap(
+            self.map_requests.source,source,pure_cadastral,has_cadastral_texture);
+        if !keep_image && (source.is_none()||self.map_requests.source!=source) {
+            self.pdok_texture=None;
+            self.pdok_bounds=None;
+            self.osm_texture=None;
+            self.osm_bounds=None;
+        }
+        if self.map_requests.source!=source {
+            self.map_requests.source=source;
+            self.map_requests.complete_image=false;
         }
         let desired = source.map(|s| viewport(view, s));
         let dragging = view.response.dragged()
@@ -387,6 +414,40 @@ mod tests {
                 assert_eq!(v.source,Provider::Cadastral);
             },
         );
+    }
+    #[test]
+    fn map_source_overlay_changes_preserve_the_existing_basemap() {
+        assert!(compatible_basemap(Some(Provider::Aerial),
+            Some(Provider::AerialCadastral),false,false));
+        assert!(compatible_basemap(Some(Provider::AerialCadastral),
+            Some(Provider::Aerial),false,false));
+        assert!(compatible_basemap(Some(Provider::OsmCadastral),
+            Some(Provider::Osm),false,false));
+        assert!(compatible_basemap(Some(Provider::Cadastral),
+            None,true,true));
+        assert!(compatible_basemap(None,
+            Some(Provider::Cadastral),true,true));
+        assert!(!compatible_basemap(Some(Provider::Aerial),
+            Some(Provider::Osm),false,false));
+        assert!(!compatible_basemap(None,
+            Some(Provider::Cadastral),false,true));
+        let ctx=egui::Context::default();
+        let mut app=SleufBaseApp::default();
+        app.project_view.use_background=true;
+        app.project_view.background_source="PDOK luchtfoto + percelen".into();
+        app.map_requests.source=Some(Provider::Aerial);
+        let old=Bounds{min_x:154500.,max_x:155500.,min_y:462500.,max_y:463500.};
+        app.pdok_bounds=Some(old);
+        app.pdok_source=pdok_wms::Source::Aerial;
+        app.pdok_texture=Some(ctx.load_texture("photo-before-percels",
+            egui::ColorImage::new([1,1],Color32::BLUE),
+            egui::TextureOptions::LINEAR));
+        frame_at_scale(&ctx,[180.,140.],Provider::AerialCadastral,0.05,|view,_|{
+            app.update_map_background(view);
+        });
+        assert_eq!(app.pdok_bounds,Some(old),
+            "switching from close-up parcels must not erase aerial imagery");
+        assert!(app.pdok_texture.is_some());
     }
     #[test]
     fn stale_fake_preview_after_project_and_disabled_source_cannot_publish_textures() {
