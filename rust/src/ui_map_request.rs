@@ -290,8 +290,11 @@ impl SleufBaseApp {
                 }
             }
             Err(error) => {
-                if terminal {
-                    self.map_requests.scheduler.complete(request, false);
+                if terminal && self.map_requests.scheduler.complete(request, false) {
+                    // Retry a transient WMTS/WMS failure even when the map
+                    // stays perfectly still. The scheduler applies backoff.
+                    self.map_requests.scheduler
+                        .retry_after_failure(self.map_requests.clock.elapsed());
                 }
                 self.message = format!("Kaartachtergrond ophalen mislukt: {error}");
             }
