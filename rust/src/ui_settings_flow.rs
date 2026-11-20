@@ -96,6 +96,12 @@ impl SleufBaseApp {
         if self.shell.settings_scan.is_some() {
             ctx.request_repaint_after(Duration::from_millis(40));
         }
+        // Manual offline-map progress belongs only inside Settings; the
+        // main status bar must never show a running tile counter.
+        if let Some(dialog)=self.settings_dialog.as_mut(){
+            dialog.manual_offline_busy=self.offline_overview.manual_active();
+            dialog.manual_offline_status=self.offline_overview.manual_status();
+        }
         let generation = self.shell.settings_generation;
         if let Some(saved) =
             settings_ui::show(ctx, &mut self.settings_dialog, |settings, autosave| {
@@ -103,6 +109,44 @@ impl SleufBaseApp {
             })
         {
             self.apply_saved_settings(saved, generation);
+        }
+        // This is a deliberate immediate action, not an implicit opt-in to
+        // recurring downloads. Persist only the selected offline map choice
+        // and tile budget. Other staged settings still need their own Save.
+        let manual=self.settings_dialog.as_mut()
+            .and_then(|dialog|dialog.manual_offline_download.take());
+        if let Some(mb)=manual {
+            use sleufbase_rust::project_view::BackgroundProvider as B;
+            let mut settings=self.migrated_settings.clone();
+            settings.viewer.offline_aerial_detail_mb=mb;
+            settings.viewer.background_source=B::OfflineAerial.label().into();
+            settings.viewer.use_background=true;
+            match settings_store::save_pair(
+                &project::app_data_directory(),&settings,&self.backup_settings){
+                Ok(())=>{
+                    self.migrated_settings=settings;
+                    self.project_view.background_source=B::OfflineAerial.label().into();
+                    self.project_view.use_background=true;
+                    self.dirty=true;
+                    self.request_selected_background();
+                    self.offline_overview.download_now(mb);
+                    if let Some(dialog)=self.settings_dialog.as_mut(){
+                        dialog.draft.viewer.offline_aerial_detail_mb=mb;
+                        dialog.manual_offline_status=Some(
+                            format!("Nieuwe offline luchtfoto ({mb} MB) wordt opgehaald…"));
+                        if let Some(viewer)=dialog.viewer.as_mut(){
+                            viewer.background_source=B::OfflineAerial.label().into();
+                            viewer.use_background=true;
+                        }
+                    }
+                    ctx.request_repaint();
+                }
+                Err(error)=>{
+                    if let Some(dialog)=self.settings_dialog.as_mut(){
+                        dialog.error=format!("Offline download niet gestart: instellingen opslaan mislukt: {error}");
+                    }
+                }
+            }
         }
         let restore = self
             .settings_dialog
