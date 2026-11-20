@@ -122,7 +122,7 @@ impl TileId {
             .append_pair("TILEMATRIX",&self.zoom.to_string())
             .append_pair("TILEROW",&self.row.to_string())
             .append_pair("TILECOL",&self.col.to_string())
-            .append_pair("FORMAT","image/png");
+            .append_pair("FORMAT","image/jpeg");
         Ok(url)
     }
 }
@@ -177,6 +177,13 @@ fn plan(bounds:Bounds,width:u32,height:u32) -> Result<Grid,String> {
         }
     }
     Err("Gebied valt buiten de Nederlandse PDOK-tegelkaart".into())
+}
+// A handful of coarse tiles can cover a cold viewport while detailed tiles
+// load. Keep this bounded: parent work shares the existing PDOK request slots.
+fn coarse_preview_grid(bounds:Bounds,target:Grid)->Option<Grid>{
+    if target.zoom<2 || target.count()<8{return None;}
+    (0..target.zoom).rev().filter_map(|zoom|grid(bounds,zoom))
+        .find(|coarse|coarse.count()<=4)
 }
 fn decode(bytes:&[u8]) -> Result<RgbaImage,String> {
     if bytes.len() as u64>MAX_BYTES {return Err("PDOK-tegel overschrijdt de downloadlimiet".into());}
@@ -306,7 +313,7 @@ impl ViewportRenderer {
         Some((tile,fresh))
     }
     fn fetch_batch(
-        ids:&[TileId],root:&Path,cancel:&AtomicBool,
+        ids:&[TileId],root:&Path,cancel:&AtomicBool,detail_zoom:u8,
         mut on_tile:impl FnMut(TileId,Arc<RgbaImage>,SystemTime,bool)->Result<(),String>,
     )->Result<(),String>{
         if ids.is_empty(){return Ok(());}
@@ -341,7 +348,13 @@ impl ViewportRenderer {
                             Err(_) =>return Err("PDOK-tegelwerker is gestopt".into()),
                         }
                     };
-                    let (tile,modified,stale)=result?;
+                    let (tile,modified,stale)=match result {
+                        Ok(result)=>result,
+                        // A coarse preview is optional. A transient PDOK
+                        // error must not throw away successful detailed tiles.
+                        Err(_) if id.zoom<detail_zoom=>continue,
+                        Err(error)=>return Err(error),
+                    };
                     on_tile(id,tile,modified,stale)?;
                 }
                 Ok(())
@@ -350,33 +363,35 @@ impl ViewportRenderer {
             result
         })
     }
-    fn reproject(&self,b:Bounds,width:u32,height:u32,cancel:&AtomicBool)
-        ->Result<Vec<u8>,String>
+    // Overlay only the geographically covered part of the previous image.
+    // The uncovered area retains whichever coarse parents were drawn first.
+    fn overlay_previous(&self,b:Bounds,width:u32,height:u32,
+        target:&mut[u8],rect:[u32;4],cancel:&AtomicBool)->Result<(),String>
     {
-        let mut output=vec![255u8;width as usize*height as usize*4];
-        let Some(old)=&self.previous else{return Ok(output);};
-        if old.width==0 || old.height==0 || old.rgba.len()!=old.width as usize*old.height as usize*4{
-            return Ok(output);
+        let Some(old)=&self.previous else{return Ok(());};
+        if old.width==0 || old.height==0
+            || old.rgba.len()!=old.width as usize*old.height as usize*4 {
+            return Ok(());
         }
         let dx=(b.max_x-b.min_x)/f64::from(width);
         let dy=(b.max_y-b.min_y)/f64::from(height);
         let sx=f64::from(old.width)/(old.bounds.max_x-old.bounds.min_x);
         let sy=f64::from(old.height)/(old.bounds.max_y-old.bounds.min_y);
-        for row in 0..height {
+        for row in rect[1]..rect[3] {
             input::check(cancel)?;
             let y=b.max_y-(f64::from(row)+0.5)*dy;
             let oy=((old.bounds.max_y-y)*sy).floor();
             if oy<0.||oy>=f64::from(old.height){continue;}
-            for col in 0..width{
+            for col in rect[0]..rect[2]{
                 let x=b.min_x+(f64::from(col)+0.5)*dx;
                 let ox=((x-old.bounds.min_x)*sx).floor();
                 if ox<0.||ox>=f64::from(old.width){continue;}
                 let from=(oy as usize*old.width as usize+ox as usize)*4;
                 let to=(row as usize*width as usize+col as usize)*4;
-                output[to..to+4].copy_from_slice(&old.rgba[from..from+4]);
+                target[to..to+4].copy_from_slice(&old.rgba[from..from+4]);
             }
         }
-        Ok(output)
+        Ok(())
     }
     /// Screen-space rectangle touched by a tile. A two-pixel halo redraws
     /// bilinear samples at the tile boundaries when adjoining tiles arrive.
@@ -486,43 +501,54 @@ impl ViewportRenderer {
             }
             return Ok(raster);
         }
-        let old_overlap=self.previous.as_ref().is_some_and(|old|
-            old.bounds.min_x<bounds.max_x && old.bounds.max_x>bounds.min_x
-            && old.bounds.min_y<bounds.max_y && old.bounds.max_y>bounds.min_y);
-        let mut rgba=self.reproject(bounds,width,height,cancel)?;
-        let mut preview_source=old_overlap;
+        let previous_coverage=self.previous.as_ref().map(|old|{
+            let w=(bounds.max_x.min(old.bounds.max_x)
+                -bounds.min_x.max(old.bounds.min_x)).max(0.);
+            let h=(bounds.max_y.min(old.bounds.max_y)
+                -bounds.min_y.max(old.bounds.min_y)).max(0.);
+            w*h/((bounds.max_x-bounds.min_x)*(bounds.max_y-bounds.min_y))
+        }).unwrap_or(0.);
+        let mut rgba=vec![255u8;width as usize*height as usize*4];
+        let mut preview_source=previous_coverage>0.;
         let mut previews=0usize;
         let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
         let mut stale=false;
+        let mut parent_layers:Vec<(u8,HashMap<TileId,Arc<RgbaImage>>)>=Vec::new();
+        let mut coarse_missing=Vec::new();
 
-        // Google-Maps-style parent tiles are used ONLY when they are already
-        // cached. Never download a coarse level ahead of the target detail:
-        // the old blocking three-level prefetch could delay sharp imagery
-        // by several seconds on a cold network.
-        //
-        // Paint coarser parents first and then sharper parents, retaining
-        // the previous world-space image in portions with no cached tiles.
-        if !old_overlap && target.zoom>=2 && high.len()*2<total {
-            let first=target.zoom.saturating_sub(3);
+        // Draw any cached low-resolution parents, including for the edges
+        // beyond the previous viewport. Sharper parents overwrite coarse ones.
+        // A small cold preview is requested separately, interleaved with
+        // full-detail tiles, instead of blocking the detailed request queue.
+        if target.zoom>=2 && (previous_coverage<0.95 || high.len()*2<total){
+            let preview=if previous_coverage<0.95 {
+                coarse_preview_grid(bounds,target)
+            }else{None};
+            let first=preview.map_or(target.zoom.saturating_sub(3),
+                |coarse|coarse.zoom.min(target.zoom.saturating_sub(3)));
             for zoom in first..target.zoom {
-                let Some(parent)=grid(bounds,zoom) else {continue;};
-                if parent.count()>16 {continue;}
+                let Some(parent)=grid(bounds,zoom) else{continue;};
+                if parent.count()>16{continue;}
                 let mut cached=HashMap::new();
                 for id in parent.ids(){
                     input::check(cancel)?;
                     if let Some((tile,_))=self.from_cache(id,&root,cancel){
                         cached.insert(id,tile);
+                    }else if preview.is_some_and(|coarse|coarse.zoom==zoom){
+                        coarse_missing.push(id);
                     }
                 }
                 if !cached.is_empty(){
                     Self::paint(bounds,width,height,zoom,&cached,&mut rgba,cancel)?;
                     preview_source=true;
                 }
+                parent_layers.push((zoom,cached));
             }
         }
+        // Reuse the older sharper picture without allowing it to erase the
+        // coarse preview in newly exposed areas.
+        self.overlay_previous(bounds,width,height,&mut rgba,[0,0,width,height],cancel)?;
         if !high.is_empty(){
-            // Cached detail overlays all parents exactly once, not after
-            // each cached or downloaded tile.
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
             preview_source=true;
         }
@@ -545,23 +571,50 @@ impl ViewportRenderer {
             };
             d(a).total_cmp(&d(b))
         });
+        // Never make the network wait for every coarse tile. Start one
+        // low-resolution tile alongside three detailed tiles, then interleave
+        // the few remaining parents. All share the same four-request limit.
+        let mut jobs=Vec::with_capacity(missing.len()+coarse_missing.len());
+        let mut details=missing.into_iter();
+        let mut parents=coarse_missing.into_iter();
+        if let Some(id)=parents.next(){jobs.push(id);}
+        for _ in 0..3{if let Some(id)=details.next(){jobs.push(id);}}
+        for id in parents {
+            jobs.push(id);
+            for _ in 0..3{if let Some(id)=details.next(){jobs.push(id);}}
+        }
+        jobs.extend(details);
         let mut dirty:Option<[u32;4]>=None;
         let preview_budget=if u64::from(width)*u64::from(height)>6_000_000{
             2usize
         }else if u64::from(width)*u64::from(height)>2_000_000{
             3usize
         }else{5usize};
-        Self::fetch_batch(&missing,&root,cancel,|id,tile,when,is_stale|{
-            completed+=1;
+        Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
             stale|=is_stale;
-            high.insert(id,Arc::clone(&tile));
-            // Keep successful downloads in the in-memory LRU immediately.
-            // An interrupted pan/zoom can now use every completed tile
-            // instead of losing an entire cancelled batch.
-            self.remember(id,when,tile);
             let region=Self::tile_region(bounds,width,height,id);
-            Self::paint_region(bounds,width,height,target.zoom,
-                &high,&mut rgba,region,cancel)?;
+            if id.zoom<target.zoom{
+                if let Some((_,cached))=parent_layers.iter_mut()
+                    .find(|(zoom,_)|*zoom==id.zoom){
+                    cached.insert(id,Arc::clone(&tile));
+                }
+                // New parents fill all blank pixels, but never downgrade an
+                // overlapping old frame or a previously arrived sharp tile.
+                for (zoom,cached) in &parent_layers {
+                    Self::paint_region(bounds,width,height,*zoom,
+                        cached,&mut rgba,region,cancel)?;
+                }
+                self.overlay_previous(bounds,width,height,&mut rgba,region,cancel)?;
+                Self::paint_region(bounds,width,height,target.zoom,
+                    &high,&mut rgba,region,cancel)?;
+            }else{
+                completed+=1;
+                high.insert(id,Arc::clone(&tile));
+                Self::paint_region(bounds,width,height,target.zoom,
+                    &high,&mut rgba,region,cancel)?;
+            }
+            // Retain both coarse and sharp downloads through interrupted pans.
+            self.remember(id,when,tile);
             if region[0]<region[2] && region[1]<region[3] {
                 dirty=Some(match dirty {
                     Some(old)=>[old[0].min(region[0]),old[1].min(region[1]),
@@ -699,6 +752,16 @@ mod tests{
         assert_eq!(p["TILEMATRIX"],id.zoom.to_string());
         assert_eq!(p["TILEROW"],id.row.to_string());
         assert_eq!(p["TILECOL"],id.col.to_string());
+        assert_eq!(p["FORMAT"],"image/jpeg");
+    }
+    #[test]
+    fn a_cold_view_needs_at_most_four_coarse_preview_tiles(){
+        let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155300.,max_y:463200.};
+        let target=plan(bounds,1200,800).unwrap();
+        let coarse=coarse_preview_grid(bounds,target).unwrap();
+        assert!(coarse.zoom<target.zoom);
+        assert!(coarse.count()<=4);
+        assert!(coarse.count()>0);
     }
     #[test]
     fn tile_world_coordinates_do_not_shift_between_zoom_levels(){
