@@ -107,6 +107,9 @@ impl State{
         self.manual_notice=Some("Handmatige download geannuleerd; bestaande kaart blijft beschikbaar.".into());
         self.detail_next_sweep=Instant::now()+RETRY_AFTER_FAILURE;
     }
+    pub(super) fn downloads_active(&self)->bool{
+        self.zoom_map.downloads_active() || self.detail_worker.is_some() || self.pending.is_some()
+    }
     pub(super) fn manual_active(&self)->bool{
         self.zoom_map.manual_active() ||
         self.manual_queued.is_some() || self.detail_worker.as_ref()
