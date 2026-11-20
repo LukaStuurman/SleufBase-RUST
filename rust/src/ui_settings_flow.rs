@@ -25,10 +25,18 @@ impl SleufBaseApp {
             self.migrated_settings.viewer.offline_aerial_detail_mb;
         effective.viewer.offline_aerial_zoom_level =
             self.migrated_settings.viewer.offline_aerial_zoom_level;
+        effective.viewer.offline_aerial_quality =
+            self.migrated_settings.viewer.offline_aerial_quality;
+        effective.viewer.offline_aerial_whole_country =
+            self.migrated_settings.viewer.offline_aerial_whole_country;
         effective.viewer.offline_aerial_area =
             self.migrated_settings.viewer.offline_aerial_area;
         let mut dialog = settings_ui::Dialog::new(&effective, &self.backup_settings);
         dialog.project_scoped = self.has_project_settings_scope();
+        match sleufbase_rust::offline_zoom::list_downloads(){
+            Ok(entries)=>dialog.offline_downloads=entries,
+            Err(error)=>dialog.offline_catalog_notice=Some(error),
+        }
         // Use the real RD map viewport for all 20 size estimates. Its bounds
         // are captured so the indicated download size matches the button.
         dialog.offline_area=self.navigation.viewport
@@ -108,8 +116,15 @@ impl SleufBaseApp {
         // Manual offline-map progress belongs only inside Settings; the
         // main status bar must never show a running tile counter.
         if let Some(dialog)=self.settings_dialog.as_mut(){
+            let previous=dialog.manual_offline_busy;
             dialog.manual_offline_busy=self.offline_overview.manual_active();
             dialog.manual_offline_status=self.offline_overview.manual_status();
+            if previous && !dialog.manual_offline_busy {
+                match sleufbase_rust::offline_zoom::list_downloads(){
+                    Ok(downloads)=>dialog.offline_downloads=downloads,
+                    Err(error)=>dialog.offline_catalog_notice=Some(error),
+                }
+            }
         }
         let generation = self.shell.settings_generation;
         if let Some(saved) =
@@ -123,7 +138,7 @@ impl SleufBaseApp {
         // real WMTS zoom level. It does not enable six-month auto-refresh.
         let manual=self.settings_dialog.as_mut()
             .and_then(|dialog|dialog.manual_offline_download.take());
-        if let Some((zoom,area))=manual {
+        if let Some((zoom,area,quality))=manual {
             use sleufbase_rust::project_view::BackgroundProvider as B;
             let plan=sleufbase_rust::offline_zoom::estimate(area,zoom);
             if !plan.is_some_and(|p|p.allowed){
@@ -133,13 +148,16 @@ impl SleufBaseApp {
             }else{
                 let mut settings=self.migrated_settings.clone();
                 settings.viewer.offline_aerial_zoom_level=zoom;
+                settings.viewer.offline_aerial_quality=quality;
+                settings.viewer.offline_aerial_whole_country=
+                    area==sleufbase_rust::offline_zoom::NETHERLANDS_AREA;
                 settings.viewer.offline_aerial_area=Some(area);
                 settings.viewer.background_source=B::OfflineAerial.label().into();
                 settings.viewer.use_background=true;
                 match settings_store::save_pair(
                     &project::app_data_directory(),&settings,&self.backup_settings){
                     Ok(())=>{
-                        match self.offline_overview.download_zoom_now(zoom,area){
+                        match self.offline_overview.download_zoom_now(zoom,area,quality){
                             Ok(())=>{
                                 self.migrated_settings=settings;
                                 self.project_view.background_source=B::OfflineAerial.label().into();
@@ -148,6 +166,9 @@ impl SleufBaseApp {
                                 self.request_selected_background();
                                 if let Some(dialog)=self.settings_dialog.as_mut(){
                                     dialog.draft.viewer.offline_aerial_zoom_level=zoom;
+                                    dialog.draft.viewer.offline_aerial_quality=quality;
+                                    dialog.draft.viewer.offline_aerial_whole_country=
+                                        area==sleufbase_rust::offline_zoom::NETHERLANDS_AREA;
                                     dialog.draft.viewer.offline_aerial_area=Some(area);
                                     dialog.manual_offline_status=Some(
                                         format!("Offline luchtfoto niveau {zoom} wordt gedownload…"));
@@ -168,6 +189,50 @@ impl SleufBaseApp {
                     Err(error)=>{
                         if let Some(dialog)=self.settings_dialog.as_mut(){
                             dialog.error=format!("Offline download niet gestart: instellingen opslaan mislukt: {error}");
+                        }
+                    }
+                }
+            }
+        }
+        let deletion=self.settings_dialog.as_mut()
+            .and_then(|dialog|dialog.offline_delete.take());
+        if let Some(selected)=deletion{
+            if self.offline_overview.manual_active(){
+                if let Some(dialog)=self.settings_dialog.as_mut(){
+                    dialog.offline_catalog_notice=Some("Wacht tot de offline download klaar is voordat je kaarten verwijdert.".into());
+                }
+            }else{
+                // Explicit deletion disables automatic re-download of removed
+                // images, otherwise a six-month refresh could restore them.
+                let mut settings=self.migrated_settings.clone();
+                settings.viewer.offline_aerial_auto_backup=false;
+                if selected.is_none(){settings.viewer.offline_aerial_area=None;}
+                let result=settings_store::save_pair(
+                    &project::app_data_directory(),&settings,&self.backup_settings)
+                    .and_then(|_|{
+                        self.migrated_settings=settings;
+                        match selected{
+                            Some(id)=>sleufbase_rust::offline_zoom::remove_download(id),
+                            None=>sleufbase_rust::offline_zoom::remove_all_downloads(),
+                        }
+                    });
+                match result{
+                    Ok(())=>{
+                        self.offline_overview.invalidate_cached_images();
+                        if let Some(dialog)=self.settings_dialog.as_mut(){
+                            dialog.draft.viewer.offline_aerial_auto_backup=false;
+                            if selected.is_none(){dialog.draft.viewer.offline_aerial_area=None;}
+                            match sleufbase_rust::offline_zoom::list_downloads(){
+                                Ok(downloads)=>dialog.offline_downloads=downloads,
+                                Err(error)=>dialog.offline_catalog_notice=Some(error),
+                            }
+                            dialog.offline_catalog_notice=Some("Offline kaarten verwijderd; de ingebouwde overzichtsfoto blijft beschikbaar.".into());
+                        }
+                        ctx.request_repaint();
+                    },
+                    Err(error)=>{
+                        if let Some(dialog)=self.settings_dialog.as_mut(){
+                            dialog.offline_catalog_notice=Some(format!("Offline kaart verwijderen mislukt: {error}"));
                         }
                     }
                 }
