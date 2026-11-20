@@ -1,21 +1,24 @@
-# SleufBase Rust v1.0.56 — offline luchtfoto als losse achtergrond en back-up standaard uit
+# SleufBase Rust v1.0.57 — directe offline vernieuwing en scherpte behouden tijdens pan/zoom
 
-## Kaartlagen en kadastrale achtergrond
+## Offline luchtfoto direct opnieuw downloaden
 
-- **Geen oude, lege kadastrale kaart bij het inzoomen:** de zelfstandige kadastrale kaart schakelt direct over naar de WFS-objectenweergave op perceelschaal. Een eerdere rasterkaart zonder objecten wordt daar niet meer achter de nauwkeurige kadastrale objecten getekend. Een tijdelijke WFS-storing veroorzaakt geen terugkeer van die oude rasterlaag; op grotere schalen blijft de bestaande kadastrale WMTS-kaart beschikbaar.
-- **Offline luchtfoto als aparte achtergrondkeuze:** selecteer **Offline luchtfoto** bij de werkkaart of via Instellingen → Kaarten. Deze keuze gebruikt de ingebouwde landelijke overzichtsfoto en reeds opgeslagen detailtegels, en start zelf geen online kaart-WMTS/WMS/WFS-aanvraag.
-- **Live kaartopties ongewijzigd:** de PDOK-luchtfoto, PDOK-luchtfoto + percelen, OpenStreetMap en OpenStreetMap + percelen blijven beschikbaar. De luchtfoto wordt nog steeds over de offline onderlaag gerenderd zolang de live luchtfoto gekozen is.
+- **Nieuwe knop onder Instellingen → Kaarten:** `Nu nieuwe offline luchtfoto downloaden en gebruiken` haalt op verzoek alle 144 offline detailtegels opnieuw op het gekozen niveau van 10, 25 of 50 MB, ook wanneer automatische halfjaarlijkse vernieuwing uit staat. De knop schakelt de werkkaart direct naar de offline luchtfoto.
+- **De overzichtsfoto wordt eveneens vernieuwd:** een nieuwe PDOK-WMS-afbeelding van het landelijke gebied wordt onafhankelijk van de bestaande verloopdatum op de achtergrond opgehaald. Beide bronnen gebruiken RD / EPSG:28992.
+- **Keuze wordt bewaard:** het gekozen offline detailniveau en de actieve offline achtergrond worden direct opgeslagen. Andere, nog niet opgeslagen wijzigingen in Instellingen blijven ongewijzigd totdat je zelf Opslaan kiest.
+- **Voortgang alleen in Instellingen:** de handmatige download toont in het instellingenvenster hoeveel detailtegels zijn bijgewerkt. De normale statusbalk toont geen laadpercentages, tegelcijfers of herhaalde standaardmeldingen meer.
+- **Geen impliciete toestemming voor automatisch bijwerken:** de handmatige knop zet de halfjaarlijkse download niet aan. Die blijft standaard uit totdat de gebruiker hem expliciet activeert.
+- **Veilig bij een netwerkstoring:** iedere offline JPEG wordt pas na volledige validatie atomair vervangen. Een mislukte of onderbroken download laat de reeds aanwezige landelijke foto en opgeslagen detailtegels intact.
 
-## Instellingen: expliciete toestemming en instelbaar detailniveau
+## Sneller en stabieler PDOK-luchtfoto laden
 
-- **Automatische download standaard UIT:** een uitgebreide offline luchtfotoback-up van 50 MB wordt niet meer automatisch bij de eerste start opgebouwd voor nieuwe installaties en na deze update, tenzij je dit zelf inschakelt. De kleine ingebouwde PDOK-foto blijft altijd offline beschikbaar.
-- **Opt-in voor halfjaarlijkse updates:** wanneer de optie 'Automatisch een gedetailleerde offline luchtfoto downloaden en elke 6 maanden vernieuwen' is aangevinkt, worden ontbrekende tegels opgehaald en tegels van ten minste 183 dagen oud op de achtergrond vernieuwd. De update is annuleerbaar als je de optie weer uitzet.
-- **Drie werkelijke detailniveaus:** **Laag (10 MB)** vraagt 768×768-pixeltegels aan; **Normaal (25 MB)** gebruikt 1024×1024; **Hoog (50 MB)** gebruikt 1536×1536. Dit zijn maxima per afzonderlijke cache voor 144 JPEG-tegels, zowel voor formaat als JPEG-compressie.
-- **Voorkeuren worden onthouden:** de nieuwe instellingen worden in het bestaande Rust-instellingenbestand opgeslagen en hebben veilige standaardwaarden voor reeds bestaande installaties. Het ingeschakelde detailniveau is een algemene voorkeur, niet gebonden aan een projectbestand.
-- **Bestaande data blijft behouden:** een al opgebouwde 50MB-cache blijft leesbaar; oudere caches van andere ingestelde detailniveaus worden niet automatisch gewist. Ook na uitschakelen kun je opgeslagen offlinebeelden gebruiken. De continue kleine overzichtsfoto is nooit afhankelijk van een netwerkverbinding.
+- **Scherpe pixels niet kwijtraken bij bewegen:** de renderer bewaart bij een geannuleerde aanvraag het geografisch correcte al samengestelde tussenbeeld, inclusief de scherpere tegels die net binnenkwamen. Bij de volgende kleine pan/zoom gebruikt hij dat opnieuw, in plaats van terug te vallen op de laatste volledig afgewerkte, mogelijk grovere uitsnede.
+- **Transparante ontbrekende pixels overschrijven de oude kaart nooit:** het herprojecteren van een eerdere gedeeltelijke afbeelding houdt volledig doorzichtige pixels buiten de compositie.
+- **Minder onnodig lage-resolutiewerk:** wanneer een eerdere afbeelding nog minstens ongeveer 65% van het nieuwe kaartgebied dekt, worden geen extra grovere parent-tegels samengesteld. De resterende netwerkcapaciteit gaat naar ontbrekende scherpe WMTS-tegels.
+- **Groot nieuw kaartgebied:** bij een koude of zeer grote verschuiving blijven de bestaande grovere preview en ingebouwde offline luchtfoto beschikbaar als tijdelijke ondergrond.
+- **Statusbalk opgeruimd:** succes- en voortgangsevenementen van de achtergrondkaart worden stil verwerkt. Fouten die opvolging vereisen blijven zichtbaar.
 
-De bronfoto komt van het Samenwerkingsverband Beeldmateriaal (CC BY 4.0), met zichtbare bronvermelding. De kaart ligt in RD / EPSG:28992. De DXF-export en andere kaartproviders worden niet gewijzigd.
+De verbeteringen gelden voor het interactieve kaartscherm; DXF-sjabloonexport en geopende proefsleuven blijven ongewijzigd.
 
-## Build en validatie
+## Validatie
 
-Op verzoek worden de automatische tests en Clippy in deze release overgeslagen. De Windows-releasecompilatie en de pakket- en checksumcontroles worden wel uitgevoerd. Nieuwe regressietests staan in de code voor de opt-ininstellingen, detailniveaus, offline kaartkeuze en het verwijderen van de lege kadastrale rasterkaart; die tests zijn niet uitgevoerd.
+Nieuwe regressiecontroles staan in de code voor het behouden van scherpere pixels in gedeeltelijke WMTS-frames en het gescheiden houden van een handmatige offline download en automatische opt-in. De Windows-release wordt op de bestaande afspraak zonder volledige geautomatiseerde tests en Clippy gebouwd; geoptimaliseerde Windows-compilatie, installer, portable pakket en checksums worden wel gecontroleerd. Praktische prestaties zijn nog niet op de gebruikerswerkplek gemeten.
