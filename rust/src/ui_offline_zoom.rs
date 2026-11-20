@@ -64,6 +64,9 @@ impl State{
     pub(super) fn manual_active(&self)->bool{
         self.queued.is_some() || self.pending.as_ref().is_some_and(|(_,manual,_)|*manual)
     }
+    pub(super) fn downloads_active(&self)->bool{
+        self.queued.is_some() || self.pending.is_some()
+    }
     pub(super) fn manual_status(&self)->Option<String>{
         if let Some((zoom,_,_))=self.queued{
             return Some(format!("PDOK niveau {zoom}: offline kaart wordt voorbereid…"));
