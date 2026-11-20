@@ -147,6 +147,10 @@ pub(super) struct State {
 }
 impl State {
     pub fn busy(&self) -> bool { self.worker.is_some() || self.editor.is_some() || self.deletion.is_some() }
+    /// Expose the import readiness without leaking editor/catalog internals across UI modules.
+    pub fn can_queue_external_clouds(&self) -> bool {
+        self.editor.is_none() && self.pending_catalog.is_none()
+    }
     pub fn importing(&self) -> bool { self.worker.is_some() }
     pub fn reset(&mut self) {
         // The catalog and overview belong to the application, not one project.

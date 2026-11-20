@@ -926,8 +926,8 @@ impl SleufBaseApp {
                 let paths=std::mem::take(&mut self.browser_ui.downloaded_tiffs);
                 self.load_geotiffs(paths,ctx);
             } else if !self.browser_ui.downloaded_clouds.is_empty()
-                && self.pointcloud_ui.editor.is_none() && self.trench_editor.is_none()
-                && self.pointcloud_ui.pending_catalog.is_none() {
+                && self.pointcloud_ui.can_queue_external_clouds()
+                && self.trench_editor.is_none() {
                 let paths=std::mem::take(&mut self.browser_ui.downloaded_clouds);
                 self.queue_pointcloud_files(paths);
             }
