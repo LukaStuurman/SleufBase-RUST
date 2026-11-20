@@ -122,10 +122,10 @@ impl State{
             }
         });
         if let Some((running,result))=completed{
-            self.detail_worker=None;
-            self.detail_cancel=None;
             let cancelled=self.detail_cancel.as_ref()
                 .is_some_and(|flag|flag.load(Ordering::Relaxed));
+            self.detail_worker=None;
+            self.detail_cancel=None;
             self.detail_next_sweep=if running!=mb||cancelled {
                 // An old mode or an opt-out cancelled this fetch.
                 // Do not delay a newly enabled preset for a whole day.
