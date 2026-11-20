@@ -438,6 +438,32 @@ mod tests {
         assert!(app.pdok_texture.is_some());
     }
     #[test]
+    fn offline_only_avoids_network_worker_and_cadastral_wfs_drops_old_raster() {
+        let ctx=egui::Context::default();
+        let mut app=SleufBaseApp::default();
+        app.project_view.use_background=true;
+        app.project_view.background_source="Offline luchtfoto".into();
+        frame_at_scale(&ctx,[220.,180.],Provider::Aerial,1.,|view,_|{
+            app.update_map_background(view);
+        });
+        assert!(app.map_requests.source.is_none());
+        assert!(!app.map_requests.busy());
+        app.project_view.background_source="PDOK kadastrale kaart".into();
+        app.pdok_texture=Some(ctx.load_texture("old-cadastral-placeholder",
+            egui::ColorImage::new([1,1],Color32::WHITE),
+            egui::TextureOptions::LINEAR));
+        app.pdok_bounds=Some(Bounds{min_x:154900.,min_y:462900.,
+            max_x:155100.,max_y:463100.});
+        app.map_requests.source=Some(Provider::Cadastral);
+        frame_at_scale(&ctx,[220.,180.],Provider::Cadastral,1.,|view,_|{
+            app.update_map_background(view);
+        });
+        assert!(app.map_requests.source.is_none(),
+            "near cadastral scale should request WFS, not the old WMTS");
+        assert!(app.pdok_texture.is_none(),
+            "no featureless cadastral WMTS may remain behind WFS");
+    }
+    #[test]
     fn stale_fake_preview_after_project_and_disabled_source_cannot_publish_textures() {
         let (tx, rx) = mpsc::sync_channel(1);
         let worker = map_request::Worker::with_fetcher(move |request, cancel, publish| {
