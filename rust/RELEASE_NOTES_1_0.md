@@ -1,16 +1,16 @@
-# SleufBase Rust v1.0.51 — minder witte luchtfotovakken bij uitzoomen en verschuiven
+# SleufBase Rust v1.0.52 — correcte straatnaamrotatie en kadastrale kaart bij ver uitzoomen
 
-## PDOK WMTS: nabije gebieden alvast voorbereiden
+## Kadastrale kaart en '+ percelen'
 
-- **Vooraf geladen randen:** nadat de zichtbare luchtfoto is geladen, bereidt SleufBase een kleine ring met grovere WMTS-tegels buiten het huidige kaartbeeld voor. Daardoor kan het programma bij een volgende zijwaartse beweging vaker meteen een luchtfoto in plaats van een wit vlak tonen.
-- **Sneller uitzoomen:** een extra grof zoomniveau wordt mee opgeslagen om een volgende zoomstap te ondersteunen. Ook kaartuitsneden met minder dan acht scherpe tegels mogen nu een grovere tijdelijke voorbeeldkaart aanvragen.
-- **Zichtbare kaart heeft voorrang:** maximaal zestien nabije grovere tegels per geplande voorlaadbeurt, één achtergronddownload tegelijk, en een lopende voorlaadbeurt wordt geannuleerd zodra de gebruiker een nieuw kaartgebied opvraagt. Bestaande scherpe tegeldownloads gebruiken de normale prioriteit en vierverzoeklimiet.
-- **Direct uit geheugen:** de grovere tegels worden in een kleine gedeelde RAM-cache bewaard en via de bestaande schijfcache hergebruikt. Zo hoeft een net voorladen bestand niet eerst volledig van schijf terug te worden gelezen.
-- **Geen beeldverlies bij een snelle beweging:** een geldige voorlaadtegel die nét klaar is op het moment van een nieuwe camerabeweging, blijft beschikbaar voor later gebruik.
-- **Bestaande verbeteringen behouden:** doorlopend scherpere tegels tonen, doorlopende gedeeltelijke GPU-updates, automatisch opnieuw proberen na een fout, JPEG-downloads en RD-uitlijning blijven behouden.
+- **Straatnamen volgen hun echte richting:** de interactieve Kadaster-WFS-kaart gebruikt nu de aangeleverde rotatiehoek van de straatnaam, in plaats van alle namen horizontaal te tekenen. De tekst blijft gecentreerd op het oorspronkelijke RD-labelpunt en een omgekeerde hoek wordt voor leesbaarheid genormaliseerd.
+- **Ook op luchtfoto + percelen en OpenStreetMap + percelen:** dezelfde interactieve WFS-labelweergave wordt gebruikt voor de bijbehorende ingeschakelde perceelachtergrond. De labels volgen de oriëntatie die PDOK per openbare ruimte levert.
+- **Geen harde uitschakeling meer bij 250 meter per pixel:** de kadastrale WMTS-ondergrond blijft ook bij verder uitzoomen ingeschakeld. De actuele WMTS-zoomniveaus bepalen de beschikbare detaillering.
+- **Nederlandse kaart blijft zichtbaar in grote uitsneden:** als een ver uitgezoomde kaart buiten het RD-dekkingsgebied komt, wordt alleen het geldige Kadaster-deel opgehaald, pixelvast op de juiste positie geplaatst en wordt de ruimte buiten dat bereik neutraal afgebeeld. Dit voorkomt fouten voor de hele achtergrond.
+- **Betere terugval bij ' + percelen':** wanneer de aanvullende transparante perceel-WMS op grote schaal niet beschikbaar is, blijft de onderliggende PDOK-luchtfoto of OpenStreetMap gewoon zichtbaar in plaats van dat de volledige achtergrond mislukt.
+- **Export ongemoeid:** de DXF- en kaart-export blijven hun bestaande nauwkeurige kaartuitsnedes en labelrotaties gebruiken. De eerdere WMTS-snelheidsverbeteringen uit v1.0.50 en v1.0.51 blijven behouden.
 
-Bij het allereerste bezoek aan een geheel nieuw gebied kunnen nog kort witte delen optreden: daarvoor moet ten minste één echte luchtfototegel via internet binnenkomen. De nieuwe aanpak minimaliseert dit vooral voor aangrenzende en recent bezochte gebieden, zonder andere PDOK-kaarten massaal binnen te halen.
+Op zeer kleine kaartschalen kan de bron zelf minder perceelgrenzen en straatnamen tonen; de kaart blijft dan wel zichtbaar. De eigenschappen van de actuele PDOK-bron zijn bepalend.
 
 ## Build en validatie
 
-De release wordt op verzoek **zonder geautomatiseerde tests en zonder Clippy** gebouwd. De Windows-releasecompilatie en controle van het installatieprogramma, de portable ZIP en checksums worden wel uitgevoerd. De daadwerkelijke respons op een Windows-werkplek is niet gemeten.
+De Windows-app wordt op verzoek zonder volledige geautomatiseerde tests en zonder Clippy gebouwd. De optimale releasecompilatie, het installatieprogramma, de portable ZIP, controles op de verpakking en checksums blijven vereist. Er zijn gerichte regressiecontroles aan de code toegevoegd voor rotatie en landelijke clipping, maar deze worden in deze release niet uitgevoerd.
