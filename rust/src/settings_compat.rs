@@ -114,18 +114,29 @@ pub struct ViewerPreferences {
     /// Downloading/updating the larger offline archive is opt-in.
     #[serde(default)]
     pub offline_aerial_auto_backup:bool,
-    /// Disk budget and corresponding JPEG resolution of the offline archive.
+    /// Legacy WMS country preview setting (retained for older settings and
+    /// previously downloaded 10/25/50 MiB JPEGs, not shown in the UI).
     #[serde(default="default_offline_aerial_detail_mb")]
     pub offline_aerial_detail_mb:u16,
+    /// Real PDOK WMTS tile-matrix zoom level, 0..=19; never a file-size quota.
+    #[serde(default="default_offline_aerial_zoom_level")]
+    pub offline_aerial_zoom_level:u8,
+    /// Captured RD map extent of the last explicitly selected offline area,
+    /// used again only if six-month auto-refresh is enabled.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub offline_aerial_area:Option<[i32;4]>,
 }
 pub fn default_offline_aerial_detail_mb()->u16{50}
+pub fn default_offline_aerial_zoom_level()->u8{crate::offline_zoom::DEFAULT_ZOOM}
 pub fn supported_offline_aerial_detail_mb(mb:u16)->bool{matches!(mb,10|25|50)}
 impl Default for ViewerPreferences {
     fn default()->Self {
         let view=crate::project_view::ProjectView::default();
         Self{background_source:view.background_source,use_background:view.use_background,
             show_trench_labels:true,offline_aerial_auto_backup:false,
-            offline_aerial_detail_mb:default_offline_aerial_detail_mb()}
+            offline_aerial_detail_mb:default_offline_aerial_detail_mb(),
+            offline_aerial_zoom_level:default_offline_aerial_zoom_level(),
+            offline_aerial_area:None}
     }
 }
 impl ViewerPreferences {
@@ -137,7 +148,14 @@ impl ViewerPreferences {
             return Err("Kies een geldige achtergrond op het kaartscherm".into());
         }
         if !supported_offline_aerial_detail_mb(self.offline_aerial_detail_mb){
-            return Err("Kies 10, 25 of 50 MB als detailniveau voor de offline luchtfoto".into());
+            return Err("Ongeldige oude offline luchtfoto-instelling".into());
+        }
+        if self.offline_aerial_zoom_level>crate::offline_zoom::MAX_ZOOM{
+            return Err("Kies een PDOK-luchtfoto zoomniveau tussen 0 en 19".into());
+        }
+        if self.offline_aerial_area.is_some_and(|bounds|
+            crate::offline_zoom::from_area(bounds).is_none()){
+            return Err("Ongeldige offline PDOK-uitsnede".into());
         }
         Ok(())
     }
@@ -420,9 +438,13 @@ mod viewer_preferences_tests {
         let mut settings=MigratedSettings::default();
         assert!(!settings.viewer.offline_aerial_auto_backup);
         assert_eq!(settings.viewer.offline_aerial_detail_mb,50);
+        assert_eq!(settings.viewer.offline_aerial_zoom_level,15);
+        assert_eq!(settings.viewer.offline_aerial_area,None);
         settings.viewer.background_source="Offline luchtfoto".into();
         settings.viewer.offline_aerial_auto_backup=true;
         settings.viewer.offline_aerial_detail_mb=25;
+        settings.viewer.offline_aerial_zoom_level=16;
+        settings.viewer.offline_aerial_area=Some([155000,463000,155300,463200]);
         settings.validate().unwrap();
         let serial=serde_json::to_value(&settings).unwrap();
         let restored: MigratedSettings=serde_json::from_value(serial).unwrap();
@@ -432,9 +454,13 @@ mod viewer_preferences_tests {
         let mut old=serde_json::to_value(MigratedSettings::default()).unwrap();
         old["viewer"].as_object_mut().unwrap().remove("offline_aerial_auto_backup");
         old["viewer"].as_object_mut().unwrap().remove("offline_aerial_detail_mb");
+        old["viewer"].as_object_mut().unwrap().remove("offline_aerial_zoom_level");
+        old["viewer"].as_object_mut().unwrap().remove("offline_aerial_area");
         let migrated: MigratedSettings=serde_json::from_value(old).unwrap();
         assert!(!migrated.viewer.offline_aerial_auto_backup);
         assert_eq!(migrated.viewer.offline_aerial_detail_mb,50);
+        assert_eq!(migrated.viewer.offline_aerial_zoom_level,15);
+        assert_eq!(migrated.viewer.offline_aerial_area,None);
     }
     #[test]
     fn old_settings_without_viewer_keep_the_previous_startup_defaults() {
