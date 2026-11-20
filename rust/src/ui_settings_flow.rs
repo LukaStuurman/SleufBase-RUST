@@ -117,7 +117,7 @@ impl SleufBaseApp {
         // main status bar must never show a running tile counter.
         if let Some(dialog)=self.settings_dialog.as_mut(){
             let previous=dialog.manual_offline_busy;
-            dialog.manual_offline_busy=self.offline_overview.manual_active();
+            dialog.manual_offline_busy=self.offline_overview.downloads_active();
             dialog.manual_offline_status=self.offline_overview.manual_status();
             if previous && !dialog.manual_offline_busy {
                 match sleufbase_rust::offline_zoom::list_downloads(){
@@ -197,7 +197,7 @@ impl SleufBaseApp {
         let deletion=self.settings_dialog.as_mut()
             .and_then(|dialog|dialog.offline_delete.take());
         if let Some(selected)=deletion{
-            if self.offline_overview.manual_active(){
+            if self.offline_overview.downloads_active(){
                 if let Some(dialog)=self.settings_dialog.as_mut(){
                     dialog.offline_catalog_notice=Some("Wacht tot de offline download klaar is voordat je kaarten verwijdert.".into());
                 }
