@@ -551,10 +551,15 @@ impl Worker {
                             let mut image = image::RgbaImage::from_raw(
                                 raster.width, raster.height, raster.rgba,
                             ).ok_or("OpenStreetMap gaf ongeldige pixels terug")?;
-                            let layer = if let Some(job) = overlay {
-                                job.join().map_err(|_| "Perceelwerker is gestopt")??
-                            } else { parcel_overlay(v, cancel)? };
-                            crate::pdok_wms::composite_rgba(&mut image, &layer, cancel)?;
+                            // An unavailable or overly broad parcel WMS must
+                            // not make the underlying OSM basemap disappear.
+                            let layer=if let Some(job)=overlay {
+                                job.join().unwrap_or_else(|_|Err("Perceelwerker is gestopt".into()))
+                            }else{parcel_overlay(v,cancel)};
+                            if let Ok(layer)=layer {
+                                crate::pdok_wms::composite_rgba(&mut image,&layer,cancel)?;
+                            }
+                            crate::input::check(cancel)?;
                             Ok(Pixels {
                                 bounds: raster.bounds,
                                 width: image.width(),
@@ -589,10 +594,15 @@ impl Worker {
                         let mut image=image::RgbaImage::from_raw(
                             base.width,base.height,base.rgba)
                             .ok_or("PDOK-luchtfoto gaf ongeldige pixels terug")?;
-                        let layer = if let Some(job) = overlay {
-                            job.join().map_err(|_| "Perceelwerker is gestopt")??
-                        } else { parcel_overlay(v, cancel)? };
-                        crate::pdok_wms::composite_rgba(&mut image, &layer, cancel)?;
+                        // Keep the aerial visible on very broad zooms even
+                        // if the transparent parcel WMS does not answer.
+                        let layer=if let Some(job)=overlay {
+                            job.join().unwrap_or_else(|_|Err("Perceelwerker is gestopt".into()))
+                        }else{parcel_overlay(v,cancel)};
+                        if let Ok(layer)=layer {
+                            crate::pdok_wms::composite_rgba(&mut image,&layer,cancel)?;
+                        }
+                        crate::input::check(cancel)?;
                         Ok(Pixels {
                             bounds: v.bounds,
                             width: image.width(),
@@ -610,7 +620,7 @@ impl Worker {
                         wmts=Some(crate::cadastral_tiles::Client::new(
                             crate::project::app_data_directory().join("cadastral-wmts"))?);
                     }
-                    let image=wmts.as_ref().unwrap().request(v.bounds,v.size,cancel)?;
+                    let image=wmts.as_ref().unwrap().request_viewport(v.bounds,v.size,cancel)?;
                     Ok(Pixels{
                         bounds:v.bounds,width:image.width(),height:image.height(),
                         rgba:image.into_raw(),stale_cache:false,
