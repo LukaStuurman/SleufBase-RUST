@@ -44,6 +44,7 @@ pub(super) struct State {
     manual_preview_pending:bool,
     auto_enabled:bool,
     active_level:u16,
+    zoom_map:offline_zoom_ui::State,
 }
 impl Default for State{
     fn default()->Self{
@@ -58,6 +59,7 @@ impl Default for State{
             manual_queued:None,manual_progress:Arc::new(AtomicUsize::new(0)),
             manual_notice:None,force_overview:false,manual_preview_pending:false,
             auto_enabled:false,active_level:50,
+            zoom_map:Default::default(),
         }
     }
 }
@@ -67,6 +69,12 @@ impl State{
     }
     pub(super) fn tiles(&self)->&[(egui::TextureHandle,Bounds)]{
         &self.tiles
+    }
+    pub(super) fn download_zoom_now(&mut self,zoom:u8,area:[i32;4])->Result<(),String>{
+        self.zoom_map.download_now(zoom,area)?;
+        self.force_overview=true;
+        self.retry_after=Instant::now();
+        Ok(())
     }
     /// A manual refresh never changes the scheduled-update opt-in.
     /// It is requested explicitly from Settings and rebuilds all tiles,
@@ -94,11 +102,15 @@ impl State{
         self.detail_next_sweep=Instant::now()+RETRY_AFTER_FAILURE;
     }
     pub(super) fn manual_active(&self)->bool{
+        self.zoom_map.manual_active() ||
         self.manual_queued.is_some() || self.detail_worker.as_ref()
             .is_some_and(|(_,manual,_)|*manual) || self.manual_preview_pending
             || self.force_overview
     }
     pub(super) fn manual_status(&self)->Option<String>{
+        if let Some(status)=self.zoom_map.manual_status(){
+            return Some(status);
+        }
         if let Some(mb)=self.manual_queued{
             return Some(format!("Offline luchtfoto ({mb} MB): download wordt gestart…"));
         }
@@ -292,8 +304,11 @@ impl State{
         }
     }
     pub(super) fn poll(&mut self,ctx:&egui::Context,view:Option<Bounds>,
-        auto_backup:bool,detail_mb:u16){
+        auto_backup:bool,detail_mb:u16,zoom:u8,area:Option<[i32;4]>){
         let mb=if offline_detail::valid_level(detail_mb){detail_mb}else{50};
+        // Old 10/25/50 MiB national WMS mosaics remain as a read-only
+        // fallback, but no longer consume background network requests.
+        let legacy_auto=false;
         if self.active_level!=mb {
             if let Some(cancel)=&self.detail_cancel {
                 cancel.store(true,Ordering::Relaxed);
@@ -304,8 +319,8 @@ impl State{
             self.tiles.clear();
             self.detail_next_sweep=Instant::now();
         }
-        if self.auto_enabled!=auto_backup {
-            self.auto_enabled=auto_backup;
+        if self.auto_enabled!=legacy_auto {
+            self.auto_enabled=legacy_auto;
             if !auto_backup {
                 if let Some(cancel)=&self.detail_cancel {
                     cancel.store(true,Ordering::Relaxed);
@@ -370,6 +385,9 @@ impl State{
         // happen only after an explicit opt-in in Settings (default: off).
         self.poll_detail_downloads(ctx,mb);
         self.poll_visible_tiles(ctx,view,mb);
+        // Render zoom-tile layers above the legacy cache when available.
+        self.zoom_map.poll(ctx,view,auto_backup,zoom,area);
+        self.tiles.extend(self.zoom_map.tiles().iter().cloned());
         if self.pending.is_some(){
             ctx.request_repaint_after(Duration::from_secs(1));
         }
