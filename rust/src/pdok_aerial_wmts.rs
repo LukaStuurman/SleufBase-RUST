@@ -726,7 +726,7 @@ impl ViewportRenderer {
         // UI coalesces updates during 30 ms repaints. Publish each completed
         // tile immediately; never freeze sharper imagery after a preview cap.
         let mut has_frame=preview_source;
-        let fetched=Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
+        Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
             stale|=is_stale;
             let region=Self::tile_region(bounds,width,height,id);
             if id.zoom<target.zoom{
@@ -760,21 +760,7 @@ impl ViewportRenderer {
                 has_frame=true;
             }
             Ok(())
-        });
-        if let Err(error)=fetched {
-            // Keep the partially composed map when the user interrupts loading.
-            // Its geography remains valid and it can fill the next zoom/pan
-            // rather than throwing away pixels already shown to the user.
-            if cancel.load(Ordering::Relaxed) && has_frame
-                && u64::from(width)*u64::from(height)<=12_000_000 {
-                self.previous=Some(Raster{bounds,width,height,rgba,stale_cache:stale});
-            }
-            return Err(error);
-        }
-        if cancel.load(Ordering::Relaxed) && has_frame
-            && u64::from(width)*u64::from(height)<=12_000_000 {
-            self.previous=Some(Raster{bounds,width,height,rgba:rgba.clone(),stale_cache:stale});
-        }
+        })?;
         input::check(cancel)?;
         // Every incoming tile was painted into its exact RD rectangle with
         // a two-pixel halo, so the final image is already pixel-identical
