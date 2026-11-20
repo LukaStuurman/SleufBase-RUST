@@ -44,10 +44,10 @@ fn clipped_interactive_area(bounds:Bounds,size:[u32;2])->Option<(Bounds,[u32;4])
     let bottom=((bounds.max_y-min_y)/dy).floor().clamp(0.,h) as u32;
     if right<=left || bottom<=top {return None;}
     Some((Bounds{
-        min_x:bounds.min_x+dx*f64::from(left),
-        max_x:bounds.min_x+dx*f64::from(right),
-        min_y:bounds.max_y-dy*f64::from(bottom),
-        max_y:bounds.max_y-dy*f64::from(top),
+        min_x:(bounds.min_x+dx*f64::from(left)).clamp(RD_MIN_X,RD_MAX_X),
+        max_x:(bounds.min_x+dx*f64::from(right)).clamp(RD_MIN_X,RD_MAX_X),
+        min_y:(bounds.max_y-dy*f64::from(bottom)).clamp(RD_MIN_Y,RD_MAX_Y),
+        max_y:(bounds.max_y-dy*f64::from(top)).clamp(RD_MIN_Y,RD_MAX_Y),
     },[left,top,right,bottom]))
 }
 
