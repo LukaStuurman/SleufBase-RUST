@@ -664,11 +664,12 @@ impl ViewportRenderer {
         // beyond the previous viewport. Sharper parents overwrite coarse ones.
         // A small cold preview is requested separately, interleaved with
         // full-detail tiles, instead of blocking the detailed request queue.
-        if target.zoom>=2 && (previous_coverage<0.95 || high.len()*2<total){
-            // Most of the camera is still covered by already rendered sharp
-            // pixels: prioritize missing high-res tiles over another low-res
-            // network pass. For a cold/long pan, coarse preview still starts.
-            let preview=if previous_coverage<0.45 && high.len()*2<total {
+        if target.zoom>=2 && previous_coverage<0.65 && high.len()*2<total {
+            // A small pan already has an accurate old image plus WMTS high
+            // tiles in memory. Skip expensive cached parent resampling
+            // entirely and send network capacity to the missing sharp tiles.
+            // Only a cold or substantially new region needs coarse parents.
+            let preview=if previous_coverage<0.35 {
                 coarse_preview_grid(bounds,target)
             }else{None};
             // Also consider parents pre-warmed for a one/two-step zoom-out.
