@@ -15,6 +15,7 @@ const ENDPOINTS = [
 ];
 const state = {
   source: null, viewer: null, cloud: null, ready: false,
+  navigationMinimumRadius: 0.35,
   catalog: { types: [], materials: [] }, workflow: "trench",
   creation: { object_type: "", type_key: "", material: "" },
   endpoints: {}, axis: null,
@@ -683,6 +684,31 @@ function cancelDrawing() {
 // Buttons arrive as the browser's bitmask: left 1, right 2, middle 4.
 function installNavigationButtons() {
   const controls = state.viewer.orbitControls;
+  // Potree 1.8.2 scales pan and wheel movement by view.radius. Near an
+  // object's surface this approaches zero, so every additional wheel tick and
+  // mouse drag becomes imperceptible. A double-click accidentally 'fixes' it
+  // because Potree.zoomToLocation() replaces the radius.
+  //
+  // Keep an orbit distance large enough for usable navigation, but preserve
+  // the actual camera position when the radius becomes smaller: the pivot
+  // advances into the cloud and zooming can continue through close geometry.
+  // No DOM event synthesis, pointer picking or annotation positions change.
+  const originalUpdate = controls.update.bind(controls);
+  controls.update = (delta) => {
+    const view = controls.scene?.view;
+    if (!view || !state.cloud) return originalUpdate(delta);
+    // Cache this stable scale instead of recalculating the entire cloud box
+    // every animation frame as navigation approaches the surface.
+    const minimumRadius = state.navigationMinimumRadius || 0.35;
+    if (!Number.isFinite(view.radius) || view.radius <= 0) view.radius = minimumRadius;
+    originalUpdate(delta);
+    if (Number.isFinite(view.radius) && view.radius < minimumRadius) {
+      // OrbitControls.update() has already moved the eye to the intended
+      // position. Restoring only the radius shifts the pivot, not the eye.
+      view.radius = minimumRadius;
+    }
+    state.viewer.setMoveSpeed(Math.max(view.radius, minimumRadius));
+  };
   const handlers = controls?._listeners?.drag;
   if (!Array.isArray(handlers) || handlers.length !== 1) {
     throw new Error("De Potree-muisbediening heeft een onbekende indeling.");
@@ -967,6 +993,9 @@ async function loadCloud() {
   const cloud = new Potree.PointCloudOctree(loaded.geometry);
   cloud.name = state.source.title;
   state.cloud = cloud;
+  const span = cloud.getBoundingBoxWorld().getSize(new THREE.Vector3()).length();
+  state.navigationMinimumRadius = Number.isFinite(span)
+    ? Math.max(0.35, Math.min(2, span * 0.008)) : 0.35;
   state.viewer.scene.addPointCloud(cloud);
   const attributes = cloud.pcoGeometry.pointAttributes.attributes;
   const color = attributes.some((attribute) => ["rgba", "rgb"].includes(attribute.name));
