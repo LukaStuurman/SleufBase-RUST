@@ -10,7 +10,9 @@ use std::{
 };
 
 const MAX_LEVEL_TILES:u64=24;
-const MAX_TEXTURES:usize=48;
+// Three visible zoom levels may each require up to 24 small 256px tiles.
+// A bounded 96-tile GPU LRU avoids rapid eviction while moving the camera.
+const MAX_TEXTURES:usize=96;
 const MAX_DECODES_PER_FRAME:usize=4;
 const AUTO_RESCAN:Duration=Duration::from_secs(24*60*60);
 const RETRY_AFTER_FAILURE:Duration=Duration::from_secs(24*60*60);
