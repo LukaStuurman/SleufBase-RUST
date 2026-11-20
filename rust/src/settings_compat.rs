@@ -121,6 +121,12 @@ pub struct ViewerPreferences {
     /// Real PDOK WMTS tile-matrix zoom level, 0..=19; never a file-size quota.
     #[serde(default="default_offline_aerial_zoom_level")]
     pub offline_aerial_zoom_level:u8,
+    /// JPEG quality affects disk size only; original 256x256 WMTS dimensions remain intact.
+    #[serde(default="default_offline_aerial_quality")]
+    pub offline_aerial_quality:u8,
+    /// True selects the national RD footprint; false selects the visible map.
+    #[serde(default)]
+    pub offline_aerial_whole_country:bool,
     /// Captured RD map extent of the last explicitly selected offline area,
     /// used again only if six-month auto-refresh is enabled.
     #[serde(default,skip_serializing_if="Option::is_none")]
@@ -128,6 +134,7 @@ pub struct ViewerPreferences {
 }
 pub fn default_offline_aerial_detail_mb()->u16{50}
 pub fn default_offline_aerial_zoom_level()->u8{crate::offline_zoom::DEFAULT_ZOOM}
+pub fn default_offline_aerial_quality()->u8{crate::offline_zoom::DEFAULT_QUALITY}
 pub fn supported_offline_aerial_detail_mb(mb:u16)->bool{matches!(mb,10|25|50)}
 impl Default for ViewerPreferences {
     fn default()->Self {
@@ -136,6 +143,8 @@ impl Default for ViewerPreferences {
             show_trench_labels:true,offline_aerial_auto_backup:false,
             offline_aerial_detail_mb:default_offline_aerial_detail_mb(),
             offline_aerial_zoom_level:default_offline_aerial_zoom_level(),
+            offline_aerial_quality:default_offline_aerial_quality(),
+            offline_aerial_whole_country:false,
             offline_aerial_area:None}
     }
 }
@@ -152,6 +161,9 @@ impl ViewerPreferences {
         }
         if self.offline_aerial_zoom_level>crate::offline_zoom::MAX_ZOOM{
             return Err("Kies een PDOK-luchtfoto zoomniveau tussen 0 en 19".into());
+        }
+        if !crate::offline_zoom::supported_quality(self.offline_aerial_quality) {
+            return Err("Kies een ondersteunde offline JPEG-compressie".into());
         }
         if self.offline_aerial_area.is_some_and(|bounds|
             crate::offline_zoom::from_area(bounds).is_none()){
