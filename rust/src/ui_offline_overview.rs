@@ -6,7 +6,7 @@ use super::*;
 use sleufbase_rust::{offline_overview,offline_detail};
 use std::{
     collections::{HashSet,VecDeque},
-    sync::{atomic::{AtomicBool,Ordering},Arc,Mutex},
+    sync::{atomic::{AtomicBool,AtomicUsize,Ordering},Arc,Mutex},
     time::{Instant,SystemTime},
 };
 
@@ -33,10 +33,15 @@ pub(super) struct State {
     decoding:HashSet<(offline_detail::TileId,u16)>,
     decoder:Option<mpsc::SyncSender<(offline_detail::TileId,u16)>>,
     decoded:Option<Receiver<Decoded>>,
-    detail_worker:Option<(u16,Receiver<Result<(),String>>)>,
+    detail_worker:Option<(u16,bool,Receiver<Result<(),String>>)>,
     detail_cancel:Option<Arc<AtomicBool>>,
     detail_next_sweep:Instant,
     detail_focus:Arc<Mutex<[f64;2]>>,
+    manual_queued:Option<u16>,
+    manual_progress:Arc<AtomicUsize>,
+    manual_notice:Option<String>,
+    force_overview:bool,
+    manual_preview_pending:bool,
     auto_enabled:bool,
     active_level:u16,
 }
@@ -50,6 +55,8 @@ impl Default for State{
             detail_worker:None,detail_cancel:None,
             detail_next_sweep:Instant::now(),
             detail_focus:Arc::new(Mutex::new([155_000.,463_000.])),
+            manual_queued:None,manual_progress:Arc::new(AtomicUsize::new(0)),
+            manual_notice:None,force_overview:false,manual_preview_pending:false,
             auto_enabled:false,active_level:50,
         }
     }
@@ -60,6 +67,47 @@ impl State{
     }
     pub(super) fn tiles(&self)->&[(egui::TextureHandle,Bounds)]{
         &self.tiles
+    }
+    /// A manual refresh never changes the scheduled-update opt-in.
+    /// It is requested explicitly from Settings and rebuilds all tiles,
+    /// including fresh ones, while keeping old JPEGs visible until replaced.
+    pub(super) fn download_now(&mut self,mb:u16){
+        if !offline_detail::valid_level(mb){return;}
+        self.manual_queued=Some(mb);
+        self.manual_progress.store(0,Ordering::Relaxed);
+        self.manual_notice=None;
+        self.force_overview=true;
+        self.detail_next_sweep=Instant::now();
+        if let Some(cancel)=&self.detail_cancel{
+            cancel.store(true,Ordering::Relaxed);
+        }
+    }
+    pub(super) fn cancel_manual(&mut self){
+        self.manual_queued=None;
+        if let Some((_,true,_))=self.detail_worker.as_ref(){
+            if let Some(cancel)=&self.detail_cancel{cancel.store(true,Ordering::Relaxed);}
+        }
+        self.force_overview=false;
+        self.manual_notice=Some("Handmatige download geannuleerd; bestaande kaart blijft beschikbaar.".into());
+        self.detail_next_sweep=Instant::now()+RETRY_AFTER_FAILURE;
+    }
+    pub(super) fn manual_active(&self)->bool{
+        self.manual_queued.is_some() || self.detail_worker.as_ref()
+            .is_some_and(|(_,manual,_)|*manual) || self.manual_preview_pending
+            || self.force_overview
+    }
+    pub(super) fn manual_status(&self)->Option<String>{
+        if let Some(mb)=self.manual_queued{
+            return Some(format!("Offline luchtfoto ({mb} MB): download wordt gestart…"));
+        }
+        if let Some((mb,true,_))=&self.detail_worker{
+            let done=self.manual_progress.load(Ordering::Relaxed);
+            return Some(format!("Nieuwe offline luchtfoto ({mb} MB) downloaden: {done}/144 tegels. Bestaande kaart blijft zichtbaar."));
+        }
+        if self.manual_preview_pending || self.force_overview{
+            return Some("Offline overzichtsfoto vernieuwen…".into());
+        }
+        self.manual_notice.clone()
     }
     fn apply(&mut self,ctx:&egui::Context,overview:offline_overview::Overview){
         let image=egui::ColorImage::from_rgba_unmultiplied(
@@ -90,45 +138,58 @@ impl State{
         }
     }
     fn start_detail_refresh(&mut self,ctx:&egui::Context,mb:u16){
-        if !self.auto_enabled || self.detail_worker.is_some()
-            || Instant::now()<self.detail_next_sweep{return;}
+        if self.detail_worker.is_some() || Instant::now()<self.detail_next_sweep{return;}
+        let manual=self.manual_queued==Some(mb);
+        if !self.auto_enabled && !manual{return;}
         let (tx,rx)=mpsc::sync_channel(1);
         let focus=Arc::clone(&self.detail_focus);
         let cancel=Arc::new(AtomicBool::new(false));
         let cancellation=Arc::clone(&cancel);
         let repaint=ctx.clone();
+        let done=Arc::clone(&self.manual_progress);
         if std::thread::Builder::new()
-            .name("sleufbase-sixmonth-offline-photo-tiles".into())
+            .name(if manual {"sleufbase-manual-offline-photo"} else {"sleufbase-sixmonth-offline-photo-tiles"}.into())
             .spawn(move||{
                 let result=offline_detail::refresh_all(
-                    &offline_detail::root_for(mb),&focus,mb,&cancellation,
-                    |_id|repaint.request_repaint());
+                    &offline_detail::root_for(mb),&focus,mb,&cancellation,manual,
+                    |_id|{
+                        if manual{done.fetch_add(1,Ordering::Relaxed);}
+                        repaint.request_repaint();
+                    });
                 let _=tx.send(result);
                 repaint.request_repaint();
             }).is_ok(){
-            self.detail_worker=Some((mb,rx));
+            if manual{self.manual_queued=None;}
+            self.detail_worker=Some((mb,manual,rx));
             self.detail_cancel=Some(cancel);
         }else{
+            self.manual_queued=None;
+            if manual{self.manual_notice=Some("Handmatige offline download kon niet starten.".into());}
             self.detail_next_sweep=Instant::now()+RETRY_AFTER_FAILURE;
         }
     }
     fn poll_detail_downloads(&mut self,ctx:&egui::Context,mb:u16){
-        let completed=self.detail_worker.as_ref().and_then(|(running,receiver)|{
+        let completed=self.detail_worker.as_ref().and_then(|(running,manual,receiver)|{
             match receiver.try_recv(){
-                Ok(result)=>Some((*running,result)),
+                Ok(result)=>Some((*running,*manual,result)),
                 Err(TryRecvError::Disconnected)=>
-                    Some((*running,Err("Offline-kaartworker gestopt".into()))),
+                    Some((*running,*manual,Err("Offline-kaartworker gestopt".into()))),
                 Err(TryRecvError::Empty)=>None,
             }
         });
-        if let Some((running,result))=completed{
+        if let Some((running,manual,result))=completed{
             let cancelled=self.detail_cancel.as_ref()
                 .is_some_and(|flag|flag.load(Ordering::Relaxed));
             self.detail_worker=None;
             self.detail_cancel=None;
-            self.detail_next_sweep=if running!=mb||cancelled {
-                // An old mode or an opt-out cancelled this fetch.
-                // Do not delay a newly enabled preset for a whole day.
+            if manual && !cancelled{
+                let done=self.manual_progress.load(Ordering::Relaxed);
+                self.manual_notice=Some(match &result {
+                    Ok(())=>format!("Offline kaart bijgewerkt ({running} MB, {done}/144 tegels)."),
+                    Err(error)=>format!("Offline kaart: {done}/144 tegels bijgewerkt; {error}. Bestaande beelden blijven staan."),
+                });
+            }
+            self.detail_next_sweep=if running!=mb || cancelled || self.manual_queued.is_some() {
                 Instant::now()
             }else{
                 Instant::now()+if result.is_ok() {
@@ -263,30 +324,43 @@ impl State{
                     self.pending=None;
                     self.apply(ctx,overview);
                     self.retry_after=Instant::now();
+                    self.manual_preview_pending=false;
                 }
-                Ok(Err(_))|Err(TryRecvError::Disconnected)=>{
-                    // Failed WMS downloads never remove the bundled or cached
-                    // map. Retry tomorrow rather than spamming the service.
+                Ok(Err(error))=>{
                     self.pending=None;
+                    if self.manual_preview_pending {
+                        self.manual_notice=Some(format!("Overzichtsfoto vernieuwen mislukt: {error}; opgeslagen kaart blijft beschikbaar."));
+                    }
+                    self.manual_preview_pending=false;
+                    self.retry_after=Instant::now()+RETRY_AFTER_FAILURE;
+                }
+                Err(TryRecvError::Disconnected)=>{
+                    self.pending=None;
+                    self.manual_preview_pending=false;
                     self.retry_after=Instant::now()+RETRY_AFTER_FAILURE;
                 }
                 Err(TryRecvError::Empty)=>{}
             }
         }
-        if self.auto_enabled && self.pending.is_none() && Instant::now()>=self.retry_after
-            && offline_overview::needs_refresh(self.last_success,SystemTime::now()) {
+        if self.pending.is_none() && Instant::now()>=self.retry_after
+            && (self.force_overview ||
+                (self.auto_enabled &&
+                 offline_overview::needs_refresh(self.last_success,SystemTime::now()))) {
             let (tx,rx)=mpsc::sync_channel(1);
             let path=offline_overview::cache_path();
             let repaint=ctx.clone();
             if std::thread::Builder::new()
-                .name("sleufbase-halfyearly-pdok-overview".into())
+                .name("sleufbase-offline-overview-refresh".into())
                 .spawn(move||{
                     let result=offline_overview::download_and_store(&path);
                     let _=tx.send(result);
                     repaint.request_repaint();
                 }).is_ok(){
+                self.manual_preview_pending=self.force_overview;
+                self.force_overview=false;
                 self.pending=Some(rx);
             }else{
+                self.force_overview=false;
                 self.retry_after=Instant::now()+RETRY_AFTER_FAILURE;
             }
         }
