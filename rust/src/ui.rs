@@ -87,6 +87,8 @@ mod ahn_pending_ui;
 mod map_request_ui;
 #[path="ui_offline_overview.rs"]
 mod offline_overview_ui;
+#[path="ui_offline_zoom.rs"]
+mod offline_zoom_ui;
 #[path="ui_cadastral_vector.rs"]
 mod cadastral_vector_ui;
 #[path="ui_settings_flow.rs"]
@@ -1869,7 +1871,9 @@ impl SleufBaseApp {
             let prefs=&self.migrated_settings.viewer;
             self.offline_overview.poll(ctx,view,
                 prefs.offline_aerial_auto_backup,
-                prefs.offline_aerial_detail_mb);
+                prefs.offline_aerial_detail_mb,
+                prefs.offline_aerial_zoom_level,
+                prefs.offline_aerial_area);
         }
         self.poll_pointcloud(ctx);
         if self.pointcloud_ui.busy() && ctx.input(|i|i.viewport().close_requested()) {
