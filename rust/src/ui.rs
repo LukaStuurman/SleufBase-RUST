@@ -1497,6 +1497,38 @@ fn cad_preview(value:&str)->&str {
     &value[..end]
 }
 
+/// Kadaster WFS includes the actual orientation of each road/public-space
+/// name. DXF uses the opposite sign because world Y points upward; egui's
+/// TextShape rotates clockwise in screen coordinates, so the source angle
+/// is used as-is. Normalize upside-down angles for on-screen readability.
+fn cadastral_label_angle(rotation_degrees:f64)->f32 {
+    if !rotation_degrees.is_finite(){return 0.;}
+    let mut degrees=rotation_degrees.rem_euclid(360.);
+    if degrees>180. {degrees-=360.;}
+    if degrees>90. {degrees-=180.;}
+    if degrees< -90. {degrees+=180.;}
+    (degrees as f32).to_radians()
+}
+fn cadastral_label_shape(
+    painter:&egui::Painter,
+    label:&cadastral::CadLabel,
+    position:Pos2,
+)->egui::Shape {
+    let galley=painter.layout_no_wrap(label.text.clone(),
+        egui::FontId::proportional(11.),INK);
+    let angle=cadastral_label_angle(label.rotation);
+    // TextShape rotates around its upper-left position. Place the *rotated*
+    // galley's visual centre exactly at the source's RD label coordinate.
+    let half=galley.size()*0.5;
+    let (sin,cos)=angle.sin_cos();
+    let origin=egui::pos2(
+        position.x-(cos*half.x-sin*half.y),
+        position.y-(sin*half.x+cos*half.y),
+    );
+    egui::epaint::TextShape::new(origin,galley,INK)
+        .with_angle(angle).into()
+}
+
 fn canvas(
     ui:&mut egui::Ui,
     datasets:&[Dataset],
@@ -1710,16 +1742,16 @@ fn canvas(
                 }
             }
         }
-        // The rotation is preserved in the model, but egui text rendering
-        // here is not rotation-aware yet.
+        // Render WFS names along their source orientation, including road
+        // names at diagonal angles. Numeric parcel/building labels retain
+        // their own PDOK angles instead of being forced horizontal.
         for label in &kad.labels {
             if let Some(b) = visible {
                 if label.position.0 < b.min_x || label.position.0 > b.max_x
                     || label.position.1 < b.min_y || label.position.1 > b.max_y {continue;}
             }
-            painter.text(project(label.position.0,label.position.1),
-                egui::Align2::CENTER_CENTER,&label.text,
-                egui::FontId::proportional(11.0),INK);
+            painter.add(cadastral_label_shape(&painter,label,
+                project(label.position.0,label.position.1)));
         }
     }
     for layer in bgt_layers.iter().filter(|l|l.visible) {
@@ -2024,6 +2056,35 @@ impl SleufBaseApp {
         self.handle_layer_shortcuts(ctx);
         self.remember_busy_backdrop(ctx);
 
+    }
+}
+
+#[cfg(test)]
+mod cadastral_label_tests {
+    use super::*;
+    #[test]
+    fn road_name_shape_preserves_pdok_orientation_and_rotated_center() {
+        assert!((cadastral_label_angle(35.)-35f32.to_radians()).abs()<1e-5);
+        assert!((cadastral_label_angle(-40.)+40f32.to_radians()).abs()<1e-5);
+        assert!((cadastral_label_angle(150.)+30f32.to_radians()).abs()<1e-5);
+        let ctx=egui::Context::default();
+        ctx.run(egui::RawInput::default(),|ctx|{
+            let painter=ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,egui::Id::new("kad-label")));
+            let label=cadastral::CadLabel {
+                layer_name:"KAD_STRAATNAAM".into(),text:"Dorpsstraat".into(),
+                position:(155000.,463000.),rotation:35.,
+            };
+            let center=egui::pos2(250.,160.);
+            let egui::Shape::Text(shape)=cadastral_label_shape(&painter,&label,center)
+                else {panic!("a road name must produce a rotated text shape");};
+            assert!((shape.angle-35f32.to_radians()).abs()<1e-5);
+            let half=shape.galley.size()*0.5;
+            let (sin,cos)=shape.angle.sin_cos();
+            let reconstructed=shape.pos+egui::vec2(
+                cos*half.x-sin*half.y,sin*half.x+cos*half.y);
+            assert!(reconstructed.distance(center)<0.1);
+        });
     }
 }
 
