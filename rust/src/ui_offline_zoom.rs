@@ -211,17 +211,12 @@ impl State{
             .find(|z|cache::grid(view,*z).is_some_and(|g|g.count()<=MAX_LEVEL_TILES));
         let Some(highest)=highest else{return Vec::new();};
         // Locally downsampled PNG tiles cover zoom-out without network
-        // requests. Use whichever level is available around the camera.
-        let centre_x=(view.min_x+view.max_x)*0.5;
-        let centre_y=(view.min_y+view.max_y)*0.5;
-        let centre=Bounds{
-            min_x:centre_x-0.01,min_y:centre_y-0.01,
-            max_x:centre_x+0.01,max_y:centre_y+0.01,
-        };
+        // requests. Also recognize saved tiles at the *edge* of the viewport:
+        // the centre can fall outside a small downloaded offline area.
         let root=cache::root();
         let available=(0..=highest).rev().find(|&level|
-            cache::grid(centre,level).and_then(|g|g.ids().next())
-                .is_some_and(|id|cache::has_tile(&root,id)));
+            cache::tiles_for_view(view,level,MAX_LEVEL_TILES as usize)
+                .iter().any(|id|cache::has_tile(&root,*id)));
         let best=available.unwrap_or(highest);
         let mut out=Vec::new();
         for zoom in best.saturating_sub(2)..=best{
