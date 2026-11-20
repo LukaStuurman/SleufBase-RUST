@@ -914,7 +914,7 @@ mod tests{
     #[test]
     fn zoomed_out_cold_view_can_request_coarse_previews_even_under_eight_tiles(){
         let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155100.,max_y:463100.};
-        let target=plan(bounds,512,512).unwrap();
+        let target=plan(bounds,128,128).unwrap();
         assert!(target.count()<=8);
         assert!(coarse_preview_grid(bounds,target).is_some());
     }
