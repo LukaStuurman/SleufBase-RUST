@@ -1862,10 +1862,14 @@ impl SleufBaseApp {
             // Downloading the offline archive happens at app startup, but
             // only decode/upload its heavy detail tiles while PDOK imagery is
             // actually the selected background.
-            let display= self.project_view.use_background
-                && matches!(self.project_view.provider(),B::PdokAerial|B::PdokAerialCadastral);
+            let display=self.project_view.use_background
+                && matches!(self.project_view.provider(),
+                    B::PdokAerial|B::PdokAerialCadastral|B::OfflineAerial);
             let view=if display{self.navigation.viewport}else{None};
-            self.offline_overview.poll(ctx,view);
+            let prefs=&self.migrated_settings.viewer;
+            self.offline_overview.poll(ctx,view,
+                prefs.offline_aerial_auto_backup,
+                prefs.offline_aerial_detail_mb);
         }
         self.poll_pointcloud(ctx);
         if self.pointcloud_ui.busy() && ctx.input(|i|i.viewport().close_requested()) {

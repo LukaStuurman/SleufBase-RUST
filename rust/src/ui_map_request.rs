@@ -42,23 +42,15 @@ impl State {
 fn is_osm(source: Provider) -> bool {
     matches!(source, Provider::Osm | Provider::OsmCadastral)
 }
-/// The same aerial/OSM base remains valid across a close-range WFS parcel
-/// transition. Never drop an already drawn image just to change the overlay.
-fn compatible_basemap(previous:Option<Provider>,next:Option<Provider>,
-    is_pure_cadastral:bool,has_cadastral_texture:bool)->bool
-{
-    if matches!((previous,next),
+/// Only the same live aerial/OSM basemap can remain visible when its vector
+/// parcel overlay changes. A pure Kadaster WFS view must *not* keep a stale
+/// featureless WMTS image beneath the newly fetched cadastral objects.
+fn compatible_basemap(previous:Option<Provider>,next:Option<Provider>)->bool {
+    matches!((previous,next),
         (Some(Provider::Aerial|Provider::AerialCadastral),
          Some(Provider::Aerial|Provider::AerialCadastral))
         | (Some(Provider::Osm|Provider::OsmCadastral),
-           Some(Provider::Osm|Provider::OsmCadastral))) {
-        return true;
-    }
-    // A pure Kadaster close-up can use WFS shapes without loading WMTS
-    // again. Retain an earlier WMTS image when going into/out of that mode.
-    is_pure_cadastral && has_cadastral_texture
-        && matches!(previous,None|Some(Provider::Cadastral))
-        && matches!(next,None|Some(Provider::Cadastral))
+           Some(Provider::Osm|Provider::OsmCadastral)))
 }
 pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewport {
     let [left, top] = view.world(view.rect.left_top());
@@ -108,6 +100,7 @@ impl SleufBaseApp {
             match self.project_view.provider() {
                 B::PdokAerial => Some(Provider::Aerial),
                 B::PdokAerialCadastral => Some(Provider::AerialCadastral),
+                B::OfflineAerial => None, // Strictly local, never start WMTS/WMS/WFS.
                 B::Cadastral => Some(Provider::Cadastral),
                 B::OpenStreetMap => Some(Provider::Osm),
                 B::OpenStreetMapCadastral => Some(Provider::OsmCadastral),
@@ -125,17 +118,11 @@ impl SleufBaseApp {
             match self.project_view.provider() {
                 B::PdokAerialCadastral => Some(Provider::Aerial),
                 B::OpenStreetMapCadastral => Some(Provider::Osm),
-                B::Cadastral if self.cadastral_vectors.ready_for(canvas_bounds) => None,
+                B::Cadastral => None, // Never display the old empty raster while WFS loads.
                 _ => source,
             }
         } else { source };
-        let pure_cadastral=self.project_view.use_background
-            && self.project_view.provider()==B::Cadastral;
-        let has_cadastral_texture=self.pdok_texture.is_some()
-            && self.pdok_bounds.is_some()
-            && self.pdok_source==pdok_wms::Source::Cadastral;
-        let keep_image=compatible_basemap(
-            self.map_requests.source,source,pure_cadastral,has_cadastral_texture);
+        let keep_image=compatible_basemap(self.map_requests.source,source);
         if !keep_image && (source.is_none()||self.map_requests.source!=source) {
             self.pdok_texture=None;
             self.pdok_bounds=None;
@@ -418,19 +405,16 @@ mod tests {
     #[test]
     fn map_source_overlay_changes_preserve_the_existing_basemap() {
         assert!(compatible_basemap(Some(Provider::Aerial),
-            Some(Provider::AerialCadastral),false,false));
+            Some(Provider::AerialCadastral)));
         assert!(compatible_basemap(Some(Provider::AerialCadastral),
-            Some(Provider::Aerial),false,false));
+            Some(Provider::Aerial)));
         assert!(compatible_basemap(Some(Provider::OsmCadastral),
-            Some(Provider::Osm),false,false));
-        assert!(compatible_basemap(Some(Provider::Cadastral),
-            None,true,true));
-        assert!(compatible_basemap(None,
-            Some(Provider::Cadastral),true,true));
-        assert!(!compatible_basemap(Some(Provider::Aerial),
-            Some(Provider::Osm),false,false));
-        assert!(!compatible_basemap(None,
-            Some(Provider::Cadastral),false,true));
+            Some(Provider::Osm)));
+        // An old, sometimes empty Kadaster WMTS tile must never remain
+        // beneath the accurate cadastral vector labels/parcel boundaries.
+        assert!(!compatible_basemap(Some(Provider::Cadastral),None));
+        assert!(!compatible_basemap(None,Some(Provider::Cadastral)));
+        assert!(!compatible_basemap(Some(Provider::Aerial),Some(Provider::Osm)));
         let ctx=egui::Context::default();
         let mut app=SleufBaseApp::default();
         app.project_view.use_background=true;
