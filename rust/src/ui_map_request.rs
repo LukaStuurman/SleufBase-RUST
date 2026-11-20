@@ -111,9 +111,13 @@ impl SleufBaseApp {
         // At broader zoom levels, and when WFS is unavailable, retain the
         // bounded raster/WMTS provider rather than fetching huge vector sets.
         let canvas_bounds = viewport(view, Provider::Cadastral).bounds;
+        // The pure Kadaster choice is vector-only at parcel scale. A WFS
+        // network error must not resurrect the old empty raster basemap.
+        // Hybrid imagery can still use the normal raster overlay fallback.
         let vector_close = cadastral_vector_ui::State::wants(
             self.project_view.provider(), canvas_bounds)
-            && !self.cadastral_vectors.fallback();
+            && (self.project_view.provider()==B::Cadastral
+                || !self.cadastral_vectors.fallback());
         let source = if vector_close {
             match self.project_view.provider() {
                 B::PdokAerialCadastral => Some(Provider::Aerial),
