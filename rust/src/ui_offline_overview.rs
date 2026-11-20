@@ -124,9 +124,11 @@ impl State{
         if let Some((running,result))=completed{
             self.detail_worker=None;
             self.detail_cancel=None;
-            self.detail_next_sweep=if running!=mb {
-                // An earlier detail mode was cancelled. Start the selected
-                // mode promptly once the previous request has returned.
+            let cancelled=self.detail_cancel.as_ref()
+                .is_some_and(|flag|flag.load(Ordering::Relaxed));
+            self.detail_next_sweep=if running!=mb||cancelled {
+                // An old mode or an opt-out cancelled this fetch.
+                // Do not delay a newly enabled preset for a whole day.
                 Instant::now()
             }else{
                 Instant::now()+if result.is_ok() {
@@ -160,8 +162,8 @@ impl State{
         ids
     }
     fn poll_visible_tiles(&mut self,ctx:&egui::Context,view:Option<Bounds>,mb:u16){
-        self.start_decoder();
         let Some(view)=view else{self.tiles.clear();return;};
+        self.start_decoder();
         if let Ok(mut focus)=self.detail_focus.lock(){
             *focus=[(view.min_x+view.max_x)*0.5,(view.min_y+view.max_y)*0.5];
         }
