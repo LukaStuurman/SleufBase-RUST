@@ -18,6 +18,38 @@ const RESOLUTION: f64 = (2. * HALF) / 256.;
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const MEMORY_TILES: usize = 32;
+// Valid RD envelope used by the original WMTS source. At country-scale
+// zoom, only this portion is drawn; the remainder keeps the neutral map
+// background instead of rejecting the entire enlarged viewport.
+const RD_MIN_X: f64 = -50_000.;
+const RD_MAX_X: f64 = 350_000.;
+const RD_MIN_Y: f64 = 250_000.;
+const RD_MAX_Y: f64 = 650_000.;
+fn clipped_interactive_area(bounds:Bounds,size:[u32;2])->Option<(Bounds,[u32;4])> {
+    let (w,h)=(f64::from(size[0]),f64::from(size[1]));
+    if w<=0. || h<=0. || bounds.max_x<=bounds.min_x
+        || bounds.max_y<=bounds.min_y {return None;}
+    let dx=(bounds.max_x-bounds.min_x)/w;
+    let dy=(bounds.max_y-bounds.min_y)/h;
+    let min_x=bounds.min_x.max(RD_MIN_X);
+    let max_x=bounds.max_x.min(RD_MAX_X);
+    let min_y=bounds.min_y.max(RD_MIN_Y);
+    let max_y=bounds.max_y.min(RD_MAX_Y);
+    if min_x>=max_x || min_y>=max_y {return None;}
+    // Use integral output-pixel boundaries so a submap is copied without
+    // stretching or shifting its RD alignment.
+    let left=((min_x-bounds.min_x)/dx).ceil().clamp(0.,w) as u32;
+    let right=((max_x-bounds.min_x)/dx).floor().clamp(0.,w) as u32;
+    let top=((bounds.max_y-max_y)/dy).ceil().clamp(0.,h) as u32;
+    let bottom=((bounds.max_y-min_y)/dy).floor().clamp(0.,h) as u32;
+    if right<=left || bottom<=top {return None;}
+    Some((Bounds{
+        min_x:bounds.min_x+dx*f64::from(left),
+        max_x:bounds.min_x+dx*f64::from(right),
+        min_y:bounds.max_y-dy*f64::from(bottom),
+        max_y:bounds.max_y-dy*f64::from(top),
+    },[left,top,right,bottom]))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct TileId {
@@ -281,6 +313,34 @@ impl Client {
             })
         })
     }
+    /// Interactive country-scale raster, including zoomed-out bounds partly
+    /// beyond the Netherlands. Export keeps using the exact legacy request.
+    pub fn request_viewport(
+        &self,bounds:Bounds,size:[u32;2],cancel:&AtomicBool
+    )->Result<RgbaImage,String> {
+        input::check(cancel)?;
+        if size.contains(&0) || size.iter().any(|&n|n>10_000)
+            || u64::from(size[0])*u64::from(size[1])>50_000_000
+            || [bounds.min_x,bounds.min_y,bounds.max_x,bounds.max_y]
+                .iter().any(|v|!v.is_finite())
+            || bounds.min_x>=bounds.max_x || bounds.min_y>=bounds.max_y {
+            return Err("Ongeldige interactieve Kadasteruitsnede".into());
+        }
+        let coverage=clipped_interactive_area(bounds,size);
+        if let Some((part,rect))=coverage {
+            if rect==[0,0,size[0],size[1]] {
+                return self.request(part,size,cancel);
+            }
+        }
+        let mut output=RgbaImage::from_pixel(size[0],size[1],Rgba([243,243,243,255]));
+        if let Some((part,[left,top,right,bottom]))=coverage {
+            let tile=self.request(part,[right-left,bottom-top],cancel)?;
+            input::check(cancel)?;
+            image::imageops::replace(&mut output,&tile,
+                i64::from(left),i64::from(top));
+        }
+        Ok(output)
+    }
     fn remember(&self, id: TileId, modified: SystemTime, image: Arc<RgbaImage>) {
         if let Ok(mut memory) = self.memory.lock() {
             memory.retain(|(old, _, _)| *old != id);
@@ -407,6 +467,26 @@ fn decode(bytes: &[u8]) -> Result<RgbaImage, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn country_zoom_clips_to_valid_rd_without_moving_tiles() {
+        use super::*;
+        let bounds=Bounds{min_x:-100000.,min_y:200000.,
+            max_x:400000.,max_y:700000.};
+        let (submap,rect)=clipped_interactive_area(bounds,[500,500]).unwrap();
+        assert_eq!(rect,[50,50,450,450]);
+        assert_eq!(submap.min_x,RD_MIN_X);
+        assert_eq!(submap.max_x,RD_MAX_X);
+        assert_eq!(submap.min_y,RD_MIN_Y);
+        assert_eq!(submap.max_y,RD_MAX_Y);
+        let normal=Bounds{min_x:150000.,min_y:420000.,
+            max_x:151000.,max_y:421000.};
+        assert_eq!(clipped_interactive_area(normal,[400,400]).unwrap().1,
+            [0,0,400,400]);
+        let outside=Bounds{min_x:500000.,min_y:700000.,
+            max_x:600000.,max_y:800000.};
+        assert!(clipped_interactive_area(outside,[100,100]).is_none());
+    }
+
     use super::*;
     use std::{
         io::{Read, Write},
