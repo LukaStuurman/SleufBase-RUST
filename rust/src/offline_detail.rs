@@ -180,6 +180,7 @@ pub fn refresh_all(
     center:&Arc<Mutex<[f64;2]>>,
     mb:u16,
     cancel:&AtomicBool,
+    force:bool,
     mut on_tile:impl FnMut(TileId),
 )->Result<(),String>{
     if !valid_level(mb){return Err("Ongeldig offline detailniveau".into());}
@@ -195,7 +196,7 @@ pub fn refresh_all(
         let id=TileId{col,row};
         let fresh=file_stamp(dir,id,mb).is_some_and(|stamp|
             !offline_overview::needs_refresh(stamp,now));
-        (!fresh).then_some(id)
+        (force||!fresh).then_some(id)
     })).collect::<Vec<_>>();
     let mut failures=0usize;
     while !missing.is_empty(){
