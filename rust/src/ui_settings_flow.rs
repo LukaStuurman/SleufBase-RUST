@@ -23,8 +23,17 @@ impl SleufBaseApp {
             self.migrated_settings.viewer.offline_aerial_auto_backup;
         effective.viewer.offline_aerial_detail_mb =
             self.migrated_settings.viewer.offline_aerial_detail_mb;
+        effective.viewer.offline_aerial_zoom_level =
+            self.migrated_settings.viewer.offline_aerial_zoom_level;
+        effective.viewer.offline_aerial_area =
+            self.migrated_settings.viewer.offline_aerial_area;
         let mut dialog = settings_ui::Dialog::new(&effective, &self.backup_settings);
         dialog.project_scoped = self.has_project_settings_scope();
+        // Use the real RD map viewport for all 20 size estimates. Its bounds
+        // are captured so the indicated download size matches the button.
+        dialog.offline_area=self.navigation.viewport
+            .and_then(sleufbase_rust::offline_zoom::to_area)
+            .or(self.migrated_settings.viewer.offline_aerial_area);
         dialog.viewer = Some(settings_ui::ViewerDraft {
             background_source: self.project_view.background_source.clone(),
             use_background: self.project_view.use_background,
@@ -110,40 +119,56 @@ impl SleufBaseApp {
         {
             self.apply_saved_settings(saved, generation);
         }
-        // This is a deliberate immediate action, not an implicit opt-in to
-        // recurring downloads. Persist only the selected offline map choice
-        // and tile budget. Other staged settings still need their own Save.
+        // This button explicitly requests the captured geographic area and
+        // real WMTS zoom level. It does not enable six-month auto-refresh.
         let manual=self.settings_dialog.as_mut()
             .and_then(|dialog|dialog.manual_offline_download.take());
-        if let Some(mb)=manual {
+        if let Some((zoom,area))=manual {
             use sleufbase_rust::project_view::BackgroundProvider as B;
-            let mut settings=self.migrated_settings.clone();
-            settings.viewer.offline_aerial_detail_mb=mb;
-            settings.viewer.background_source=B::OfflineAerial.label().into();
-            settings.viewer.use_background=true;
-            match settings_store::save_pair(
-                &project::app_data_directory(),&settings,&self.backup_settings){
-                Ok(())=>{
-                    self.migrated_settings=settings;
-                    self.project_view.background_source=B::OfflineAerial.label().into();
-                    self.project_view.use_background=true;
-                    self.dirty=true;
-                    self.request_selected_background();
-                    self.offline_overview.download_now(mb);
-                    if let Some(dialog)=self.settings_dialog.as_mut(){
-                        dialog.draft.viewer.offline_aerial_detail_mb=mb;
-                        dialog.manual_offline_status=Some(
-                            format!("Nieuwe offline luchtfoto ({mb} MB) wordt opgehaald…"));
-                        if let Some(viewer)=dialog.viewer.as_mut(){
-                            viewer.background_source=B::OfflineAerial.label().into();
-                            viewer.use_background=true;
+            let plan=sleufbase_rust::offline_zoom::estimate(area,zoom);
+            if !plan.is_some_and(|p|p.allowed){
+                if let Some(dialog)=self.settings_dialog.as_mut(){
+                    dialog.error="Offline kaartgebied te groot; zoom verder in of kies een lager WMTS-niveau.".into();
+                }
+            }else{
+                let mut settings=self.migrated_settings.clone();
+                settings.viewer.offline_aerial_zoom_level=zoom;
+                settings.viewer.offline_aerial_area=Some(area);
+                settings.viewer.background_source=B::OfflineAerial.label().into();
+                settings.viewer.use_background=true;
+                match settings_store::save_pair(
+                    &project::app_data_directory(),&settings,&self.backup_settings){
+                    Ok(())=>{
+                        match self.offline_overview.download_zoom_now(zoom,area){
+                            Ok(())=>{
+                                self.migrated_settings=settings;
+                                self.project_view.background_source=B::OfflineAerial.label().into();
+                                self.project_view.use_background=true;
+                                self.dirty=true;
+                                self.request_selected_background();
+                                if let Some(dialog)=self.settings_dialog.as_mut(){
+                                    dialog.draft.viewer.offline_aerial_zoom_level=zoom;
+                                    dialog.draft.viewer.offline_aerial_area=Some(area);
+                                    dialog.manual_offline_status=Some(
+                                        format!("Offline luchtfoto niveau {zoom} wordt gedownload…"));
+                                    if let Some(viewer)=dialog.viewer.as_mut(){
+                                        viewer.background_source=B::OfflineAerial.label().into();
+                                        viewer.use_background=true;
+                                    }
+                                }
+                                ctx.request_repaint();
+                            }
+                            Err(error)=>{
+                                if let Some(dialog)=self.settings_dialog.as_mut(){
+                                    dialog.error=format!("Offline download kon niet starten: {error}");
+                                }
+                            }
                         }
                     }
-                    ctx.request_repaint();
-                }
-                Err(error)=>{
-                    if let Some(dialog)=self.settings_dialog.as_mut(){
-                        dialog.error=format!("Offline download niet gestart: instellingen opslaan mislukt: {error}");
+                    Err(error)=>{
+                        if let Some(dialog)=self.settings_dialog.as_mut(){
+                            dialog.error=format!("Offline download niet gestart: instellingen opslaan mislukt: {error}");
+                        }
                     }
                 }
             }
