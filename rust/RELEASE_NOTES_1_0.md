@@ -1,32 +1,24 @@
-# SleufBase Rust v1.0.60 — vector-Kadaster, offline kaarten en puntenwolken
+# SleufBase Rust v1.0.61 — PDOK, offline zoom en beheerde puntenwolken
 
-## Kadastrale kaart zonder raster
+## Kaart en bronvermelding
+- De standaard werkkaart bij nieuwe installaties en projecten is de **online PDOK-luchtfoto**. Een offline luchtfoto downloaden verandert die kaartvoorkeur niet langer. Een bewust gekozen achtergrond in Instellingen blijft bewaard.
+- De wettelijk vereiste bronvermelding **Luchtfoto © Samenwerkingsverband Beeldmateriaal · CC BY 4.0** blijft zichtbaar, maar zonder storende witte rechthoek: compacte witte tekst met subtiele schaduw op de kaart.
+- Hetzelfde geldt voor de aanvullende Kadaster/PDOK-bronvermelding.
 
-- De interactieve kadastrale kaart gebruikt alleen PDOK WFS-vectorgegevens voor perceelgrenzen, bebouwing en labels. De oude WMTS/WMS-kadastrale rasterkaart is geen terugvaloptie meer.
-- PDOK luchtfoto + percelen en OpenStreetMap + percelen combineren de normale achtergrond met echte kadastrale vectorgeometrie. Bij ver uitzoomen kan de WFS-laag wegens de service- en prestatiegrenzen ontbreken; de oude kadastrale rasterlaag wordt niet hersteld.
-- Standalone kaart- en sjabloonexport tekent kadastrale vectorlijnen en labels rechtstreeks op de gekozen uitvoerresolutie. Een te grote puur kadastrale vectoruitsnede geeft een duidelijke melding.
+## Offline luchtfoto: scherpe bron altijd behouden, ook bij uitzoomen
+- Gedownloade originele WMTS JPEG's op het **hoogste gekozen zoomniveau** blijven volledig intact op 256 × 256 pixels en worden nooit in lagere resolutie vervangen.
+- Bij uitzoomen bouwt SleufBase zelfstandig de lagere *weergaveniveaus* op uit de hoogste opgeslagen luchtfoto, zonder extra downloads. Daardoor is bij ver uitzoomen de hogere kwaliteit de basis, in plaats van de landelijke lage-resolutiefoto waar scherpe offline tegels beschikbaar zijn.
+- Reeds aanwezige foto's uit v1.0.60 krijgen hun weergaveniveaus bij het starten op een achtergrondworker terug, zonder opnieuw te downloaden.
+- Bij het verwijderen van een offline kaartgebied worden bijbehorende scherpe JPEG's alleen verwijderd als ze niet door een andere download worden gedeeld. Lokaal samengestelde zoomoverzichten worden opnieuw opgebouwd uit de overgebleven scherpe foto's.
+- De bestaande limiet van 4.096 hoogste-resolutietegels per downloadgebied, de JPEG-compressiekeuze en de parallelle downloader blijven behouden.
 
-## Offline luchtfoto op originele resolutie
+## Puntenwolken en AppData
+- Bij een nieuwe handmatige LAS/LAZ-import of een import uit de KickTheMap-joblijst bewaart SleufBase voortaan **een volledige LAS/LAZ-kopie plus de Potree-conversie** in de beheerde `%LOCALAPPDATA%`-map, per scan-ID.
+- Bij het openen en verder bewerken van een nieuwe scan wordt de interne AppData-kopie gebruikt. Het oorspronkelijke externe LAS/LAZ-bestand kan later verplaatst worden zonder dat de ingeladen scan verdwijnt.
+- Selecties verwijderen uit de puntenwolkenlijst verwijdert, na bevestiging, zowel het beheerde LAS/LAZ-bestand als de 3D-conversie en aanvullende appgegevens. Het oorspronkelijke externe bestand blijft ongemoeid.
+- Bij een bestaande, opnieuw gekoppelde scan wordt het bronbestand na identiteitscontrole ook in de beheerde map opgenomen.
+- Onder **Instellingen → Puntenwolken** is het standaardcoördinatenstelsel instelbaar. De standaard is **RD New (EPSG:28992)**, ook voor KickTheMap-jobdownloads. WGS 84, ander/lokaal en metadata-afhankelijk zijn daarnaast beschikbaar. Deze instelling geldt voor nieuw te importeren scans; bestaande bronnen houden hun ingestelde CRS.
+- Een geselecteerd CRS past de oorspronkelijke XYZ-coördinaten niet aan. Als het stelsel strijdig is met expliciete LAS/LAZ-EPSG-metadata weigert SleufBase de import.
 
-- Onder **Instellingen → Kaarten** kan het downloadgebied worden gekozen: **Heel Nederland** of **Huidige kaartuitsnede**. Voor grote gebieden is een lager WMTS-zoomniveau nodig; de app verlaagt de resolutie nooit stilzwijgend.
-- SleufBase downloadt uitsluitend de originele 256 × 256 JPEG-tegels van het geselecteerde hoogste zoomniveau (0 t/m 19). Er worden na afloop geen kleinere PNG/JPEG-cachebestanden aangemaakt. De ingebouwde landelijke overzichtsfoto blijft beschikbaar bij ver uitzoomen.
-- Downloaden gebruikt maximaal vier gelijktijdige HTTP-verbindingen met korte retries, behoudt reeds geldige recente tegels en schrijft vervangingen atomair.
-- **JPEG-compressie** kan worden gekozen: originele PDOK-JPEG zonder hercodering (100) of kwaliteitsniveau 95, 85 of 70. De breedte en hoogte van de tegel veranderen bij compressie niet.
-- Gedownloade gebieden en hun opslaggrootte zijn zichtbaar in de instellingen. Afzonderlijke gebieden of alle offline caches (inclusief oude offlinekaarten) kunnen worden verwijderd. Gedeelde tegels blijven staan zolang een ander geregistreerd gebied ze nodig heeft.
-- Verwijderen tijdens een actieve download wordt geblokkeerd. Bij verwijderen wordt de automatische vernieuwing uitgeschakeld om onmiddellijke herdownload te voorkomen.
-
-## Puntenwolkeditor en puntenwolkenlijst
-
-- **Zoomen en pannen nabij oppervlakken** behouden een bruikbare minimumsnelheid in de Potree-editor, zonder dat eerst dubbelklikken op een oppervlak nodig is.
-- De puntenwolkenlijst kan één of meerdere opgeslagen scans verwijderen via een bevestigingsvenster. De oorspronkelijke LAS/LAZ-bestanden blijven op schijf. Lokaal opgebouwde Potree-data wordt op een achtergrondworker opgeruimd.
-- Verwijderde lijstrecords worden niet automatisch opnieuw vanuit oude projectbestanden geïmporteerd. Al afzonderlijk opgeslagen proefsleufgeometrie blijft behouden.
-
-## KickTheMap: puntenwolken van geselecteerde jobs downloaden
-
-- In **SleufBase Jobs** staat een knop **Puntenwolken downloaden** voor de geselecteerde KickTheMap-jobs.
-- Voor elke downloadbare job wordt een LAZ-export geprobeerd; indien die niet beschikbaar is, wordt de oudere LAS-export geprobeerd. Bestanden worden via de bestaande geauthenticeerde en gecontroleerde downloadroute opgehaald.
-- Maximaal drie jobs worden tegelijk gedownload. De gedownloade LAS/LAZ-bestanden gaan daarna via de bestaande importwachtrij naar **Puntenwolken beheren**, zonder de scans automatisch in het huidige project te laden.
-
-## Releaseproces
-
-Deze uitgifte wordt op uitdrukkelijk verzoek gebouwd **zonder de gebruikelijke automatische test- en Clippy-stappen**. De geoptimaliseerde Windows-app, portable ZIP en installer worden wel samengesteld en op bestandsintegriteit gecontroleerd. De werkelijke werking met de gekoppelde KickTheMap-account, PDOK-services en de Windows/WebView2-editor is niet praktijkgetest in deze uitgifte.
+## Uitgifte
+- Release v1.0.61 is gemaakt zonder volledige automatische test- en Clippy-ronde. De geoptimaliseerde Windows-build en packaging-/checksumcontrole blijven vereist voordat GitHub de ZIP en installer publiceert.
