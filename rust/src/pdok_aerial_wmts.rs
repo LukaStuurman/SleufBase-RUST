@@ -802,6 +802,32 @@ impl ViewportRenderer {
 mod tests{
     use super::*;
     #[test]
+    fn old_partial_frame_retains_sharp_areas_without_blank_overwrite(){
+        let cancel=AtomicBool::new(false);
+        let bounds=Bounds{min_x:155000.,min_y:463000.,
+            max_x:155004.,max_y:463004.};
+        let (w,h)=(4u32,4u32);
+        let mut previous=vec![0u8;w as usize*h as usize*4];
+        for y in 0..2usize {
+            for x in 0..2usize {
+                let offset=(y*w as usize+x)*4;
+                previous[offset..offset+4].copy_from_slice(&[230,20,20,255]);
+            }
+        }
+        let mut renderer=ViewportRenderer::default();
+        renderer.previous=Some(Raster{
+            bounds,width:w,height:h,rgba:previous,stale_cache:false,
+        });
+        let mut parent=vec![0u8;w as usize*h as usize*4];
+        for pixel in parent.chunks_exact_mut(4){
+            pixel.copy_from_slice(&[20,20,230,255]);
+        }
+        renderer.overlay_previous(bounds,w,h,&mut parent,[0,0,w,h],&cancel).unwrap();
+        assert_eq!(&parent[0..4],&[230,20,20,255]);
+        assert_eq!(&parent[((3*w+3)*4) as usize..((3*w+3)*4+4) as usize],
+            &[20,20,230,255],"transparent pixels must not hide cached terrain");
+    }
+    #[test]
     fn tile_regions_compose_the_same_bilinear_pixels_as_full_frame() {
         let cancel=AtomicBool::new(false);
         let zoom=12;
