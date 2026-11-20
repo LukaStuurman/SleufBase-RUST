@@ -307,6 +307,12 @@ impl Dialog {
             settings.viewer.background_source = viewer.background_source.clone();
             settings.viewer.use_background = viewer.use_background;
         }
+        if settings.viewer.offline_aerial_auto_backup
+            && settings.viewer.offline_aerial_area.is_none(){
+            // An explicit opt-in may use the current map extent on Save,
+            // without requiring a separate manual download first.
+            settings.viewer.offline_aerial_area=self.offline_area;
+        }
         settings.validate()?;
         Ok(Saved {
             viewer: self.viewer.clone(),
