@@ -379,6 +379,19 @@ impl State{
 mod tests{
     use super::*;
     #[test]
+    fn manual_download_is_a_one_time_action_without_scheduling_opt_in(){
+        let mut cache=State::default();
+        assert!(!cache.auto_enabled);
+        cache.download_now(25);
+        assert!(cache.manual_active());
+        assert_eq!(cache.manual_queued,Some(25));
+        assert!(cache.force_overview);
+        assert!(!cache.auto_enabled);
+        cache.cancel_manual();
+        assert!(!cache.manual_active());
+        assert!(!cache.auto_enabled);
+    }
+    #[test]
     fn offline_texture_exists_before_any_sharp_wmts_tile(){
         let ctx=egui::Context::default();
         let mut cache=State::default();
