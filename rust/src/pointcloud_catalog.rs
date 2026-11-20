@@ -2,8 +2,8 @@
 //!
 //! Each source has its own atomically published JSON file and OS lock. Writes
 //! compare the complete expected source under that lock, so a stale editor
-//! cannot overwrite another session's changes. Original LAS/LAZ files are
-//! never copied, moved, opened or deleted by this catalog.
+//! cannot overwrite another session's changes. Import stores managed copies
+//! in AppData; deleting a scan removes only application-owned files.
 use crate::pointcloud::{self, PointCloudSource};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -268,8 +268,8 @@ pub fn remember_if_missing(source: &PointCloudSource) -> Result<(), String> {
 }
 
 /// Delete an entry with optimistic concurrency and an OS per-source lock.
-/// The original LAS/LAZ file is NEVER deleted. A tombstone prevents a saved
-/// project from automatically adding this scan back to the global catalog.
+/// Remove app-owned LAS/LAZ and converted data but never external originals.
+/// The tombstone prevents old project files from re-importing the removed scan.
 pub fn remove_if_current(expected: &PointCloudSource) -> Result<(), String> {
     expected.validate()?;
     let locked = lock_source(&expected.id)?;
@@ -284,30 +284,24 @@ pub fn remove_if_current(expected: &PointCloudSource) -> Result<(), String> {
         writer.write_all(b"deleted\n").map_err(|error| error.to_string()))?;
     fs::remove_file(&locked.path)
         .map_err(|error| format!("Het bronrecord kon niet worden gewist: {error}"))?;
-    remove_converted_cloud(&expected.id)
+    remove_managed_cloud(&expected.id)
 }
 
-/// The prepared Potree octree may be huge; callers run this on a worker.
-/// Only the app-owned conversion is removed, never a user's LAS/LAZ file,
-/// imported drawings, or project orthophotos.
-fn remove_converted_cloud(id: &str) -> Result<(), String> {
+/// Delete only the managed per-ID AppData directory, including the LAS/LAZ
+/// source copy, pointcloud conversion, metadata and derived files. The ID is
+/// validated and no arbitrary source_path from a saved record is ever followed.
+fn remove_managed_cloud(id: &str) -> Result<(), String> {
     let cloud = pointcloud::cloud_directory(id)?;
     let parent = cloud.parent().ok_or("Ongeldige puntenwolkmap")?;
-    let outer = parent.parent().ok_or("Ongeldige puntenwolkmap")?;
-    for path in [outer, parent] {
+    let root = parent.parent().ok_or("Ongeldige puntenwolkmap")?;
+    for path in [root, parent] {
         match fs::symlink_metadata(path) {
             Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {},
-            Ok(_) => return Err("Het pad naar de puntenwolkcache is geen gewone map; niets buiten deze map is verwijderd.".into()),
+            Ok(_) => return Err("De puntenwolkmap is geen gewone map; verwijderen gestopt.".into()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(format!("Puntenwolkmap openen mislukt: {error}")),
         }
     }
-    match fs::symlink_metadata(&cloud) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() =>
-            fs::remove_dir_all(&cloud).map_err(|error|
-                format!("Puntenwolk uit de lijst verwijderd, maar lokale 3D-cache wissen mislukt: {error}")),
-        Ok(_) => Err("Puntenwolk uit de lijst verwijderd, maar de lokale 3D-cache is geen gewone map.".into()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("Puntenwolk uit de lijst verwijderd, maar lokale 3D-cache controleren mislukt: {error}")),
-    }
+    fs::remove_dir_all(parent).map_err(|error|
+        format!("Puntenwolk uit de lijst verwijderd maar AppData wissen mislukt: {error}"))
 }

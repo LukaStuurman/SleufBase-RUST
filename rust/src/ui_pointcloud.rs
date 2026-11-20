@@ -460,7 +460,7 @@ impl SleufBaseApp {
                 Err(error) => errors.push(error),
             }
             self.pointcloud_ui.status = if errors.is_empty() {
-                format!("{} puntenwolk(en) verwijderd uit de lijst en het huidige project. Originele LAS/LAZ-bestanden zijn behouden.",removed.len())
+                format!("{} puntenwolk(en) verwijderd uit de lijst, het huidige project en SleufBase AppData. Externe originelen zijn behouden.",removed.len())
             } else {
                 format!("{} puntenwolk(en) uit de lijst verwijderd; {} fout(en): {}",
                     removed.len(),errors.len(),errors.join("; "))
@@ -564,7 +564,7 @@ impl SleufBaseApp {
             } else {
                 let title = existing.as_ref().map(|source| source.title.clone()).unwrap_or_else(||
                     path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
-                let crs = existing.as_ref().map(|source| source.crs).unwrap_or(CloudCrs::Unknown);
+                let crs = existing.as_ref().map(|source| source.crs).unwrap_or(self.migrated_settings.pointcloud_default_crs);
                 // Rebuild a missing/invalid conversion under its existing
                 // identity, retaining manually placed endpoints and cables.
                 // A truly different file remains a visible error rather
@@ -578,8 +578,8 @@ impl SleufBaseApp {
         !self.pointcloud_ui.busy() && !self.project_sources_owned() && self.file_intent.is_none()
             && self.export_intent.is_none() && self.template_job.is_none() && self.trench_editor.is_none()
     }
-    /// Delete saved scan entries and their disposable Potree conversions on a
-    /// worker, never on the egui render thread. Original LAS/LAZ files remain.
+    /// Delete saved scans and all app-owned LAS/LAZ + 3D files on a
+    /// worker, never on the egui render thread. External originals remain.
     fn delete_pointcloud_selection(&mut self, ids: Vec<String>, ctx: &egui::Context) {
         if !self.pointcloud_task_allowed() || !self.pointcloud_ui.queue.is_empty()
             || self.pointcloud_ui.ortho.is_some() || self.pointcloud_ui.pending_catalog.is_some() {
@@ -604,7 +604,7 @@ impl SleufBaseApp {
         }) {
             Ok(_) => {
                 self.pointcloud_ui.deletion = Some(DeleteJob { rx });
-                self.pointcloud_ui.status = "Geselecteerde puntenwolken worden verwijderd. De originele LAS/LAZ-bestanden blijven behouden.".into();
+                self.pointcloud_ui.status = "Puntenwolken en hun opgeslagen LAS/LAZ- en 3D-bestanden worden uit SleufBase AppData verwijderd. Externe originelen blijven behouden.".into();
             }
             Err(error) => self.pointcloud_ui.status = format!("Puntenwolkverwijdering starten mislukt: {error}"),
         }
@@ -857,7 +857,7 @@ impl SleufBaseApp {
                     if ui.add_enabled(enabled && !state.selection.ids.is_empty()
                         && state.queue.is_empty() && state.ortho.is_none(),
                         egui::Button::new(format!("Verwijder selectie ({})", state.selection.ids.len())))
-                        .on_hover_text("Verwijdert de gekozen scans uit het overzicht en hun lokale 3D-weergave. Originele LAS/LAZ-bestanden blijven bestaan.")
+                        .on_hover_text("Verwijdert de gekozen scans inclusief hun beheerde LAS/LAZ-bronbestanden en 3D-conversies uit AppData. Externe originelen blijven bestaan.")
                         .clicked() { action = Some(("delete-request", String::new())); }
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -940,7 +940,7 @@ impl SleufBaseApp {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx,|ui|{
                     ui.strong(format!("{} geselecteerde puntenwolk(en) verwijderen?",ids.len()));
-                    ui.label("De opgeslagen meetobjecten in het overzicht en de lokale Potree-weergave worden verwijderd. De originele .las/.laz-bronbestanden blijven op schijf.");
+                    ui.label("De geselecteerde scans, meetobjecten, LAS/LAZ-kopieën en Potree-conversies worden uit SleufBase AppData verwijderd. Oorspronkelijke bestanden buiten AppData blijven staan.");
                     if loaded_count>0 {
                         ui.label(format!("{loaded_count} scan(s) zijn ook in dit project ingeladen. Deze bronobjecten worden ontkoppeld; bestaande proefsleuven en hun eigen geometrie blijven behouden."));
                     }
@@ -1037,7 +1037,7 @@ impl SleufBaseApp {
             ui.label("Naam"); ui.add(egui::TextEdit::singleline(&mut form.title).char_limit(1024));
             ui.label("Coördinatenstelsel"); crs_combo(ui, "import-crs", &mut form.crs);
             ui.label("RD New gebruikt meters; WGS 84 gebruikt geografische lengte-/breedtegraad. SleufBase herprojecteert de originele XYZ niet. Alleen RD New kan op de Nederlandse kaart worden ingeladen.");
-            ui.small("De scan wordt opgeslagen in het puntenwolkoverzicht. Kies later Bewerken om punten of lijnen te tekenen; met Inladen neem je de proefsleuf over in een project.");
+            ui.small("Het LAS/LAZ-bronbestand en de 3D-conversie worden in SleufBase AppData bewaard. Kies later Bewerken om punten of lijnen te tekenen; met Inladen neem je de proefsleuf over in een project.");
             let valid = !form.title.trim().is_empty() && form.title.len() <= 1024 && !form.title.chars().any(char::is_control);
             ui.horizontal(|ui| {
                 if ui.add_enabled(valid, egui::Button::new("Puntenwolk toevoegen").fill(ORANGE)).clicked() { create = true; }
