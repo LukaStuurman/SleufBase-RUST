@@ -49,7 +49,10 @@ pub(super) fn viewport(view: &raster_point_ui::View, source: Provider) -> Viewpo
     let mut width = (view.rect.width() * ratio).ceil().max(1.) as u32;
     let mut height = (view.rect.height() * ratio).ceil().max(1.) as u32;
     // Keep full world coverage even on an unusually large/high-DPI display.
-    let (side, pixels) = if is_osm(source) {
+    // Interactive aerial WMTS is bounded to 16M display pixels rather
+    // than falling back to slow WMS on big high-DPI canvases.
+    let (side, pixels) = if is_osm(source)
+        || matches!(source, Provider::Aerial | Provider::AerialCadastral) {
         (f64::from(sleufbase_rust::osm_tiles::VIEWPORT_MAX_SIDE),
             sleufbase_rust::osm_tiles::VIEWPORT_MAX_PIXELS as f64)
     } else { (10_000., 50_000_000.) };
@@ -173,6 +176,38 @@ impl SleufBaseApp {
         let Some(event) = event else {
             return;
         };
+        // WMTS sends small texture patches once the base frame is visible.
+        // A stale zoom/pan generation or a patch for a different texture size
+        // is ignored; a complete final image is still delivered normally.
+        if let Event::Patches {request,patches,completed,total}=&event {
+            if !self.map_requests.scheduler.accepts(*request) {return;}
+            let mut applied=false;
+            for patch in patches {
+                let width=(patch.rect[2]-patch.rect[0]) as usize;
+                let height=(patch.rect[3]-patch.rect[1]) as usize;
+                let valid=width>0 && height>0
+                    && patch.rect[2]<=patch.size[0]
+                    && patch.rect[3]<=patch.size[1]
+                    && patch.rgba.len()==width*height*4
+                    && self.pdok_bounds==Some(patch.bounds);
+                if !valid {continue;}
+                if let Some(texture)=self.pdok_texture.as_mut()
+                    .filter(|tex|tex.size()==[patch.size[0] as usize,patch.size[1] as usize])
+                {
+                    let image=egui::ColorImage::from_rgba_unmultiplied(
+                        [width,height],&patch.rgba);
+                    texture.set_partial([patch.rect[0] as usize,patch.rect[1] as usize],
+                        image,egui::TextureOptions::LINEAR);
+                    applied=true;
+                }
+            }
+            if applied {
+                self.map_requests.scheduler.preview(*request);
+                self.message=format!("Luchtfoto laden: {completed}/{total} tegels");
+                ctx.request_repaint();
+            }
+            return;
+        }
         let (request, result, terminal, progress) = match event {
             Event::Preview {
                 request,
@@ -181,6 +216,7 @@ impl SleufBaseApp {
                 total,
             } => (request, Ok(pixels), false, Some((completed, total))),
             Event::Complete { request, result } => (request, result, true, None),
+            Event::Patches { .. } => unreachable!("PDOK patches handled above"),
         };
         if !self.map_requests.scheduler.accepts(request) {
             return;

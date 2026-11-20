@@ -30,6 +30,39 @@ const MAX_DISK_TILES: usize = 4096;
 const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
 static DISK_WRITES: AtomicUsize = AtomicUsize::new(0);
 
+// Cache writes must never hold a network worker, decode thread or map
+// rendering progress callback. A single bounded background writer retains
+// atomic publication; a full queue simply skips optional disk caching.
+struct SaveJob {
+    root: PathBuf,
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+fn tile_writer()->Option<&'static mpsc::SyncSender<SaveJob>> {
+    static WRITER:OnceLock<Option<mpsc::SyncSender<SaveJob>>>=OnceLock::new();
+    WRITER.get_or_init(||{
+        let (tx,rx)=mpsc::sync_channel::<SaveJob>(8);
+        std::thread::Builder::new()
+            .name("sleufbase-luchtfoto-wmts-cache".into())
+            .spawn(move||{
+                while let Ok(job)=rx.recv(){
+                    let saved=crate::storage::atomic_write(&job.path,true,|file|
+                        file.write_all(&job.bytes).map_err(|e|e.to_string()));
+                    if saved.is_ok() && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0 {
+                        prune_disk(&job.root);
+                    }
+                }
+            }).ok().map(|_|tx)
+    }).as_ref()
+}
+fn remember_disk(root:&Path, id:TileId, bytes:Vec<u8>){
+    if let Some(writer)=tile_writer(){
+        let _=writer.try_send(SaveJob{
+            root:root.to_path_buf(),path:id.path(root),bytes,
+        });
+    }
+}
+
 // Disk use stays bounded even after years of browsing many locations.
 // The known 3-level zoom/column/row path is traversed without following
 // symlinks, and in-flight atomic temporary files are never touched.
@@ -216,15 +249,9 @@ fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
         match download(id,cancel).and_then(|bytes|{
             input::check(cancel)?;
             let tile=Arc::new(decode(&bytes)?);
-            let path=id.path(root);
-            // Best-effort atomic write, never let a full/locked cache make
-            // an otherwise successful interactive map request fail.
-            if crate::storage::atomic_write(&path,true,|file|
-                file.write_all(&bytes).map_err(|e|e.to_string())).is_ok()
-                && DISK_WRITES.fetch_add(1,Ordering::Relaxed)%64==0
-            {
-                prune_disk(root);
-            }
+            // Disk I/O runs in a bounded writer rather than blocking one
+            // of the four valuable WMTS network/conversion workers.
+            remember_disk(root,id,bytes);
             Ok(tile)
         }){
             Ok(tile)=>return Ok((tile,SystemTime::now(),false)),
@@ -247,6 +274,9 @@ pub struct Raster {
 pub struct Progress<'a> {
     pub bounds:Bounds, pub width:u32, pub height:u32, pub rgba:&'a [u8],
     pub completed:usize, pub total:usize, pub stale_cache:bool,
+    /// Updated rectangle in full viewport pixels, [left,top,right,bottom].
+    /// None means a full-frame preview (needed to initialize a GPU texture).
+    pub changed_region:Option<[u32;4]>,
 }
 #[derive(Default)]
 pub struct ViewportRenderer {
@@ -281,7 +311,9 @@ impl ViewportRenderer {
     )->Result<(),String>{
         if ids.is_empty(){return Ok(());}
         let index=AtomicUsize::new(0);
-        let workers=ids.len().min(3);
+        // Four bounded requests use the existing PDOK network limit without
+        // creating one thread per tile.
+        let workers=ids.len().min(4);
         let (tx,rx)=mpsc::sync_channel(workers);
         std::thread::scope(|scope| -> Result<(),String> {
             for _ in 0..workers{
@@ -346,33 +378,56 @@ impl ViewportRenderer {
         }
         Ok(output)
     }
-    /// Exact RD affine sampling; cached low-zoom imagery can fill missing high
-    /// tiles without moving boundaries or changing the target canvas extent.
-    fn paint(bounds:Bounds,width:u32,height:u32,zoom:u8,
-        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],cancel:&AtomicBool
-    )->Result<(),String>{
-        let res=resolution(zoom);
-        let span=span(zoom);
+    /// Screen-space rectangle touched by a tile. A two-pixel halo redraws
+    /// bilinear samples at the tile boundaries when adjoining tiles arrive.
+    /// All coordinates are computed in f64 RD, independent of pan/zoom state.
+    fn tile_region(bounds:Bounds,width:u32,height:u32,id:TileId)->[u32;4]{
+        let span=span(id.zoom);
+        let left=ORIGIN_X+f64::from(id.col)*span;
+        let right=left+span;
+        let top=ORIGIN_Y-f64::from(id.row)*span;
+        let bottom=top-span;
         let dx=(bounds.max_x-bounds.min_x)/f64::from(width);
         let dy=(bounds.max_y-bounds.min_y)/f64::from(height);
-        for row in 0..height {
+        let x0=(((left-bounds.min_x)/dx).floor() as i64-2)
+            .clamp(0,i64::from(width)) as u32;
+        let x1=(((right-bounds.min_x)/dx).ceil() as i64+3)
+            .clamp(0,i64::from(width)) as u32;
+        let y0=(((bounds.max_y-top)/dy).floor() as i64-2)
+            .clamp(0,i64::from(height)) as u32;
+        let y1=(((bounds.max_y-bottom)/dy).ceil() as i64+3)
+            .clamp(0,i64::from(height)) as u32;
+        [x0,y0,x1,y1]
+    }
+    /// Draw only the changed tile's visible rectangle. Previously, each new
+    /// tile led to a full multi-megapixel interpolation and full-frame clone.
+    /// This keeps exactly the same bilinear samples as the original painter.
+    fn paint_region(bounds:Bounds,width:u32,height:u32,zoom:u8,
+        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],
+        rect:[u32;4],cancel:&AtomicBool)->Result<(),String>
+    {
+        if rect[0]>=rect[2] || rect[1]>=rect[3] {return Ok(());}
+        let res=resolution(zoom);
+        let tile_span=span(zoom);
+        let dx=(bounds.max_x-bounds.min_x)/f64::from(width);
+        let dy=(bounds.max_y-bounds.min_y)/f64::from(height);
+        for row in rect[1]..rect[3] {
             input::check(cancel)?;
             let wy=bounds.max_y-(f64::from(row)+0.5)*dy;
             let src_y=(ORIGIN_Y-wy)/res-0.5;
-            let source_row=((ORIGIN_Y-wy)/span).floor() as i64;
-            for col in 0..width {
+            let source_row=((ORIGIN_Y-wy)/tile_span).floor() as i64;
+            if source_row<0 || source_row>=(1i64<<zoom) {continue;}
+            let iy=src_y.floor() as i64;
+            let fy=src_y-iy as f64;
+            for col in rect[0]..rect[2] {
                 let wx=bounds.min_x+(f64::from(col)+0.5)*dx;
-                let source_col=((wx-ORIGIN_X)/span).floor() as i64;
-                if source_row<0||source_col<0 || source_row>=(1i64<<zoom) ||source_col>=(1i64<<zoom) {
-                    continue;
-                }
+                let source_col=((wx-ORIGIN_X)/tile_span).floor() as i64;
+                if source_col<0 || source_col>=(1i64<<zoom) {continue;}
                 let id=TileId{zoom,col:source_col as u32,row:source_row as u32};
                 let Some(primary)=tiles.get(&id) else {continue;};
                 let src_x=(wx-ORIGIN_X)/res-0.5;
                 let ix=src_x.floor() as i64;
-                let iy=src_y.floor() as i64;
                 let fx=src_x-ix as f64;
-                let fy=src_y-iy as f64;
                 let sample=|x:i64,y:i64| -> [u8;4] {
                     if x>=0 && y>=0 {
                         let neighbor=TileId{zoom,col:(x/256) as u32,row:(y/256) as u32};
@@ -384,7 +439,8 @@ impl ViewportRenderer {
                     let ly=(y-source_row*256).clamp(0,255) as u32;
                     primary.get_pixel(lx,ly).0
                 };
-                let [a,b,c,d]=[sample(ix,iy),sample(ix+1,iy),sample(ix,iy+1),sample(ix+1,iy+1)];
+                let [a,b,c,d]=[sample(ix,iy),sample(ix+1,iy),
+                    sample(ix,iy+1),sample(ix+1,iy+1)];
                 let out=(row as usize*width as usize+col as usize)*4;
                 for channel in 0..4 {
                     let top=f64::from(a[channel])*(1.-fx)+f64::from(b[channel])*fx;
@@ -395,6 +451,12 @@ impl ViewportRenderer {
         }
         Ok(())
     }
+    fn paint(bounds:Bounds,width:u32,height:u32,zoom:u8,
+        tiles:&HashMap<TileId,Arc<RgbaImage>>,target:&mut [u8],
+        cancel:&AtomicBool)->Result<(),String>
+    {
+        Self::paint_region(bounds,width,height,zoom,tiles,target,[0,0,width,height],cancel)
+    }
     pub fn request(&mut self,bounds:Bounds,width:u32,height:u32,cache:&Path,
         cancel:&AtomicBool,progress:&mut dyn FnMut(Progress<'_>)->Result<(),String>
     )->Result<Raster,String>{
@@ -402,70 +464,78 @@ impl ViewportRenderer {
         let target=plan(bounds,width,height)?;
         fs::create_dir_all(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
         let root=fs::canonicalize(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
-        let mut high=HashMap::with_capacity(target.count());
+        let total=target.count();
+        let mut high=HashMap::with_capacity(total);
         let mut missing=Vec::new();
         for id in target.ids(){
             input::check(cancel)?;
             match self.from_cache(id,&root,cancel){
                 Some((tile,true))=>{high.insert(id,tile);},
                 Some((tile,false))=>{high.insert(id,tile);missing.push(id);},
-                None=>missing.push(id)
+                None=>missing.push(id),
             }
         }
         if missing.is_empty(){
+            // A warm, fully cached view needs one rasterization and no
+            // intermediate uploads or low-resolution network requests.
             let mut rgba=vec![255; width as usize*height as usize*4];
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
             let raster=Raster{bounds,width,height,rgba,stale_cache:false};
-            if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+            if u64::from(width)*u64::from(height)<=12_000_000{
+                self.previous=Some(raster.clone());
+            }
             return Ok(raster);
         }
+        let old_overlap=self.previous.as_ref().is_some_and(|old|
+            old.bounds.min_x<bounds.max_x && old.bounds.max_x>bounds.min_x
+            && old.bounds.min_y<bounds.max_y && old.bounds.max_y>bounds.min_y);
         let mut rgba=self.reproject(bounds,width,height,cancel)?;
-        let total=target.count();
-        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
+        let mut preview_source=old_overlap;
         let mut previews=0usize;
+        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
         let mut stale=false;
-        // Low-level imagery is requested first only when high detail is mostly
-        // missing. This makes a new area visible quickly instead of showing a
-        // blank canvas until all high-resolution requests complete.
-        if target.zoom>=3 && high.len()*2<total {
-            let low_z=target.zoom-3;
-            if let Some(low_grid)=grid(bounds,low_z){
-                if low_grid.count()<=12 {
-                    let mut low=HashMap::new();
-                    let mut needed=Vec::new();
-                    for id in low_grid.ids(){
-                        match self.from_cache(id,&root,cancel){
-                            Some((tile,true))=>{low.insert(id,tile);},
-                            Some((tile,false))=>{low.insert(id,tile);needed.push(id);},
-                            None=>needed.push(id),
-                        }
+
+        // Google-Maps-style parent tiles are used ONLY when they are already
+        // cached. Never download a coarse level ahead of the target detail:
+        // the old blocking three-level prefetch could delay sharp imagery
+        // by several seconds on a cold network.
+        //
+        // Paint coarser parents first and then sharper parents, retaining
+        // the previous world-space image in portions with no cached tiles.
+        if !old_overlap && target.zoom>=2 && high.len()*2<total {
+            let first=target.zoom.saturating_sub(3);
+            for zoom in first..target.zoom {
+                let Some(parent)=grid(bounds,zoom) else {continue;};
+                if parent.count()>16 {continue;}
+                let mut cached=HashMap::new();
+                for id in parent.ids(){
+                    input::check(cancel)?;
+                    if let Some((tile,_))=self.from_cache(id,&root,cancel){
+                        cached.insert(id,tile);
                     }
-                    let mut extra=Vec::new();
-                    Self::fetch_batch(&needed,&root,cancel,|id,tile,when,is_stale|{
-                        extra.push((id,tile,when,is_stale));Ok(())
-                    })?;
-                    for (id,tile,when,is_stale) in extra {
-                        stale|=is_stale;
-                        self.remember(id,when,Arc::clone(&tile));
-                        low.insert(id,tile);
-                    }
-                    Self::paint(bounds,width,height,low_z,&low,&mut rgba,cancel)?;
-                    if !high.is_empty(){Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;}
-                    progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
-                        total,stale_cache:stale})?;
-                    previews+=1;
-                    last_preview=Instant::now();
+                }
+                if !cached.is_empty(){
+                    Self::paint(bounds,width,height,zoom,&cached,&mut rgba,cancel)?;
+                    preview_source=true;
                 }
             }
-        } else if !high.is_empty() {
+        }
+        if !high.is_empty(){
+            // Cached detail overlays all parents exactly once, not after
+            // each cached or downloaded tile.
             Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
-            progress(Progress{bounds,width,height,rgba:&rgba,completed:total-missing.len(),
-                total,stale_cache:false})?;
-            previews+=1;
+            preview_source=true;
+        }
+        let mut completed=total-missing.len();
+        if preview_source {
+            progress(Progress{bounds,width,height,rgba:&rgba,
+                completed,total,stale_cache:false,changed_region:None})?;
+            previews=1;
             last_preview=Instant::now();
         }
-        // Center first gives the user a recognizable location before edge
-        // tiles, while all tiles are still needed for the final picture.
+
+        // Highest-detail tiles always start immediately and are prioritized
+        // from the centre, where users are most likely to look.
         let center_col=(target.min_col+target.max_col) as f64*0.5;
         let center_row=(target.min_row+target.max_row) as f64*0.5;
         missing.sort_by(|a,b|{
@@ -475,37 +545,145 @@ impl ViewportRenderer {
             };
             d(a).total_cmp(&d(b))
         });
-        let mut count=total-missing.len();
-        let mut updates=Vec::new();
-        let mut next_update=total.div_ceil(4);
+        let mut dirty:Option<[u32;4]>=None;
+        let preview_budget=if u64::from(width)*u64::from(height)>6_000_000{
+            2usize
+        }else if u64::from(width)*u64::from(height)>2_000_000{
+            3usize
+        }else{5usize};
         Self::fetch_batch(&missing,&root,cancel,|id,tile,when,is_stale|{
-            count+=1;
+            completed+=1;
             stale|=is_stale;
-            updates.push((id,Arc::clone(&tile),when));
-            high.insert(id,tile);
-            if count<total && previews<4 && count>=next_update
-                && last_preview.elapsed()>=PREVIEW_INTERVAL
+            high.insert(id,Arc::clone(&tile));
+            // Keep successful downloads in the in-memory LRU immediately.
+            // An interrupted pan/zoom can now use every completed tile
+            // instead of losing an entire cancelled batch.
+            self.remember(id,when,tile);
+            let region=Self::tile_region(bounds,width,height,id);
+            Self::paint_region(bounds,width,height,target.zoom,
+                &high,&mut rgba,region,cancel)?;
+            if region[0]<region[2] && region[1]<region[3] {
+                dirty=Some(match dirty {
+                    Some(old)=>[old[0].min(region[0]),old[1].min(region[1]),
+                        old[2].max(region[2]),old[3].max(region[3])],
+                    None=>region,
+                });
+            }
+            if completed<total && previews<preview_budget
+                && (previews==0 || last_preview.elapsed()>=PREVIEW_INTERVAL)
             {
-                Self::paint(bounds,width,height,target.zoom,&high,&mut rgba,cancel)?;
-                progress(Progress{bounds,width,height,rgba:&rgba,completed:count,total,stale_cache:stale})?;
+                // The first frame always contains the full map. Every later
+                // frame may upload just the union of touched tile rectangles.
+                let changed_region=if previews==0 {None} else {dirty.take()};
+                progress(Progress{bounds,width,height,rgba:&rgba,
+                    completed,total,stale_cache:stale,changed_region})?;
+                dirty=None;
                 previews+=1;
                 last_preview=Instant::now();
-                next_update=count+total.div_ceil(4);
             }
             Ok(())
         })?;
-        for (id,tile,when) in updates{self.remember(id,when,tile);}
-        let mut final_rgba=vec![255; width as usize*height as usize*4];
-        Self::paint(bounds,width,height,target.zoom,&high,&mut final_rgba,cancel)?;
-        let raster=Raster{bounds,width,height,rgba:final_rgba,stale_cache:stale};
-        if u64::from(width)*u64::from(height)<=12_000_000{self.previous=Some(raster.clone());}
+        input::check(cancel)?;
+        // Every incoming tile was painted into its exact RD rectangle with
+        // a two-pixel halo, so the final image is already pixel-identical
+        // to a complete resample. Do not recompute millions of pixels again.
+        // See tile_regions_compose_the_same_bilinear_pixels_as_full_frame.
+        let raster=Raster{bounds,width,height,rgba,stale_cache:stale};
+        if u64::from(width)*u64::from(height)<=12_000_000 {
+            self.previous=Some(raster.clone());
+        }
         Ok(raster)
     }
+
 }
 
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn tile_regions_compose_the_same_bilinear_pixels_as_full_frame() {
+        let cancel=AtomicBool::new(false);
+        let zoom=12;
+        let tile=span(zoom);
+        let left=ORIGIN_X+2047.*tile;
+        let top=ORIGIN_Y-2047.*tile;
+        let bounds=Bounds{
+            min_x:left+0.13*tile,max_x:left+1.87*tile,
+            min_y:top-1.89*tile,max_y:top-0.11*tile,
+        };
+        let (width,height)=(420u32,360u32);
+        let grid=grid(bounds,zoom).unwrap();
+        let mut tiles=HashMap::new();
+        let mut incremental=vec![255; width as usize*height as usize*4];
+        for id in grid.ids(){
+            let pixels=image::Rgba([
+                (id.col%191) as u8,
+                (id.row%223) as u8,
+                (id.col.wrapping_mul(7)%127) as u8,
+                255
+            ]);
+            tiles.insert(id,Arc::new(RgbaImage::from_pixel(256,256,pixels)));
+            ViewportRenderer::paint_region(
+                bounds,width,height,zoom,&tiles,&mut incremental,
+                ViewportRenderer::tile_region(bounds,width,height,id),&cancel
+            ).unwrap();
+        }
+        let mut full=vec![255; width as usize*height as usize*4];
+        ViewportRenderer::paint(bounds,width,height,zoom,&tiles,&mut full,&cancel).unwrap();
+        assert_eq!(incremental,full,"incremental tile painting changed the final RD pixels");
+    }
+    #[test]
+    fn out_of_order_tiles_leave_no_unpainted_or_misaligned_pixels() {
+        let cancel=AtomicBool::new(false);
+        let zoom=13u8;
+        let side=span(zoom);
+        let bx=ORIGIN_X+4021.*side;
+        let by=ORIGIN_Y-3048.*side;
+        for (width,height,minx,miny) in [
+            (177u32,310u32,0.03,0.17),
+            (1024,683,0.47,0.62),
+            (721,721,0.77,0.81),
+        ] {
+            let bounds=Bounds{
+                min_x:bx+minx*side,max_x:bx+(2.92+minx)*side,
+                min_y:by-(2.88+miny)*side,max_y:by-miny*side,
+            };
+            let mut ids=grid(bounds,zoom).unwrap().ids().collect::<Vec<_>>();
+            let all=ids.iter().map(|id|(*id,Arc::new(RgbaImage::from_fn(256,256,|x,y|{
+                let r=(id.col as u64*3+x as u64*2)%255;
+                let g=(id.row as u64*5+y as u64*7)%255;
+                image::Rgba([r as u8,g as u8,((x+y)%255) as u8,255])
+            })))).collect::<HashMap<_,_>>();
+            let mut expected=vec![255; width as usize*height as usize*4];
+            ViewportRenderer::paint(bounds,width,height,zoom,&all,&mut expected,&cancel).unwrap();
+            ids.reverse();
+            let mut arrived=HashMap::new();
+            let mut actual=vec![255; width as usize*height as usize*4];
+            for id in ids {
+                arrived.insert(id,Arc::clone(&all[&id]));
+                let region=ViewportRenderer::tile_region(bounds,width,height,id);
+                ViewportRenderer::paint_region(bounds,width,height,zoom,&arrived,
+                    &mut actual,region,&cancel).unwrap();
+            }
+            assert_eq!(actual,expected,"partial compositing diverged at {width}x{height}");
+        }
+    }
+
+    #[test]
+    fn computed_screen_rect_tracks_world_position_without_shifting() {
+        let zoom=12;
+        let size=span(zoom);
+        let id=TileId{zoom,col:2047,row:2047};
+        let x0=ORIGIN_X+2047.*size;
+        let y0=ORIGIN_Y-2047.*size;
+        let bounds=Bounds{min_x:x0,max_x:x0+2.*size,
+            min_y:y0-2.*size,max_y:y0};
+        let region=ViewportRenderer::tile_region(bounds,512,512,id);
+        assert_eq!(region[0],0);
+        assert_eq!(region[1],0);
+        assert!(region[2]>=256 && region[2]<=260);
+        assert!(region[3]>=256 && region[3]<=260);
+    }
     #[test]
     fn fixed_rd_grid_zoom_and_wmts_kvp_addresses(){
         let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155300.,max_y:463200.};

@@ -82,9 +82,12 @@ impl Viewport {
     /// Stable world-grid requests retain neighbouring pixels and share WMS
     /// tiles across pans. Quarter-octave levels keep detail within 19%.
     pub fn buffered(self) -> Self {
-        // OSM already caches reusable world tiles. A WMS overscan buffer both
-        // fetches unseen tiles and forces a coarser level under its tile budget.
-        if matches!(self.source, Provider::Osm | Provider::OsmCadastral) { return self; }
+        // OSM and the PDOK aerial viewer use persistent world-aligned tile
+        // pyramids. Overscanning a WMS-style request forces a coarser WMTS
+        // level and unnecessary tile downloads on every scroll or zoom.
+        // Keep WMS buffering only for standalone cadastral raster maps.
+        if matches!(self.source, Provider::Osm | Provider::OsmCadastral
+            | Provider::Aerial | Provider::AerialCadastral) { return self; }
         let pixel=((self.bounds.max_x-self.bounds.min_x)/self.size[0] as f64)
             .min((self.bounds.max_y-self.bounds.min_y)/self.size[1] as f64);
         let resolution=2_f64.powf((pixel.log2()*4.).floor()/4.);
@@ -279,10 +282,60 @@ pub struct Pixels {
     pub rgba: Vec<u8>,
     pub stale_cache: bool,
 }
+/// Tightly packed RGBA update for an existing full viewport texture.
+#[derive(Clone)]
+pub struct MapPatch {
+    pub bounds: Bounds,
+    pub size: [u32;2],
+    pub rect: [u32;4],
+    pub rgba: Vec<u8>,
+    pub stale_cache: bool,
+}
+impl MapPatch {
+    fn crop(bounds:Bounds,width:u32,height:u32,source:&[u8],
+        rect:[u32;4],stale_cache:bool)->Result<Self,String>{
+        let [left,top,right,bottom]=rect;
+        if left>=right || top>=bottom || right>width || bottom>height
+            || source.len()!=width as usize*height as usize*4 {
+            return Err("Onjuist PDOK-tegel-updategebied".into());
+        }
+        let w=(right-left) as usize;
+        let mut rgba=Vec::with_capacity(w*(bottom-top) as usize*4);
+        for y in top..bottom {
+            let offset=((y*width+left) as usize)*4;
+            rgba.extend_from_slice(&source[offset..offset+w*4]);
+        }
+        Ok(Self{bounds,size:[width,height],rect,rgba,stale_cache})
+    }
+    fn apply_to(&self,image:&mut Pixels)->Result<(),String>{
+        let [left,top,right,bottom]=self.rect;
+        let width=image.width;
+        if image.bounds!=self.bounds || [width,image.height]!=self.size
+            || right>width || bottom>image.height || left>=right || top>=bottom
+            || image.rgba.len()!=width as usize*image.height as usize*4
+            || self.rgba.len()!=(right-left) as usize*(bottom-top) as usize*4 {
+            return Err("Onjuist PDOK-textuurformaat".into());
+        }
+        let stride=(right-left) as usize*4;
+        for y in top..bottom {
+            let src=(y-top) as usize*stride;
+            let dst=((y*width+left) as usize)*4;
+            image.rgba[dst..dst+stride].copy_from_slice(&self.rgba[src..src+stride]);
+        }
+        image.stale_cache|=self.stale_cache;
+        Ok(())
+    }
+}
 pub enum Event {
     Preview {
         request: Request,
         pixels: Pixels,
+        completed: usize,
+        total: usize,
+    },
+    Patches {
+        request: Request,
+        patches: Vec<MapPatch>,
         completed: usize,
         total: usize,
     },
@@ -296,7 +349,11 @@ struct Task {
     request: Request,
     cancel: Arc<AtomicBool>,
 }
-type Preview = Option<(u64, Request, Pixels, usize, usize)>;
+enum PendingPreview {
+    Full(Pixels),
+    Patches(Vec<MapPatch>),
+}
+type Preview = Option<(u64, Request, PendingPreview, usize, usize)>;
 /// One worker/queued task/latest pending request and one replaceable preview.
 /// Pan/zoom/provider changes cancel obsolete work without accumulating threads.
 pub struct Worker {
@@ -397,13 +454,19 @@ fn aerial_wmts(
     renderer:&mut crate::pdok_aerial_wmts::ViewportRenderer,
     view:Viewport,cancel:&AtomicBool,
     publish:&mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+    publish_patch:&mut dyn FnMut(MapPatch,usize,usize)->Result<(),String>,
 )->Result<Pixels,String>{
     let cache=crate::project::app_data_directory().join("pdok-aerial-wmts");
     let mut update=|p:crate::pdok_aerial_wmts::Progress<'_>|{
-        publish(Pixels{
-            bounds:p.bounds,width:p.width,height:p.height,
-            rgba:p.rgba.to_vec(),stale_cache:p.stale_cache,
-        },p.completed,p.total)
+        if let Some(rect)=p.changed_region {
+            let patch=MapPatch::crop(p.bounds,p.width,p.height,p.rgba,rect,p.stale_cache)?;
+            publish_patch(patch,p.completed,p.total)
+        } else {
+            publish(Pixels{
+                bounds:p.bounds,width:p.width,height:p.height,
+                rgba:p.rgba.to_vec(),stale_cache:p.stale_cache,
+            },p.completed,p.total)
+        }
     };
     let raster=renderer.request(view.bounds,view.size[0],view.size[1],
         &cache,cancel,&mut update)?;
@@ -445,7 +508,7 @@ impl Worker {
         let mut aerial = crate::pdok_aerial_wmts::ViewportRenderer::default();
         let mut wmts:Option<crate::cadastral_tiles::Client> = None;
         let mut last_pdok:Option<(Provider, Pixels)> = None;
-        let mut worker=Self::with_fetcher(move |request, cancel, preview| {
+        let mut worker=Self::with_fetcher_updates(move |request, cancel, preview, patches| {
             let v = request.view;
             let result=match v.source {
                 Provider::Osm | Provider::OsmCadastral => {
@@ -510,7 +573,7 @@ impl Worker {
                             .then(|| scope.spawn(|| parcel_overlay(v, cancel)));
                         let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
                             .map(|(_,image)|image);
-                        let base=match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                        let base=match aerial_wmts(&mut aerial,v,cancel,&mut *preview,&mut *patches) {
                             Ok(image)=>image,
                             Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview)?,
                         };
@@ -550,7 +613,7 @@ impl Worker {
                 Provider::Aerial => {
                     let old=last_pdok.as_ref().filter(|(kind,_)|*kind==v.source)
                         .map(|(_,image)|image);
-                    match aerial_wmts(&mut aerial,v,cancel,&mut *preview) {
+                    match aerial_wmts(&mut aerial,v,cancel,&mut *preview,&mut *patches) {
                         Ok(image)=>Ok(image),
                         Err(_)=>aerial_wms_fallback(v,old,cancel,&mut *preview),
                     }
@@ -577,6 +640,16 @@ impl Worker {
             + Send
             + 'static,
     ) -> Result<Self, String> {
+        Self::with_fetcher_updates(move |request,cancel,full,_patch| {
+            fetch(request,cancel,full)
+        })
+    }
+    fn with_fetcher_updates(
+        mut fetch: impl FnMut(Request,&AtomicBool,
+            &mut dyn FnMut(Pixels,usize,usize)->Result<(),String>,
+            &mut dyn FnMut(MapPatch,usize,usize)->Result<(),String>)
+            ->Result<Pixels,String>+Send+'static,
+    )->Result<Self,String>{
         let (tx, input) = mpsc::sync_channel::<Task>(1);
         let (output, rx) = mpsc::sync_channel(1);
         let preview: Arc<Mutex<Preview>> = Arc::new(Mutex::new(None));
@@ -585,17 +658,49 @@ impl Worker {
             .name("sleufbase-map-view".into())
             .spawn(move || {
                 while let Ok(task) = input.recv() {
-                    let mut publish = |pixels, completed, total| {
+                    let full_slot=Arc::clone(&slot);
+                    let patch_slot=Arc::clone(&slot);
+                    let mut publish=|pixels,completed,total|{
                         crate::input::check(&task.cancel)?;
-                        let mut latest =
-                            slot.lock().map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
+                        let mut latest=full_slot.lock()
+                            .map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
                         crate::input::check(&task.cancel)?;
-                        *latest = Some((task.epoch, task.request, pixels, completed, total));
+                        *latest=Some((task.epoch,task.request,
+                            PendingPreview::Full(pixels),completed,total));
+                        Ok(())
+                    };
+                    let mut publish_patch=|patch:MapPatch,completed,total|{
+                        crate::input::check(&task.cancel)?;
+                        let mut latest=patch_slot.lock()
+                            .map_err(|_| "Kaartvoorbeeld niet beschikbaar")?;
+                        crate::input::check(&task.cancel)?;
+                        if let Some((epoch,request,body,done,count))=latest.as_mut(){
+                            if *epoch==task.epoch && *request==task.request {
+                                match body {
+                                    PendingPreview::Full(frame)=>{
+                                        // A pending first full frame must never
+                                        // be overwritten by a partial update.
+                                        // Merge only the tiny patch in place.
+                                        patch.apply_to(frame)?;
+                                        *done=completed;*count=total;
+                                        return Ok(());
+                                    }
+                                    PendingPreview::Patches(patches) if patches.len()<16=>{
+                                        patches.push(patch);
+                                        *done=completed;*count=total;
+                                        return Ok(());
+                                    }
+                                    _=>{},
+                                }
+                            }
+                        }
+                        *latest=Some((task.epoch,task.request,
+                            PendingPreview::Patches(vec![patch]),completed,total));
                         Ok(())
                     };
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         crate::input::check(&task.cancel)?;
-                        fetch(task.request, &task.cancel, &mut publish)
+                        fetch(task.request, &task.cancel, &mut publish,&mut publish_patch)
                     }))
                     .unwrap_or_else(|_| Err("Kaarttaak is onverwacht gestopt".into()));
                     let mut message = (task.epoch, task.request, result);
@@ -675,12 +780,15 @@ impl Worker {
             .lock()
             .ok()
             .and_then(|mut p| p.take())
-            .and_then(|(epoch, request, pixels, completed, total)| {
-                (epoch == self.epoch).then_some(Event::Preview {
-                    request,
-                    pixels,
-                    completed,
-                    total,
+            .and_then(|(epoch, request, payload, completed, total)| {
+                if epoch!=self.epoch{return None;}
+                Some(match payload {
+                    PendingPreview::Full(pixels)=>Event::Preview{
+                        request,pixels,completed,total,
+                    },
+                    PendingPreview::Patches(patches)=>Event::Patches{
+                        request,patches,completed,total,
+                    },
                 })
             })
     }
@@ -700,6 +808,35 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wmts_patch_packs_only_touched_pixels_and_merges_without_resampling() {
+        let bounds=Bounds {min_x:155000.,min_y:463000.,max_x:155040.,max_y:463030.};
+        let mut pixels=Pixels{bounds,width:4,height:3,
+            rgba:vec![255;4*3*4],stale_cache:false};
+        let mut rendered=pixels.rgba.clone();
+        for y in 1..3u32{
+            for x in 1..3u32 {
+                let start=((y*4+x)*4) as usize;
+                rendered[start..start+4].copy_from_slice(&[x as u8,y as u8,70,255]);
+            }
+        }
+        let patch=MapPatch::crop(bounds,4,3,&rendered,[1,1,3,3],false).unwrap();
+        assert_eq!(patch.rgba.len(),2*2*4);
+        assert_eq!(patch.rgba[..4],[1,1,70,255]);
+        patch.apply_to(&mut pixels).unwrap();
+        assert_eq!(pixels.rgba,rendered);
+        let invalid=MapPatch { bounds:Bounds {max_x:155041.,..bounds},..patch };
+        assert!(invalid.apply_to(&mut pixels).is_err());
+    }
+
+    #[test]
+    fn map_patch_rejects_partial_or_outside_uploads() {
+        let bounds=Bounds {min_x:0.,min_y:0.,max_x:5.,max_y:5.};
+        assert!(MapPatch::crop(bounds,4,4,&[0;4*4*4],[1,1,5,4],false).is_err());
+        assert!(MapPatch::crop(bounds,4,4,&[0;5],[1,1,3,3],false).is_err());
+        assert!(MapPatch::crop(bounds,4,4,&[0;4*4*4],[2,2,2,3],false).is_err());
+    }
     fn view() -> Viewport {
         Viewport {
             source: Provider::Aerial,
