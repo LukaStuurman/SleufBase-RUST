@@ -206,6 +206,14 @@ fn derived_stamp(root:&Path,id:TileId)->Option<SystemTime>{
     (meta.is_file() && meta.len()>128 && meta.len()<=MAX_JPEG_BYTES as u64)
         .then(||meta.modified().ok()).flatten()
 }
+pub fn tile_modified(root:&Path,id:TileId)->Option<SystemTime>{
+    match (cached_tile(root,id),derived_stamp(root,id)){
+        (Some(a),Some(b))=>Some(a.max(b)),
+        (Some(a),None)|(None,Some(a))=>Some(a),
+        (None,None)=>None,
+    }
+}
+pub fn has_tile(root:&Path,id:TileId)->bool{tile_modified(root,id).is_some()}
 fn decode_derived(bytes:&[u8])->Result<RgbaImage,String>{
     if bytes.len()<128 || bytes.len()>MAX_JPEG_BYTES{
         return Err("Lokaal verkleinde PDOK-tegel heeft ongeldige grootte".into());
@@ -379,6 +387,7 @@ pub fn refresh_at(
     let mut consecutive_failures=0usize;
     let mut total_failed=0usize;
     let mut done=0u64;
+    let mut updated=0u64;
     for id in ids{
         if cancel.load(Ordering::Relaxed){return Err("Offlinedownload geannuleerd".into());}
         let fresh=cached_tile(root,id).is_some_and(|stamp|
@@ -396,7 +405,10 @@ pub fn refresh_at(
                 }
             }
             match result {
-                Ok(())=>consecutive_failures=0,
+                Ok(())=>{
+                    consecutive_failures=0;
+                    updated+=1;
+                },
                 Err(error)=>{
                     total_failed+=1;
                     consecutive_failures+=1;
@@ -413,10 +425,18 @@ pub fn refresh_at(
     }
     // Build the zoomed-out view from the sharp images on this computer;
     // this works offline and makes zero additional requests to PDOK.
-    // Even if one image failed, use any good sharp images saved so far.
-    build_local_overviews(root,area,maximum_zoom,cancel,|local,_total|{
-        on_tile(plan.tiles+local,plan.steps());
-    })?;
+    // Regeneration is needed only when new sharp files arrived, or when a
+    // previous interrupted run left some generated parent tiles missing.
+    let missing_parent=(MIN_ZOOM..maximum_zoom).any(|level|
+        grid(bounds,level).is_some_and(|g|
+            g.ids().any(|id|!id.derived_path(root).is_file())));
+    if updated>0 || missing_parent {
+        build_local_overviews(root,area,maximum_zoom,cancel,|local,_total|{
+            on_tile(plan.tiles+local,plan.steps());
+        })?;
+    }else{
+        on_tile(plan.steps(),plan.steps());
+    }
     if total_failed>0 {
         return Err(format!("{total_failed} offline luchtfototegels konden niet worden bijgewerkt"));
     }
@@ -443,6 +463,42 @@ mod tests{
         assert_eq!(format_resolution(19),"0.66 cm/px");
         let high=estimate(area,19).unwrap();
         assert!(!high.allowed);
+    }
+    #[test]
+    fn local_zoom_out_uses_sharp_photo_pixels_without_network_requests(){
+        let root=tempfile::tempdir().unwrap();
+        let parent=TileId{zoom:0,col:0,row:0};
+        let palette=[
+            [220,20,20,255],[20,220,20,255],
+            [20,20,220,255],[220,220,20,255],
+        ];
+        for row in 0..2u32{
+            for col in 0..2u32{
+                let id=TileId{zoom:1,col,row};
+                let color=image::Rgba(palette[(row*2+col) as usize]);
+                let png=image::DynamicImage::ImageRgba8(
+                    RgbaImage::from_pixel(256,256,color));
+                let mut bytes=Cursor::new(Vec::new());
+                png.write_to(&mut bytes,ImageFormat::Png).unwrap();
+                let dest=id.derived_path(root.path());
+                fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                fs::write(dest,bytes.into_inner()).unwrap();
+            }
+        }
+        let cancel=AtomicBool::new(false);
+        let area=[154900,462900,155100,463100];
+        build_local_overviews(root.path(),area,1,&cancel,|_,_|{}).unwrap();
+        let image=read_tile(root.path(),parent).unwrap().unwrap().image;
+        for row in 0..2u32{
+            for col in 0..2u32{
+                assert_eq!(image.get_pixel(64+col*128,64+row*128).0,
+                    palette[(row*2+col) as usize]);
+            }
+        }
+        assert!(has_tile(root.path(),parent));
+        let estimate=estimate(area,1).unwrap();
+        assert_eq!(estimate.tiles,4,"only highest-level JPEGs need downloading");
+        assert_eq!(estimate.derived_tiles,1);
     }
     #[test]
     fn bounds_are_correct_and_user_area_is_bounded(){
