@@ -770,6 +770,12 @@ impl BrowserChannel {
                 format!("{}.tiff",job.prefix.trim()),
             RemoteFileKind::GeoTiff=>
                 return Err("KickTheMap-job heeft geen GeoTIFF bestands-prefix".into()),
+            RemoteFileKind::PointCloudLaz if !job.prefix.trim().is_empty()=>
+                format!("{}.laz",job.prefix.trim()),
+            RemoteFileKind::PointCloudLas if !job.prefix.trim().is_empty()=>
+                format!("{}.las",job.prefix.trim()),
+            RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas=>
+                return Err("KickTheMap-job heeft geen puntenwolk bestands-prefix".into()),
             RemoteFileKind::JobFeatures=>"jobFeatures.json".into(),
         };
         let stem=job.title.trim().chars().map(|c|
@@ -778,6 +784,8 @@ impl BrowserChannel {
         let export_name=match kind {
             RemoteFileKind::GeoTiff=>format!("{stem}.tiff"),
             RemoteFileKind::JobFeatures=>format!("{stem}_jobFeatures.json"),
+            RemoteFileKind::PointCloudLaz=>format!("{stem}.laz"),
+            RemoteFileKind::PointCloudLas=>format!("{stem}.las"),
         };
         let fields=kind.download_fields(job.job_id,filename,export_name);
         let fields=fields.into_iter().map(|(key,value)|(key.into(),Value::String(value))).collect();
