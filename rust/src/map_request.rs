@@ -127,6 +127,8 @@ pub struct Scheduler {
     deadline: Option<Duration>,
     dragging: bool,
     last_started: Option<Duration>,
+    // Retry failed map requests without requiring a cursor gesture.
+    retry_failures: u8,
     generation: u64,
 }
 impl Scheduler {
@@ -157,6 +159,9 @@ impl Scheduler {
         self.desired = view;
         if provider_changed {
             self.last_started = None;
+        }
+        if !same {
+            self.retry_failures = 0;
         }
         // A pan inside the active/cached buffer must not cancel its fetch.
         // Drag transitions alone never invalidate a usable world-space image.
@@ -234,12 +239,25 @@ impl Scheduler {
         }
         self.active = None;
         if success {
+            self.retry_failures = 0;
             self.cached = Some(request.view);
             if self.desired.is_some_and(|v| request.view.covers(v)) {
                 self.deadline = None;
             }
         }
         true
+    }
+    /// A failed request should retry with bounded exponential backoff even
+    /// when the user doesn't move the map. Call after complete(..., false).
+    pub fn retry_after_failure(&mut self, now: Duration) {
+        if self.active.is_some() || self.desired.is_none()
+            || self.desired.is_some_and(Viewport::cadastral_too_far) {
+            return;
+        }
+        let shift=self.retry_failures.min(5);
+        self.retry_failures=self.retry_failures.saturating_add(1);
+        self.cached=None;
+        self.deadline=Some(now+Duration::from_millis(800u64*(1u64<<shift)));
     }
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -248,6 +266,7 @@ impl Scheduler {
         self.active = None;
         self.deadline = None;
         self.last_started = None;
+        self.retry_failures = 0;
     }
     pub fn next_deadline(&self) -> Option<Duration> {
         // Active work already asks the UI to repaint. An elapsed follow-up
@@ -685,7 +704,11 @@ impl Worker {
                                         *done=completed;*count=total;
                                         return Ok(());
                                     }
-                                    PendingPreview::Patches(patches) if patches.len()<16=>{
+                                    PendingPreview::Patches(patches)=>{
+                                        // All downloaded rectangles must survive until
+                                        // the UI uploads them. Dropping the first 16
+                                        // caused white gaps until the next camera move.
+                                        // The WMTS viewport already bounds tile count.
                                         patches.push(patch);
                                         *done=completed;*count=total;
                                         return Ok(());
@@ -831,6 +854,42 @@ mod tests {
     }
 
     #[test]
+    fn queued_patches_keep_every_tile_when_ui_has_not_polled() {
+        let (ready_tx, ready_rx)=mpsc::sync_channel(1);
+        let mut worker=Worker::with_fetcher_updates(move |request,cancel,_full,publish|{
+            for x in 0..24u32 {
+                publish(MapPatch{
+                    bounds:request.view.bounds,
+                    size:[24,1],
+                    rect:[x,0,x+1,1],
+                    rgba:vec![(x+1) as u8,10,20,255],
+                    stale_cache:false,
+                },(x+1) as usize,24)?;
+            }
+            ready_tx.send(()).unwrap();
+            while !cancel.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err("cancelled".into())
+        }).unwrap();
+        let mut view=view();
+        view.size=[24,1];
+        let request=Request{generation:1,view};
+        worker.start(request);
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let Event::Patches{patches,..}=worker.poll().unwrap() else {
+            panic!("expected accumulated patches");
+        };
+        assert_eq!(patches.len(),24);
+        let mut image=Pixels{bounds:view.bounds,width:24,height:1,
+            rgba:vec![0;24*4],stale_cache:false};
+        for patch in patches{patch.apply_to(&mut image).unwrap();}
+        for x in 0..24usize {
+            assert_eq!(&image.rgba[x*4..x*4+4],&[(x+1) as u8,10,20,255]);
+        }
+        worker.cancel();
+    }
+    #[test]
     fn map_patch_rejects_partial_or_outside_uploads() {
         let bounds=Bounds {min_x:0.,min_y:0.,max_x:5.,max_y:5.};
         assert!(MapPatch::crop(bounds,4,4,&[0;4*4*4],[1,1,5,4],false).is_err());
@@ -909,6 +968,25 @@ mod tests {
                 "{row}"
             );
         }
+    }
+    #[test]
+    fn failed_request_retries_without_camera_input_and_uses_backoff() {
+        let mut scheduler=Scheduler::default();
+        let view=view();
+        scheduler.update(Some(view),false,Duration::ZERO).unwrap();
+        let first=scheduler.due(Duration::from_millis(45)).unwrap();
+        assert!(scheduler.complete(first,false));
+        scheduler.retry_after_failure(Duration::from_millis(60));
+        assert!(scheduler.due(Duration::from_millis(859)).is_none());
+        let retry=scheduler.due(Duration::from_millis(860)).unwrap();
+        assert_eq!(retry.view,view);
+        assert!(scheduler.complete(retry,false));
+        scheduler.retry_after_failure(Duration::from_millis(900));
+        assert!(scheduler.due(Duration::from_millis(2499)).is_none());
+        let third=scheduler.due(Duration::from_millis(2500)).unwrap();
+        assert_eq!(third.view,view);
+        assert!(scheduler.complete(third,true));
+        assert!(scheduler.due(Duration::from_secs(20)).is_none());
     }
     #[test]
     fn camera_debounce_drag_zoom_resize_and_provider_stale_gates() {
