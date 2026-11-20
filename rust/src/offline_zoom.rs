@@ -388,6 +388,7 @@ pub fn refresh_at(
     let mut total_failed=0usize;
     let mut done=0u64;
     let mut updated=0u64;
+    let mut fatal_error=None;
     for id in ids{
         if cancel.load(Ordering::Relaxed){return Err("Offlinedownload geannuleerd".into());}
         let fresh=cached_tile(root,id).is_some_and(|stamp|
@@ -413,7 +414,8 @@ pub fn refresh_at(
                     total_failed+=1;
                     consecutive_failures+=1;
                     if consecutive_failures>=4{
-                        return Err(format!("Offline PDOK niet beschikbaar na meerdere fouten: {error}"));
+                        fatal_error=Some(format!("Offline PDOK niet beschikbaar na meerdere fouten: {error}"));
+                        break;
                     }
                 }
             }
@@ -432,11 +434,12 @@ pub fn refresh_at(
             g.ids().any(|id|!id.derived_path(root).is_file())));
     if updated>0 || missing_parent {
         build_local_overviews(root,area,maximum_zoom,cancel,|local,_total|{
-            on_tile(plan.tiles+local,plan.steps());
+            on_tile(done+local,plan.steps());
         })?;
-    }else{
+    }else if fatal_error.is_none(){
         on_tile(plan.steps(),plan.steps());
     }
+    if let Some(error)=fatal_error {return Err(error);}
     if total_failed>0 {
         return Err(format!("{total_failed} offline luchtfototegels konden niet worden bijgewerkt"));
     }
