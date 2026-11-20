@@ -485,57 +485,110 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         viewer_fields(ui,viewer);
         ui.separator();
     }
-    let offline_area=state.offline_area;
-    // Before the first map render, display a clearly labelled example
-    // footprint. Every one of the 20 entries still shows an MB estimate.
+    let current_area=state.offline_area;
     const EXAMPLE_AREA:[i32;4]=[154500,462500,155500,463500];
-    let estimate_area=offline_area.unwrap_or(EXAMPLE_AREA);
-    section(ui,"Offline luchtfoto en lokale kaartback-up",|ui|{
+    section(ui,"Offline luchtfoto en lokale kaart-back-up",|ui|{
         checkbox(ui,&mut state.draft.viewer.offline_aerial_auto_backup,
             "Offline luchtfoto automatisch bijwerken (elke 6 maanden)");
-        ui.small("Standaard uit. De kleine meegeleverde luchtfoto werkt altijd zonder internet. Automatisch bijwerken geldt alleen voor het eerder gekozen en opgeslagen kaartgebied.");
-        ui.label("PDOK-luchtfoto: kies het echte WMTS-zoomniveau");
+        ui.small("Automatisch bijwerken staat standaard uit. De ingebouwde overzichtsfoto blijft ook zonder download beschikbaar.");
+        ui.horizontal_wrapped(|ui|{
+            ui.label("Downloadgebied:");
+            ui.radio_value(&mut state.draft.viewer.offline_aerial_whole_country,
+                false,"Huidige kaartuitsnede");
+            ui.radio_value(&mut state.draft.viewer.offline_aerial_whole_country,
+                true,"Heel Nederland");
+        });
+        let whole=state.draft.viewer.offline_aerial_whole_country;
+        let area=if whole {Some(sleufbase_rust::offline_zoom::NETHERLANDS_AREA)}
+            else {current_area};
+        let estimate_area=area.unwrap_or(EXAMPLE_AREA);
+        ui.small(if whole {
+            "Heel Nederland gebruikt een vaste RD-uitsnede. Op hoge detailniveaus is dit te groot; SleufBase verlaagt nooit zelf de gevraagde resolutie."
+        } else {
+            "De kaartuitsnede wordt vastgelegd zodra je Instellingen opent. Stel eerst het gewenste gebied in op de kaart."
+        });
+        ui.label("Kies het oorspronkelijke PDOK WMTS-zoomniveau");
         let zoom=state.draft.viewer.offline_aerial_zoom_level;
-        let selection=sleufbase_rust::offline_zoom::format_estimate(estimate_area,zoom);
         egui::ComboBox::from_id_salt("offline-photo-zoom-level")
-            .width(ui.available_width().min(460.))
-            .selected_text(selection)
+            .width(ui.available_width().min(490.))
+            .selected_text(sleufbase_rust::offline_zoom::format_estimate(estimate_area,zoom))
             .show_ui(ui,|ui|{
                 for level in sleufbase_rust::offline_zoom::MIN_ZOOM
                     ..=sleufbase_rust::offline_zoom::MAX_ZOOM {
-                    let label=sleufbase_rust::offline_zoom::format_estimate(estimate_area,level);
                     ui.selectable_value(&mut state.draft.viewer.offline_aerial_zoom_level,
-                        level,label);
+                        level,sleufbase_rust::offline_zoom::format_estimate(estimate_area,level));
                 }
             });
-        if let Some(area)=offline_area{
-            ui.small(format!("Gebied: huidige kaartuitsnede ({}). Alleen de gekozen scherpste PDOK-tegels worden gedownload; bij uitzoomen maakt SleufBase zelf de lagere resoluties.",
-                sleufbase_rust::offline_zoom::describe_area(area)));
-        }else{
-            ui.small("De getoonde MB zijn een voorbeeld voor 1 × 1 km. Open eerst de kaart, zoom naar het gewenste gebied en open Instellingen opnieuw voor de werkelijke gebiedsschatting.");
+        ui.label("Compressie van opgeslagen foto's");
+        egui::ComboBox::from_id_salt("offline-photo-jpeg-quality")
+            .selected_text(sleufbase_rust::offline_zoom::quality_label(state.draft.viewer.offline_aerial_quality))
+            .show_ui(ui,|ui|{
+                for quality in [100,95,85,70]{
+                    ui.selectable_value(&mut state.draft.viewer.offline_aerial_quality,
+                        quality,sleufbase_rust::offline_zoom::quality_label(quality));
+                }
+            });
+        ui.small("Compressie verandert het aantal pixels niet: iedere tegel blijft 256 × 256 pixels. Kwaliteit 100 bewaart de originele PDOK-JPEG ongewijzigd.");
+        let zoom=state.draft.viewer.offline_aerial_zoom_level;
+        let estimate=area.and_then(|a|sleufbase_rust::offline_zoom::estimate(a,zoom));
+        if let Some(area)=area {
+            ui.small(format!("Gebied: {} · geschatte download {}. Er worden alleen de originele tegels van het gekozen zoomniveau opgehaald.",
+                sleufbase_rust::offline_zoom::describe_area(area),
+                estimate.map(|e|sleufbase_rust::offline_zoom::format_mb(e.expected_bytes)).unwrap_or_default()));
         }
-        ui.small("Geschatte download: circa 50 KB per JPEG-tegel op het gekozen hoogste zoomniveau. Lagere resoluties worden zonder extra PDOK-download lokaal gemaakt; ze gebruiken wel aanvullende schijfruimte.");
-        if zoom>=17 {
-            ui.small("Niveau 17–19 biedt meestal geen extra echte scherpte: de oorspronkelijke PDOK-luchtfoto is ongeveer 5–8 cm per pixel.");
-        }
-        let estimate=offline_area.and_then(|area|
-            sleufbase_rust::offline_zoom::estimate(area,zoom));
-        if estimate.is_some_and(|size|!size.allowed){
+        if let Some(size)=estimate.filter(|e|!e.allowed){
             ui.colored_label(egui::Color32::DARK_RED,
-                format!("Dit gebied vraagt meer dan {} tegels. Zoom verder in op de kaart of kies een lager niveau om een zeer grote download te voorkomen.",
-                    sleufbase_rust::offline_zoom::MAX_DOWNLOAD_TILES));
+                format!("Dit gebied vraagt {} tegels, boven de limiet van {}. Kies een lager zoomniveau of kleinere uitsnede; de foto wordt niet automatisch verkleind.",
+                    size.tiles,sleufbase_rust::offline_zoom::MAX_DOWNLOAD_TILES));
         }
-        if ui.add_enabled(!state.manual_offline_busy
-            && estimate.is_some_and(|size|size.allowed),
+        if zoom>=17 {
+            ui.small("Niveau 17–19 kan meer pixels opleveren dan de bronfoto aan details bevat (PDOK: ongeveer 5–8 cm/pixel).");
+        }
+        if ui.add_enabled(!state.manual_offline_busy && estimate.is_some_and(|e|e.allowed),
             egui::Button::new("Offline luchtfoto nu downloaden en gebruiken")).clicked(){
-            if let Some(area)=offline_area{
-                state.manual_offline_download=Some((zoom,area));
+            if let Some(area)=area {
+                state.manual_offline_download=Some((zoom,area,state.draft.viewer.offline_aerial_quality));
             }
         }
-        if let Some(status)=&state.manual_offline_status{
-            ui.small(status);
+        if let Some(status)=&state.manual_offline_status {ui.small(status);}
+        ui.small("Snellere download met maximaal vier verbindingen. Reeds aanwezige recente JPEG's worden overgeslagen; het programma maakt na afloop geen kleinere cachebeelden.");
+
+        ui.separator();
+        ui.strong("Gedownloade offline kaarten beheren");
+        let mut requested=None;
+        if state.offline_downloads.is_empty(){
+            ui.small("Nog geen nieuwe WMTS-downloadgebieden geregistreerd. Via 'Alles verwijderen' kun je ook oudere offline-cachebestanden wissen.");
         }
-        ui.small("De knop haalt de gekozen kaartuitsnede meteen op, ook als automatisch bijwerken uit staat. Reeds opgeslagen kaarten blijven beschikbaar.");
+        for download in &state.offline_downloads{
+            ui.horizontal_wrapped(|ui|{
+                ui.label(format!("Niveau {} · {} · {} · {}",
+                    download.zoom,sleufbase_rust::offline_zoom::describe_area(download.area),
+                    sleufbase_rust::offline_zoom::format_mb(download.bytes),
+                    sleufbase_rust::offline_zoom::quality_label(download.quality)));
+                if ui.add_enabled(!state.manual_offline_busy,
+                    egui::Button::new("Verwijderen")).clicked(){
+                    requested=Some(Some(download.id));
+                }
+            });
+        }
+        if ui.add_enabled(!state.manual_offline_busy,
+            egui::Button::new("Alle gedownloade offline kaarten verwijderen"))
+            .clicked(){requested=Some(None);}
+        if let Some(id)=requested{state.offline_delete_confirm=Some(id);}
+        if let Some(choice)=state.offline_delete_confirm{
+            ui.colored_label(egui::Color32::DARK_RED,
+                if choice.is_some(){"Dit offline kaartgebied verwijderen?"}
+                else{"Alle offline kaarten en oude offline caches verwijderen?"});
+            ui.horizontal(|ui|{
+                if ui.button("Annuleren").clicked(){state.offline_delete_confirm=None;}
+                if ui.add_enabled(!state.manual_offline_busy,
+                    egui::Button::new("Ja, verwijderen")).clicked(){
+                    state.offline_delete=Some(choice);
+                    state.offline_delete_confirm=None;
+                }
+            });
+        }
+        if let Some(notice)=&state.offline_catalog_notice{ui.small(notice);}
     });
     ui.separator();
     checkbox(ui,&mut state.draft.viewer.show_trench_labels,"Naambordjes van proefsleuven tonen");
