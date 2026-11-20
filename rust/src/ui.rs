@@ -1197,6 +1197,9 @@ impl SleufBaseApp {
                     Ok((RemoteFileKind::JobFeatures,path))=>{
                         self.load_files(vec![path]);
                     }
+                    Ok((RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas,path))=>{
+                        self.queue_pointcloud_files(vec![path]);
+                    }
                     Err(err)=>self.message=format!("KickTheMap-download: {err}")
                 }
     }
@@ -1216,6 +1219,8 @@ impl SleufBaseApp {
                         Ok(path)=>match kind {
                             RemoteFileKind::GeoTiff=>self.browser_ui.downloaded_tiffs.push(path),
                             RemoteFileKind::JobFeatures=>self.browser_ui.downloaded_json.push(path),
+                            RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas=>
+                                self.browser_ui.downloaded_clouds.push(path),
                         },
                         Err(error)=>self.browser_ui.failures.push(format!("Job {id}: {error}")),
                     }
@@ -1231,6 +1236,7 @@ impl SleufBaseApp {
                         self.browser_ui.batch_mode=false;
                         self.browser_ui.downloaded_json.clear();
                         self.browser_ui.downloaded_tiffs.clear();
+                        self.browser_ui.downloaded_clouds.clear();
                     } else {
                         self.live_session=Some(client);
                         if self.browser_ui.failures.iter().any(|s|
