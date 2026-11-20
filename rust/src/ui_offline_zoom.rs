@@ -208,8 +208,22 @@ impl State{
         let highest=(0..=target).rev()
             .find(|z|cache::grid(view,*z).is_some_and(|g|g.count()<=MAX_LEVEL_TILES));
         let Some(highest)=highest else{return Vec::new();};
+        // On a first-time background download, lower zoom levels are ready
+        // long before the chosen sharp level. Display the sharpest *present*
+        // centre tile immediately instead of waiting for the entire pyramid.
+        let centre_x=(view.min_x+view.max_x)*0.5;
+        let centre_y=(view.min_y+view.max_y)*0.5;
+        let centre=Bounds{
+            min_x:centre_x-0.01,min_y:centre_y-0.01,
+            max_x:centre_x+0.01,max_y:centre_y+0.01,
+        };
+        let root=cache::root();
+        let available=(0..=highest).rev().find(|&level|
+            cache::grid(centre,level).and_then(|g|g.ids().next())
+                .is_some_and(|id|id.path(&root).is_file()));
+        let best=available.unwrap_or(highest);
         let mut out=Vec::new();
-        for zoom in highest.saturating_sub(2)..=highest{
+        for zoom in best.saturating_sub(2)..=best{
             out.extend(cache::tiles_for_view(view,zoom,MAX_LEVEL_TILES as usize));
         }
         out
