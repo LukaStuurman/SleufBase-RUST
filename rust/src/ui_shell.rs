@@ -1150,7 +1150,8 @@ impl SleufBaseApp {
                 egui::ComboBox::from_id_salt("original-background").width(field_width).truncate()
                     .selected_text(self.project_view.provider().label()).show_ui(ui, |ui| {
                         for source in [Background::PdokAerial, Background::PdokAerialCadastral,
-                            Background::Cadastral, Background::OpenStreetMap, Background::OpenStreetMapCadastral]
+                            Background::OfflineAerial, Background::Cadastral,
+                            Background::OpenStreetMap, Background::OpenStreetMapCadastral]
                         {
                             if ui.selectable_label(self.project_view.use_background
                                 && self.project_view.provider() == source, source.label()).clicked()
