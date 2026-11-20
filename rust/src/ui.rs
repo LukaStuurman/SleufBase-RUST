@@ -1285,6 +1285,8 @@ impl SleufBaseApp {
                             self.browser_ui.downloaded_tiffs.push(path),
                         Ok((RemoteFileKind::JobFeatures,path)) =>
                             self.browser_ui.downloaded_json.push(path),
+                        Ok((RemoteFileKind::PointCloudLaz|RemoteFileKind::PointCloudLas,path)) =>
+                            self.browser_ui.downloaded_clouds.push(path),
                         Err(err)=>self.browser_ui.failures.push(err),
                     }
                 } else {
@@ -1416,6 +1418,9 @@ impl SleufBaseApp {
         self.browser_ui.dock=None;
         self.browser_ui.selected.clear();
         self.browser_ui.queue.clear();
+        self.browser_ui.downloaded_clouds.clear();
+        self.browser_ui.downloaded_json.clear();
+        self.browser_ui.downloaded_tiffs.clear();
         self.browser_ui.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
         self.browser_ui.startup_login_checked=true;
         self.browser_ui.restoring_login=false;
