@@ -86,7 +86,9 @@ pub(crate) struct Dialog {
     /// Caller takes this request and opens its existing autosave selector.
     pub restore_autosave_requested: bool,
     /// Explicit action independent of Save and the automatic 183-day toggle.
-    pub manual_offline_download:Option<u16>,
+    pub manual_offline_download:Option<(u8,[i32;4])>,
+    /// Current visible RD extent captured before opening Settings.
+    pub offline_area:Option<[i32;4]>,
     pub manual_offline_busy:bool,
     pub manual_offline_status:Option<String>,
     rules: Vec<RuleRow>,
@@ -147,7 +149,7 @@ impl Dialog {
             autosave_count: None,
             project_scoped: false,
             restore_autosave_requested: false,
-            manual_offline_download:None,
+            manual_offline_download:None,offline_area:None,
             manual_offline_busy:false,
             manual_offline_status:None,
             template_task: None,
@@ -472,30 +474,57 @@ fn working_map_fields(ui: &mut egui::Ui, state: &mut Dialog) {
         viewer_fields(ui,viewer);
         ui.separator();
     }
+    let offline_area=state.offline_area;
     section(ui,"Offline luchtfoto en lokale kaartback-up",|ui|{
         checkbox(ui,&mut state.draft.viewer.offline_aerial_auto_backup,
-            "Automatisch een gedetailleerde offline luchtfoto downloaden en elke 6 maanden vernieuwen");
-        ui.small("Standaard uit. De kleine ingebouwde overzichtsfoto is altijd beschikbaar, ook zonder internet. Eerder gedownloade kaarten blijven lokaal beschikbaar als je deze optie uitschakelt.");
-        ui.horizontal_wrapped(|ui|{
-            ui.label("Detailniveau offline luchtfoto");
-            egui::ComboBox::from_id_salt("offline-photo-detail-level")
-                .selected_text(match state.draft.viewer.offline_aerial_detail_mb{
-                    10=>"Laag · 10 MB",25=>"Normaal · 25 MB",_=>"Hoog · 50 MB"
-                }).show_ui(ui,|ui|{
-                    for (mb,label) in [(10,"Laag · 10 MB"),(25,"Normaal · 25 MB"),(50,"Hoog · 50 MB")]{
-                        ui.selectable_value(&mut state.draft.viewer.offline_aerial_detail_mb,mb,label);
-                    }
-                });
-        });
-        ui.small("Dit is een maximale opslaggrootte. Een hoger niveau gebruikt meer pixels per tegel. De losse keuze ‘Offline luchtfoto’ op de kaart gebruikt alleen aanwezige lokale beelden.");
-        if ui.add_enabled(!state.manual_offline_busy,
-            egui::Button::new("Nu nieuwe offline luchtfoto downloaden en gebruiken")).clicked(){
-            state.manual_offline_download=Some(state.draft.viewer.offline_aerial_detail_mb);
+            "Offline luchtfoto automatisch bijwerken (elke 6 maanden)");
+        ui.small("Standaard uit. De kleine meegeleverde luchtfoto werkt altijd zonder internet. Automatisch bijwerken geldt alleen voor het eerder gekozen en opgeslagen kaartgebied.");
+        ui.label("PDOK-luchtfoto: kies het echte WMTS-zoomniveau");
+        let zoom=state.draft.viewer.offline_aerial_zoom_level;
+        let selection=offline_area.map_or(
+            format!("Niveau {zoom} · {}",sleufbase_rust::offline_zoom::format_resolution(zoom)),
+            |area|sleufbase_rust::offline_zoom::format_estimate(area,zoom));
+        egui::ComboBox::from_id_salt("offline-photo-zoom-level")
+            .width(ui.available_width().min(460.))
+            .selected_text(selection)
+            .show_ui(ui,|ui|{
+                for level in sleufbase_rust::offline_zoom::MIN_ZOOM
+                    ..=sleufbase_rust::offline_zoom::MAX_ZOOM {
+                    let label=offline_area.map_or(
+                        format!("Niveau {level} · {}",sleufbase_rust::offline_zoom::format_resolution(level)),
+                        |area|sleufbase_rust::offline_zoom::format_estimate(area,level));
+                    ui.selectable_value(&mut state.draft.viewer.offline_aerial_zoom_level,
+                        level,label);
+                }
+            });
+        if let Some(area)=offline_area{
+            ui.small(format!("Gebied: huidige kaartuitsnede ({}). De download bevat ook alle grovere zoomniveaus.",
+                sleufbase_rust::offline_zoom::describe_area(area)));
+        }else{
+            ui.small("Voor een opslaginschatting: open eerst de kaart, zoom naar het gewenste gebied en open daarna deze instellingen opnieuw.");
+        }
+        ui.small("Schatting: circa 50 KB per JPEG-tegel. Het werkelijke aantal MB hangt af van de luchtfoto en het gekozen gebied; er is geen vaste limiet van 50 MB.");
+        if zoom>=17 {
+            ui.small("Niveau 17–19 biedt meestal geen extra echte scherpte: de oorspronkelijke PDOK-luchtfoto is ongeveer 5–8 cm per pixel.");
+        }
+        let estimate=offline_area.and_then(|area|
+            sleufbase_rust::offline_zoom::estimate(area,zoom));
+        if estimate.is_some_and(|size|!size.allowed){
+            ui.colored_label(egui::Color32::DARK_RED,
+                format!("Dit gebied vraagt meer dan {} tegels. Zoom verder in op de kaart of kies een lager niveau om een zeer grote download te voorkomen.",
+                    sleufbase_rust::offline_zoom::MAX_DOWNLOAD_TILES));
+        }
+        if ui.add_enabled(!state.manual_offline_busy
+            && estimate.is_some_and(|size|size.allowed),
+            egui::Button::new("Offline luchtfoto nu downloaden en gebruiken")).clicked(){
+            if let Some(area)=offline_area{
+                state.manual_offline_download=Some((zoom,area));
+            }
         }
         if let Some(status)=&state.manual_offline_status{
             ui.small(status);
         }
-        ui.small("De knop start direct een nieuwe download met het gekozen detailniveau en schakelt naar de offline kaart. Dit werkt ook wanneer automatisch bijwerken uit staat.");
+        ui.small("De knop haalt de gekozen kaartuitsnede meteen op, ook als automatisch bijwerken uit staat. Reeds opgeslagen kaarten blijven beschikbaar.");
     });
     ui.separator();
     checkbox(ui,&mut state.draft.viewer.show_trench_labels,"Naambordjes van proefsleuven tonen");
