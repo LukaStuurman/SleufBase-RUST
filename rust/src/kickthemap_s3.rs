@@ -16,7 +16,9 @@ impl Identity {
         }
         let filename = match kind {
             crate::kickthemap_live::RemoteFileKind::GeoTiff => format!("{}.tiff", self.prefix),
-            _ => "jobFeatures.json".into(),
+            crate::kickthemap_live::RemoteFileKind::PointCloudLaz => format!("{}.laz", self.prefix),
+            crate::kickthemap_live::RemoteFileKind::PointCloudLas => format!("{}.las", self.prefix),
+            crate::kickthemap_live::RemoteFileKind::JobFeatures => "jobFeatures.json".into(),
         };
         let key = format!("{}/{}/cloud/{filename}", self.owner, self.prefix);
         if key.len() > 8192
