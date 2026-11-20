@@ -1857,7 +1857,16 @@ impl SleufBaseApp {
         // A tiny photo is always ready before the first network tile.
         // Its half-year update happens off the UI thread.
         #[cfg(not(test))]
-        self.offline_overview.poll(ctx,self.navigation.viewport);
+        {
+            use sleufbase_rust::project_view::BackgroundProvider as B;
+            // Downloading the offline archive happens at app startup, but
+            // only decode/upload its heavy detail tiles while PDOK imagery is
+            // actually the selected background.
+            let display= self.project_view.use_background
+                && matches!(self.project_view.provider(),B::PdokAerial|B::PdokAerialCadastral);
+            let view=if display{self.navigation.viewport}else{None};
+            self.offline_overview.poll(ctx,view);
+        }
         self.poll_pointcloud(ctx);
         if self.pointcloud_ui.busy() && ctx.input(|i|i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
