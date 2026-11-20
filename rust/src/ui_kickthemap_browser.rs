@@ -935,6 +935,11 @@ impl SleufBaseApp {
         if self.browser_ui.batch_mode && !self.live_busy && !self.browser_ui.queue.is_empty() {
             if self.browser_ui.cancel.load(Ordering::Relaxed) {
                 self.browser_ui.queue.clear();
+            } else if self.browser_ui.queue.front().is_some_and(|(_,kind)|
+                *kind==RemoteFileKind::PointCloudLaz) {
+                // Cloud files are large; use the existing bounded three-worker
+                // authenticated batch path rather than one job at a time.
+                self.download_live_batch();
             } else if let Some((job_id,kind))=self.browser_ui.queue.pop_front() {
                 self.download_live_job(job_id,kind);
             }
