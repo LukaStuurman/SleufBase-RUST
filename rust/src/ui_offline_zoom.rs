@@ -1,5 +1,6 @@
-//! Actual offline PDOK WMTS pyramid. The small bundled overview and any
-//! legacy 10/25/50 MiB caches can still be drawn beneath these tiles.
+//! Actual offline PDOK WMTS pyramid. Only highest-detail JPEGs come from
+//! PDOK; lower zoom levels are composed locally when the user zooms out.
+//! The small bundled overview and legacy photo caches remain as fallbacks.
 //! Only georeferenced photos around the camera enter GPU memory.
 use super::*;
 use sleufbase_rust::offline_zoom as cache;
@@ -62,12 +63,13 @@ impl State{
         }
         if let Some((zoom,true,_))=&self.pending{
             let done=self.progress.load(Ordering::Relaxed);
-            return Some(format!("Offline luchtfoto · zoom {zoom}: {done}/{} tegels. Bestaande kaart blijft beschikbaar.",self.total));
+            return Some(format!("Offline luchtfoto · zoom {zoom}: {done}/{} stappen (scherpe foto's downloaden en lokaal verkleinen). Bestaande kaart blijft beschikbaar.",self.total));
         }
         self.notice.clone()
     }
-    /// Starts a fresh download for *this exact area*, including every
-    /// coarser WMTS zoom level. It does not change the six-month opt-in.
+    /// Downloads only the selected highest-resolution level for this area.
+    /// All lower zoom levels are synthesized on disk from sharp JPEGs,
+    /// without additional requests to PDOK or changing auto-update opt-in.
     pub(super) fn download_now(&mut self,zoom:u8,area:[i32;4])->Result<(),String>{
         let estimate=cache::estimate(area,zoom)
             .ok_or("Ongeldig PDOK-kaartgebied")?;
@@ -76,7 +78,7 @@ impl State{
                 cache::format_mb(estimate.expected_bytes),estimate.tiles));
         }
         self.queued=Some((zoom,area));
-        self.total=estimate.tiles;
+        self.total=estimate.steps();
         self.progress.store(0,Ordering::Relaxed);
         self.notice=None;
         self.next_check=Instant::now();
@@ -125,14 +127,14 @@ impl State{
         let progress=Arc::clone(&self.progress);
         let repaint=ctx.clone();
         self.progress.store(0,Ordering::Relaxed);
-        self.total=plan.tiles;
+        self.total=plan.steps();
         let started=std::thread::Builder::new()
             .name(if manual {"sleufbase-manual-wmts-download"}else{"sleufbase-auto-wmts-refresh"}.into())
             .spawn(move||{
                 let result=cache::refresh(area,zoom,manual,&worker_cancel,
                     |done,_total|{
                         progress.store(done,Ordering::Relaxed);
-                        if done%5==0 || done==plan.tiles{
+                        if done%5==0 || done==plan.steps(){
                             repaint.request_repaint();
                         }
                     });
@@ -208,9 +210,8 @@ impl State{
         let highest=(0..=target).rev()
             .find(|z|cache::grid(view,*z).is_some_and(|g|g.count()<=MAX_LEVEL_TILES));
         let Some(highest)=highest else{return Vec::new();};
-        // On a first-time background download, lower zoom levels are ready
-        // long before the chosen sharp level. Display the sharpest *present*
-        // centre tile immediately instead of waiting for the entire pyramid.
+        // Locally downsampled PNG tiles cover zoom-out without network
+        // requests. Use whichever level is available around the camera.
         let centre_x=(view.min_x+view.max_x)*0.5;
         let centre_y=(view.min_y+view.max_y)*0.5;
         let centre=Bounds{
@@ -220,7 +221,7 @@ impl State{
         let root=cache::root();
         let available=(0..=highest).rev().find(|&level|
             cache::grid(centre,level).and_then(|g|g.ids().next())
-                .is_some_and(|id|id.path(&root).is_file()));
+                .is_some_and(|id|cache::has_tile(&root,id)));
         let best=available.unwrap_or(highest);
         let mut out=Vec::new();
         for zoom in best.saturating_sub(2)..=best{
@@ -260,9 +261,7 @@ impl State{
         }
         let root=cache::root();
         for &id in &ids{
-            let stamp=std::fs::metadata(id.path(&root))
-                .and_then(|meta|meta.modified()).ok();
-            let Some(stamp)=stamp else{continue;};
+            let Some(stamp)=cache::tile_modified(&root,id) else{continue;};
             if let Some(index)=self.loaded.iter().position(|t|
                 t.id==id&&t.modified==stamp){
                 if let Some(tile)=self.loaded.remove(index){
@@ -277,8 +276,8 @@ impl State{
         }
         while self.loaded.len()>MAX_TEXTURES{self.loaded.pop_front();}
         self.visible.clear();
-        // Low levels first; every higher level only improves pixels where
-        // the corresponding JPEG has already downloaded and decoded.
+        // Low levels first: locally reduced RGBA/PNG fills the underlying
+        // area, and downloaded high-resolution JPEG tiles paint over it.
         for id in ids{
             if let Some(tile)=self.loaded.iter().find(|entry|entry.id==id){
                 self.visible.push((tile.texture.clone(),id.bounds()));
