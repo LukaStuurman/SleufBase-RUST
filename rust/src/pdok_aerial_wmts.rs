@@ -9,7 +9,7 @@ use crate::{input, model::Bounds};
 use image::{DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque}, fs, io::{Cursor, Write}, path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, OnceLock},
+    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, Condvar, Mutex, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -25,6 +25,10 @@ const MAX_VIEW_TILES: usize = 256;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 const MAX_MEMORY_TILES: usize = 192;
+// A tiny, low-priority ring outside the current viewport prevents white
+// strips during a nearby pan/zoom. Never prefetch full-resolution tiles.
+const MAX_NEIGHBOR_TILES: usize = 16;
+const MAX_NEIGHBOR_MEMORY: usize = 32;
 const MAX_DISK_TILES: usize = 4096;
 const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
 static DISK_WRITES: AtomicUsize = AtomicUsize::new(0);
@@ -180,9 +184,32 @@ fn plan(bounds:Bounds,width:u32,height:u32) -> Result<Grid,String> {
 // A handful of coarse tiles can cover a cold viewport while detailed tiles
 // load. Keep this bounded: parent work shares the existing PDOK request slots.
 fn coarse_preview_grid(bounds:Bounds,target:Grid)->Option<Grid>{
-    if target.zoom<2 || target.count()<8{return None;}
+    if target.zoom<2{return None;}
     (0..target.zoom).rev().filter_map(|zoom|grid(bounds,zoom))
         .find(|coarse|coarse.count()<=4)
+}
+// Predict only coarse tiles in a bounded ring around the current view:
+// this also covers a typical one-level zoom-out without expanding the
+// expensive full-resolution viewport or downloading an entire neighborhood.
+fn neighbor_preview_ids(bounds:Bounds,target:Grid)->Vec<TileId>{
+    if target.zoom==0{return Vec::new();}
+    let w=bounds.max_x-bounds.min_x;
+    let h=bounds.max_y-bounds.min_y;
+    let padded=Bounds {
+        min_x:bounds.min_x-w*0.6,max_x:bounds.max_x+w*0.6,
+        min_y:bounds.min_y-h*0.6,max_y:bounds.max_y+h*0.6,
+    };
+    let Some(first)=(0..target.zoom).rev().filter_map(|zoom|grid(padded,zoom))
+        .find(|g|g.count()<=12) else{return Vec::new();};
+    let mut ids=first.ids().collect::<Vec<_>>();
+    // Keep one extra low-res level for a second zoom-out step. Limit
+    // network work even on unusually large 4K/ultrawide viewports.
+    if first.zoom>0 {
+        if let Some(second)=grid(padded,first.zoom-1) {
+            ids.extend(second.ids().take(MAX_NEIGHBOR_TILES-ids.len()));
+        }
+    }
+    ids
 }
 fn decode(bytes:&[u8]) -> Result<RgbaImage,String> {
     if bytes.len() as u64>MAX_BYTES {return Err("PDOK-tegel overschrijdt de downloadlimiet".into());}
@@ -272,6 +299,96 @@ fn load_tile(id:TileId,root:&Path,cancel:&AtomicBool)
     }
     Err(last_error)
 }
+// One latest-only background worker warms a handful of *coarse* nearby tiles
+// after the visible map is complete. Any new visible request cancels the job.
+// Results stay in a small shared memory LRU; the normal disk cache is optional.
+struct NeighborJob { root:PathBuf, ids:Vec<TileId> }
+#[derive(Default)]
+struct NeighborState {
+    pending:Option<NeighborJob>,
+    active_cancel:Option<Arc<AtomicBool>>,
+}
+#[derive(Default)]
+struct NeighborCache {
+    control:Mutex<NeighborState>,
+    wake:Condvar,
+    tiles:Mutex<VecDeque<(TileId,SystemTime,Arc<RgbaImage>)>>,
+}
+impl NeighborCache {
+    fn cancel(&self) {
+        if let Ok(mut guard)=self.control.lock() {
+            if let Some(flag)=&guard.active_cancel {
+                flag.store(true,Ordering::Relaxed);
+            }
+            guard.pending=None;
+        }
+    }
+    fn queue(&self,job:NeighborJob) {
+        if job.ids.is_empty(){return;}
+        if let Ok(mut guard)=self.control.lock() {
+            if let Some(flag)=&guard.active_cancel {
+                flag.store(true,Ordering::Relaxed);
+            }
+            guard.pending=Some(job);
+            self.wake.notify_one();
+        }
+    }
+    fn get(&self,id:TileId)->Option<(Arc<RgbaImage>,SystemTime)> {
+        let mut tiles=self.tiles.lock().ok()?;
+        let index=tiles.iter().position(|item|item.0==id)?;
+        let entry=tiles.remove(index)?;
+        let result=(Arc::clone(&entry.2),entry.1);
+        tiles.push_back(entry);
+        Some(result)
+    }
+    fn insert(&self,id:TileId,time:SystemTime,tile:Arc<RgbaImage>) {
+        if let Ok(mut tiles)=self.tiles.lock() {
+            tiles.retain(|item|item.0!=id);
+            tiles.push_back((id,time,tile));
+            while tiles.len()>MAX_NEIGHBOR_MEMORY {tiles.pop_front();}
+        }
+    }
+}
+fn neighbor_service()->Option<&'static Arc<NeighborCache>> {
+    static SERVICE:OnceLock<Option<Arc<NeighborCache>>>=OnceLock::new();
+    SERVICE.get_or_init(||{
+        let service=Arc::new(NeighborCache::default());
+        let worker=Arc::clone(&service);
+        std::thread::Builder::new()
+            .name("sleufbase-wmts-neighbor-preload".into())
+            .spawn(move||loop {
+                let (job,cancel)={
+                    let Ok(mut guard)=worker.control.lock() else{return;};
+                    while guard.pending.is_none() {
+                        guard=match worker.wake.wait(guard) {
+                            Ok(guard)=>guard,Err(_)=>return,
+                        };
+                    }
+                    let job=guard.pending.take().unwrap();
+                    let cancel=Arc::new(AtomicBool::new(false));
+                    guard.active_cancel=Some(Arc::clone(&cancel));
+                    (job,cancel)
+                };
+                for id in job.ids {
+                    if cancel.load(Ordering::Relaxed){break;}
+                    if worker.get(id).is_some(){continue;}
+                    // A single prefetch request at a time leaves the other
+                    // PDOK request slots free for the user's visible tiles.
+                    if let Ok((tile,when,_))=load_tile(id,&job.root,&cancel) {
+                        if !cancel.load(Ordering::Relaxed){
+                            worker.insert(id,when,tile);
+                        }
+                    }
+                }
+                let Ok(mut guard)=worker.control.lock() else{return;};
+                if guard.active_cancel.as_ref().is_some_and(|value|
+                    Arc::ptr_eq(value,&cancel)) {
+                    guard.active_cancel=None;
+                }
+            }).ok().map(|_|service)
+    }).as_ref()
+}
+
 #[derive(Clone)]
 pub struct Raster {
     pub bounds:Bounds, pub width:u32, pub height:u32,
@@ -307,9 +424,22 @@ impl ViewportRenderer {
         ->Option<(Arc<RgbaImage>,bool)>
     {
         if let Some(result)=self.memory_get(id){return Some(result);}
+        if let Some((tile,time))=neighbor_service().and_then(|service|service.get(id)){
+            let fresh=SystemTime::now().duration_since(time).map_or(true,|age|age<=FRESH_FOR);
+            self.remember(id,time,Arc::clone(&tile));
+            return Some((tile,fresh));
+        }
         let (tile,time,fresh)=read_disk(id,dir,cancel)?;
         self.remember(id,time,Arc::clone(&tile));
         Some((tile,fresh))
+    }
+    fn warm_neighbors(&self,bounds:Bounds,target:Grid,root:&Path) {
+        let mut ids=neighbor_preview_ids(bounds,target);
+        // Already-reused visible/parent tiles need no extra network or disk IO.
+        ids.retain(|id|!self.memory.iter().any(|item|item.0==*id));
+        if let Some(service)=neighbor_service(){
+            service.queue(NeighborJob{root:root.to_path_buf(),ids});
+        }
     }
     fn fetch_batch(
         ids:&[TileId],root:&Path,cancel:&AtomicBool,detail_zoom:u8,
@@ -485,6 +615,8 @@ impl ViewportRenderer {
         cancel:&AtomicBool,progress:&mut dyn FnMut(Progress<'_>)->Result<(),String>
     )->Result<Raster,String>{
         input::check(cancel)?;
+        // Visible work always preempts the optional neighboring preview ring.
+        if let Some(service)=neighbor_service(){service.cancel();}
         let target=plan(bounds,width,height)?;
         fs::create_dir_all(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
         let root=fs::canonicalize(cache).map_err(|e|format!("PDOK WMTS-cache: {e}"))?;
@@ -508,6 +640,7 @@ impl ViewportRenderer {
             if u64::from(width)*u64::from(height)<=12_000_000{
                 self.previous=Some(raster.clone());
             }
+            self.warm_neighbors(bounds,target,&root);
             return Ok(raster);
         }
         let previous_coverage=self.previous.as_ref().map(|old|{
@@ -531,8 +664,9 @@ impl ViewportRenderer {
             let preview=if previous_coverage<0.95 {
                 coarse_preview_grid(bounds,target)
             }else{None};
-            let first=preview.map_or(target.zoom.saturating_sub(3),
-                |coarse|coarse.zoom.min(target.zoom.saturating_sub(3)));
+            // Also consider parents pre-warmed for a one/two-step zoom-out.
+            let first=preview.map_or(target.zoom.saturating_sub(5),
+                |coarse|coarse.zoom.min(target.zoom.saturating_sub(5)));
             for zoom in first..target.zoom {
                 let Some(parent)=grid(bounds,zoom) else{continue;};
                 if parent.count()>16{continue;}
@@ -592,7 +726,7 @@ impl ViewportRenderer {
         // UI coalesces updates during 30 ms repaints. Publish each completed
         // tile immediately; never freeze sharper imagery after a preview cap.
         let mut has_frame=preview_source;
-        Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
+        let fetched=Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
             stale|=is_stale;
             let region=Self::tile_region(bounds,width,height,id);
             if id.zoom<target.zoom{
@@ -626,7 +760,21 @@ impl ViewportRenderer {
                 has_frame=true;
             }
             Ok(())
-        })?;
+        });
+        if let Err(error)=fetched {
+            // Keep the partially composed map when the user interrupts loading.
+            // Its geography remains valid and it can fill the next zoom/pan
+            // rather than throwing away pixels already shown to the user.
+            if cancel.load(Ordering::Relaxed) && has_frame
+                && u64::from(width)*u64::from(height)<=12_000_000 {
+                self.previous=Some(Raster{bounds,width,height,rgba,stale_cache:stale});
+            }
+            return Err(error);
+        }
+        if cancel.load(Ordering::Relaxed) && has_frame
+            && u64::from(width)*u64::from(height)<=12_000_000 {
+            self.previous=Some(Raster{bounds,width,height,rgba:rgba.clone(),stale_cache:stale});
+        }
         input::check(cancel)?;
         // Every incoming tile was painted into its exact RD rectangle with
         // a two-pixel halo, so the final image is already pixel-identical
@@ -636,6 +784,7 @@ impl ViewportRenderer {
         if u64::from(width)*u64::from(height)<=12_000_000 {
             self.previous=Some(raster.clone());
         }
+        self.warm_neighbors(bounds,target,&root);
         Ok(raster)
     }
 
@@ -744,6 +893,30 @@ mod tests{
         assert_eq!(p["TILEROW"],id.row.to_string());
         assert_eq!(p["TILECOL"],id.col.to_string());
         assert_eq!(p["FORMAT"],"image/jpeg");
+    }
+    #[test]
+    fn neighboring_zoomout_preview_stays_bounded_and_outside_target_resolution(){
+        let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155300.,max_y:463200.};
+        let target=plan(bounds,1200,800).unwrap();
+        let ids=neighbor_preview_ids(bounds,target);
+        assert!(!ids.is_empty());
+        assert!(ids.len()<=MAX_NEIGHBOR_TILES);
+        assert!(ids.iter().all(|id|id.zoom<target.zoom && id.valid()));
+        let outward=ids.iter().any(|id|{
+            let side=span(id.zoom);
+            let left=ORIGIN_X+f64::from(id.col)*side;
+            let top=ORIGIN_Y-f64::from(id.row)*side;
+            left<bounds.min_x || left+side>bounds.max_x ||
+                top>bounds.max_y || top-side<bounds.min_y
+        });
+        assert!(outward,"preview does not cover any neighboring terrain");
+    }
+    #[test]
+    fn zoomed_out_cold_view_can_request_coarse_previews_even_under_eight_tiles(){
+        let bounds=Bounds{min_x:155000.,min_y:463000.,max_x:155100.,max_y:463100.};
+        let target=plan(bounds,512,512).unwrap();
+        assert!(target.count()<=8);
+        assert!(coarse_preview_grid(bounds,target).is_some());
     }
     #[test]
     fn a_cold_view_needs_at_most_four_coarse_preview_tiles(){
