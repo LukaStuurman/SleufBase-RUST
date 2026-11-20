@@ -1,5 +1,5 @@
 //! Actual offline PDOK WMTS pyramid. Only highest-detail JPEGs come from
-//! PDOK; lower zoom levels are composed locally when the user zooms out.
+//! PDOK; lower display zoom levels are composed from those full-detail files.
 //! The small bundled overview and legacy photo caches remain as fallbacks.
 //! Only georeferenced photos around the camera enter GPU memory.
 use super::*;
@@ -29,6 +29,8 @@ pub(super) struct State {
     decoding:HashSet<cache::TileId>,
     decoder:Option<SyncSender<cache::TileId>>,
     decoded:Option<Receiver<Decoded>>,
+    overview_restore_started:bool,
+    overview_restore:Option<Receiver<Result<bool,String>>>,
     active_zoom:u8,
     active_quality:u8,
     auto_enabled:bool,
@@ -46,6 +48,7 @@ impl Default for State{
         Self{
             loaded:VecDeque::new(),visible:Vec::new(),
             decoding:HashSet::new(),decoder:None,decoded:None,
+            overview_restore_started:false,overview_restore:None,
             active_zoom:cache::DEFAULT_ZOOM,active_quality:cache::DEFAULT_QUALITY,auto_enabled:false,
             configured_area:None,pending:None,cancel:None,queued:None,
             progress:Arc::new(AtomicU64::new(0)),total:0,
@@ -205,6 +208,42 @@ impl State{
             }
         }
     }
+    fn poll_restore_overviews(&mut self,ctx:&egui::Context){
+        // Existing v1.0.60 saved source JPEGs are upgraded offline, on a
+        // worker, without blocking map rendering or contacting PDOK.
+        if !self.overview_restore_started && self.pending.is_none() && self.queued.is_none(){
+            self.overview_restore_started=true;
+            let (tx,rx)=mpsc::sync_channel(1);
+            let repaint=ctx.clone();
+            match std::thread::Builder::new()
+                .name("sleufbase-local-zoom-pyramid".into())
+                .spawn(move||{
+                    let result=cache::restore_missing_overviews(&AtomicBool::new(false));
+                    let _=tx.send(result);
+                    repaint.request_repaint();
+                }){
+                Ok(_)=>self.overview_restore=Some(rx),
+                Err(error)=>self.notice=Some(format!("Offline zoomoverzichten herstellen: {error}")),
+            }
+        }
+        let done=self.overview_restore.as_ref().and_then(|rx|match rx.try_recv(){
+            Ok(result)=>Some(result),
+            Err(TryRecvError::Disconnected)=>Some(Err("Offline zoomoverzichtworker gestopt".into())),
+            Err(TryRecvError::Empty)=>None,
+        });
+        if let Some(result)=done{
+            self.overview_restore=None;
+            match result{
+                Ok(true)=>{
+                    self.loaded.clear();
+                    self.visible.clear();
+                    ctx.request_repaint();
+                },
+                Ok(false)=>{},
+                Err(error)=>self.notice=Some(format!("Offline zoomoverzichten herstellen: {error}")),
+            }
+        }
+    }
     fn requested_tiles(&self,ctx:&egui::Context,view:Bounds)->Vec<cache::TileId>{
         let width=view.max_x-view.min_x;
         let height=view.max_y-view.min_y;
@@ -223,8 +262,9 @@ impl State{
         let highest=(0..=target).rev()
             .find(|z|cache::grid(view,*z).is_some_and(|g|g.count()<=MAX_LEVEL_TILES));
         let Some(highest)=highest else{return Vec::new();};
-        // Locally downsampled PNG tiles cover zoom-out without network
-        // requests. Also recognize saved tiles at the *edge* of the viewport:
+        // Locally downsampled display PNGs always derive from the sharpest
+        // saved level, without additional WMTS downloads. Recognize tiles
+        // at the edge of the viewport too:
         // the centre can fall outside a small downloaded offline area.
         let root=cache::root();
         let available=(0..=highest).rev().find(|&level|
@@ -311,6 +351,7 @@ impl State{
             self.configured_area=area;
             if auto_enabled {self.next_check=Instant::now();}
         }
+        self.poll_restore_overviews(ctx);
         self.poll_download(ctx);
         self.poll_visible(ctx,view);
         if self.pending.is_some(){
