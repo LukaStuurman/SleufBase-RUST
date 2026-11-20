@@ -1,17 +1,15 @@
-# SleufBase Rust v1.0.49 — PDOK-luchtfoto sneller zichtbaar tijdens zoomen en verschuiven
+# SleufBase Rust v1.0.50 — PDOK WMTS blijft doorladen zonder de kaart te bewegen
 
-## Verbeteringen aan de interactieve luchtfotokaart
+## Geen stilstaande scherpe beelden en minder witte blokken
 
-- **Sneller eerste beeld:** bij een koud kaartgebied mogen maximaal vier grovere WMTS-tegels worden opgehaald als tijdelijke achtergrond, naast de scherpe tegels. Daardoor hoeft de kaart niet op alle scherpe tegels te wachten voordat er überhaupt een luchtfoto zichtbaar wordt.
-- **Geen blokkerende grove fase:** de grovere tegels en de detailtegels worden afgewisseld binnen de bestaande limiet van vier gelijktijdige PDOK-verzoeken. De gedetailleerde beelden blijven doorladen.
-- **Minder witte vlakken:** al gecachete tegels van meerdere zoomniveaus vullen ontbrekende delen in. Het eerdere kaartbeeld blijft behouden waar het geografisch nog aansluit.
-- **Scherpte behouden:** de gedownloade detailtegels worden over voorlopige beelden gelegd. Bij het verschijnen van een grove tegel worden de reeds aanwezige scherpe tegels niet overschreven.
-- **Kleinere downloads:** de WMTS-luchtfoto wordt als JPEG aangevraagd in plaats van PNG. Eerder opgeslagen JPEG- en PNG-tegels blijven leesbaar.
-- **Robuuster laden:** een fout bij een optionele grove previewtegel stopt het ophalen van de scherpe kaart niet. De bestaande WMS-terugval blijft beschikbaar als WMTS niet werkt.
-- **Gerichte gedeeltelijke beeldupdates:** alleen het veranderde beeldgebied wordt opnieuw opgebouwd.
+- **Voortdurend scherpere tegels tonen:** iedere binnengekomen PDOK WMTS-tegel wordt direct als deelupdate aangeboden. De eerdere beperking van 2 tot 5 tussentijdse beelden is verwijderd.
+- **Geen verloren tegelupdates:** de achtergrondwerker bewaart alle nog niet getoonde pixelrechthoeken tot de gebruikersinterface ze heeft verwerkt. De vorige grens van 16 patches kon reeds gedownloade tegels laten verdwijnen.
+- **Automatisch herstellen zonder beweging:** als een kaartaanvraag mislukt, probeert SleufBase het opnieuw terwijl de kaart stilstaat. Opeenvolgende fouten krijgen een oplopende wachttijd, zodat de PDOK-dienst niet onnodig wordt belast.
+- **Meer resultaat bij individuele netwerkfouten:** als één detailtegel mislukt, kunnen de overige tegels uit dezelfde aanvraag nog worden ontvangen en op de kaart verschijnen, voordat de bestaande WMS-terugval wordt gebruikt.
+- **Behoud van eerdere versnellingen:** JPEG-tegels, grovere voorbeeldtegels, geheugencache, schijfcache, RD-positionering en gedeeltelijke GPU-textuurupdates blijven behouden.
 
-De DXF-sjabloonexport blijft ongewijzigd en behoudt de bestaande WMS-kaartuitsnede. Bij een volledig nieuw gebied blijft enige netwerkvertraging mogelijk; de werkelijke snelheidswinst is nog niet op een Windows-werkplek gemeten.
+Een volledig onbekend gebied kan nog kort wit zijn voordat de eerste netwerkbeelden beschikbaar zijn. De werkelijke snelheidswinst en het gedrag op jouw Windows-computer zijn niet in een praktijksessie gemeten.
 
-## Bouw en validatie
+## Validatie en release
 
-Deze versie wordt op verzoek **zonder geautomatiseerde tests en zonder Clippy** gebouwd. De noodzakelijke Windows-releasecompilatie, portable ZIP, installer, bestandsintegriteitscontrole en checksums worden wel uitgevoerd. De wijzigingen zijn daarom nog niet functioneel getest.
+Op verzoek worden de geautomatiseerde tests en Clippy net als bij de vorige release overgeslagen. Er zijn wel extra regressietests aan de broncode toegevoegd voor een wachtrij met meer dan 16 patches en automatisch opnieuw proberen na een mislukte aanvraag. De Windows-build, portable ZIP, installatieprogramma, pakketcontroles en checksums worden door de releaseworkflow uitgevoerd.
