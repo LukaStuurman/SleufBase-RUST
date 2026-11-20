@@ -10,7 +10,7 @@ use image::{DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque}, fs, io::{Cursor, Write}, path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, OnceLock},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 const BASE: &str = "https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0";
@@ -24,7 +24,6 @@ const MAX_ZOOM: u8 = 19;
 const MAX_VIEW_TILES: usize = 256;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
-const PREVIEW_INTERVAL: Duration = Duration::from_millis(110);
 const MAX_MEMORY_TILES: usize = 192;
 const MAX_DISK_TILES: usize = 4096;
 const MAX_DISK_BYTES: u64 = 512 * 1024 * 1024;
@@ -339,6 +338,8 @@ impl ViewportRenderer {
             // Otherwise a cancelled or failed render may leave workers blocked
             // forever on a full bounded channel.
             let result=(|| -> Result<(),String> {
+                let mut failed_detail=0usize;
+                let mut last_detail_error=String::new();
                 for _ in 0..ids.len(){
                     let (id,result)=loop {
                         input::check(cancel)?;
@@ -353,11 +354,19 @@ impl ViewportRenderer {
                         // A coarse preview is optional. A transient PDOK
                         // error must not throw away successful detailed tiles.
                         Err(_) if id.zoom<detail_zoom=>continue,
-                        Err(error)=>return Err(error),
+                        Err(error)=>{
+                            // Preserve successful detail from other workers even
+                            // if one PDOK tile times out or returns an error.
+                            failed_detail+=1;
+                            last_detail_error=error;
+                            continue;
+                        },
                     };
                     on_tile(id,tile,modified,stale)?;
                 }
-                Ok(())
+                if failed_detail>0 {
+                    Err(format!("{failed_detail} PDOK-detailtegels mislukt: {last_detail_error}"))
+                } else {Ok(())}
             })();
             drop(rx);
             result
@@ -510,8 +519,6 @@ impl ViewportRenderer {
         }).unwrap_or(0.);
         let mut rgba=vec![255u8;width as usize*height as usize*4];
         let mut preview_source=previous_coverage>0.;
-        let mut previews=0usize;
-        let mut last_preview=Instant::now()-PREVIEW_INTERVAL;
         let mut stale=false;
         let mut parent_layers:Vec<(u8,HashMap<TileId,Arc<RgbaImage>>)>=Vec::new();
         let mut coarse_missing=Vec::new();
@@ -556,8 +563,6 @@ impl ViewportRenderer {
         if preview_source {
             progress(Progress{bounds,width,height,rgba:&rgba,
                 completed,total,stale_cache:false,changed_region:None})?;
-            previews=1;
-            last_preview=Instant::now();
         }
 
         // Highest-detail tiles always start immediately and are prioritized
@@ -584,12 +589,9 @@ impl ViewportRenderer {
             for _ in 0..3{if let Some(id)=details.next(){jobs.push(id);}}
         }
         jobs.extend(details);
-        let mut dirty:Option<[u32;4]>=None;
-        let preview_budget=if u64::from(width)*u64::from(height)>6_000_000{
-            2usize
-        }else if u64::from(width)*u64::from(height)>2_000_000{
-            3usize
-        }else{5usize};
+        // UI coalesces updates during 30 ms repaints. Publish each completed
+        // tile immediately; never freeze sharper imagery after a preview cap.
+        let mut has_frame=preview_source;
         Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
             stale|=is_stale;
             let region=Self::tile_region(bounds,width,height,id);
@@ -616,23 +618,12 @@ impl ViewportRenderer {
             // Retain both coarse and sharp downloads through interrupted pans.
             self.remember(id,when,tile);
             if region[0]<region[2] && region[1]<region[3] {
-                dirty=Some(match dirty {
-                    Some(old)=>[old[0].min(region[0]),old[1].min(region[1]),
-                        old[2].max(region[2]),old[3].max(region[3])],
-                    None=>region,
-                });
-            }
-            if completed<total && previews<preview_budget
-                && (previews==0 || last_preview.elapsed()>=PREVIEW_INTERVAL)
-            {
-                // The first frame always contains the full map. Every later
-                // frame may upload just the union of touched tile rectangles.
-                let changed_region=if previews==0 {None} else {dirty.take()};
+                // Publish even if this was the last sharp tile and an optional
+                // coarse download has not completed yet.
+                let changed_region=if has_frame {Some(region)} else {None};
                 progress(Progress{bounds,width,height,rgba:&rgba,
                     completed,total,stale_cache:stale,changed_region})?;
-                dirty=None;
-                previews+=1;
-                last_preview=Instant::now();
+                has_frame=true;
             }
             Ok(())
         })?;
