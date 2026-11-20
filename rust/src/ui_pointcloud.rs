@@ -131,6 +131,8 @@ pub(super) struct State {
     catalog_error: Option<String>,
     remembered_generation: Option<u64>,
     pending_catalog: Option<PendingCatalog>,
+    delete_confirmation: Option<Vec<String>>,
+    deletion: Option<DeleteJob>,
     titles: HashMap<String, String>,
     selection: Selection,
     search: String,
@@ -144,7 +146,7 @@ pub(super) struct State {
     status: String,
 }
 impl State {
-    pub fn busy(&self) -> bool { self.worker.is_some() || self.editor.is_some() }
+    pub fn busy(&self) -> bool { self.worker.is_some() || self.editor.is_some() || self.deletion.is_some() }
     pub fn importing(&self) -> bool { self.worker.is_some() }
     pub fn reset(&mut self) {
         // The catalog and overview belong to the application, not one project.
@@ -168,6 +170,7 @@ impl State {
 }
 struct ImportForm { path: PathBuf, title: String, crs: CloudCrs }
 struct PendingCatalog { source: PointCloudSource, expected: Option<PointCloudSource>, edit: bool }
+struct DeleteJob { rx: Receiver<Vec<(String, Result<(), String>)>> }
 enum ImportEvent { Progress(String), Done(Result<PointCloudSource, String>) }
 struct ImportWorker {
     rx: Receiver<ImportEvent>, cancel: Arc<AtomicBool>,
@@ -276,7 +279,9 @@ impl SleufBaseApp {
             let result = catalog::remember_if_missing(source).and_then(|()| catalog::get(&source.id));
             match result {
                 Ok(Some(saved)) => self.pointcloud_ui.remember_memory(saved),
-                Ok(None) => self.pointcloud_ui.catalog_error = Some("Een bron kon niet in het puntenwolkoverzicht worden teruggelezen.".into()),
+                // A scan explicitly deleted from the global list stays deleted
+                // even when an older saved project still references its ID.
+                Ok(None) => {},
                 Err(error) => self.pointcloud_ui.catalog_error = Some(error),
             }
         }
@@ -410,6 +415,45 @@ impl SleufBaseApp {
                 "Bewerken afgesloten. De scan en meetobjecten blijven hier bewaard. Kies Inladen om de proefsleuf te maken of bij te werken.".into()
             } else { "De editor is gestopt. Alle bevestigde wijzigingen blijven in het puntenwolkoverzicht bewaard.".into() };
         }
+        let finished_deletion = self.pointcloud_ui.deletion.as_ref().and_then(|job|
+            match job.rx.try_recv() {
+                Ok(result)=>Some(result),
+                Err(TryRecvError::Disconnected)=>Some(vec![(String::new(),
+                    Err("Puntenwolkverwijdering is onverwacht gestopt.".into()))]),
+                Err(TryRecvError::Empty)=>None,
+            });
+        if let Some(results)=finished_deletion {
+            self.pointcloud_ui.deletion=None;
+            let mut removed=HashSet::new();
+            let mut errors=Vec::new();
+            for (id,result) in results {
+                if !id.is_empty() && catalog::get(&id).ok().flatten().is_none() {
+                    removed.insert(id);
+                }
+                if let Err(error)=result {errors.push(error);}
+            }
+            if !removed.is_empty() {
+                self.point_clouds.retain(|source|!removed.contains(&source.id));
+                self.sync_pointcloud_datasets();
+                self.pointcloud_ui.selection.ids.retain(|id|!removed.contains(id));
+                self.pointcloud_ui.selection.reconcile();
+                self.pointcloud_ui.titles.retain(|id,_|!removed.contains(id));
+                self.dirty=true;
+            }
+            match catalog::load() {
+                Ok(catalog) => {
+                    self.pointcloud_ui.catalog=Some(catalog);
+                    self.pointcloud_ui.catalog_error=None;
+                },
+                Err(error) => errors.push(error),
+            }
+            self.pointcloud_ui.status = if errors.is_empty() {
+                format!("{} puntenwolk(en) verwijderd uit de lijst en het huidige project. Originele LAS/LAZ-bestanden zijn behouden.",removed.len())
+            } else {
+                format!("{} puntenwolk(en) uit de lijst verwijderd; {} fout(en): {}",
+                    removed.len(),errors.len(),errors.join("; "))
+            };
+        }
         let mut done = None;
         if let Some(worker) = &self.pointcloud_ui.worker {
             loop { match worker.rx.try_recv() {
@@ -521,6 +565,37 @@ impl SleufBaseApp {
     fn pointcloud_task_allowed(&self) -> bool {
         !self.pointcloud_ui.busy() && !self.project_sources_owned() && self.file_intent.is_none()
             && self.export_intent.is_none() && self.template_job.is_none() && self.trench_editor.is_none()
+    }
+    /// Delete saved scan entries and their disposable Potree conversions on a
+    /// worker, never on the egui render thread. Original LAS/LAZ files remain.
+    fn delete_pointcloud_selection(&mut self, ids: Vec<String>, ctx: &egui::Context) {
+        if !self.pointcloud_task_allowed() || !self.pointcloud_ui.queue.is_empty()
+            || self.pointcloud_ui.ortho.is_some() || self.pointcloud_ui.pending_catalog.is_some() {
+            self.pointcloud_ui.status = "Rond eerst de lopende puntenwolktaak af voordat je scans verwijdert.".into();
+            return;
+        }
+        let sources = ids.iter().filter_map(|id|self.pointcloud_ui.source(id).cloned())
+            .collect::<Vec<_>>();
+        if sources.len()!=ids.len() || sources.is_empty() {
+            self.pointcloud_ui.status = "De selectie is gewijzigd. Vernieuw het overzicht en probeer opnieuw.".into();
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        match std::thread::Builder::new().name("sleufbase-pointcloud-delete".into()).spawn(move||{
+            let results = sources.into_iter().map(|source|{
+                let result = catalog::remove_if_current(&source);
+                (source.id,result)
+            }).collect();
+            let _ = tx.send(results);
+            repaint.request_repaint();
+        }) {
+            Ok(_) => {
+                self.pointcloud_ui.deletion = Some(DeleteJob { rx });
+                self.pointcloud_ui.status = "Geselecteerde puntenwolken worden verwijderd. De originele LAS/LAZ-bestanden blijven behouden.".into();
+            }
+            Err(error) => self.pointcloud_ui.status = format!("Puntenwolkverwijdering starten mislukt: {error}"),
+        }
     }
     fn pointcloud_unavailable_message(&self) -> &'static str {
         if self.trench_editor.is_some() {
@@ -767,6 +842,11 @@ impl SleufBaseApp {
                     if cloud_action_button(ui, "LAS/LAZ toevoegen…", can_enqueue, true).clicked() {
                         action = Some(("choose", String::new()));
                     }
+                    if ui.add_enabled(enabled && !state.selection.ids.is_empty()
+                        && state.queue.is_empty() && state.ortho.is_none(),
+                        egui::Button::new(format!("Verwijder selectie ({})", state.selection.ids.len())))
+                        .on_hover_text("Verwijdert de gekozen scans uit het overzicht en hun lokale 3D-weergave. Originele LAS/LAZ-bestanden blijven bestaan.")
+                        .clicked() { action = Some(("delete-request", String::new())); }
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Zoek scans…")
@@ -818,6 +898,8 @@ impl SleufBaseApp {
                             }
                         }
                     });
+                } else if state.deletion.is_some() {
+                    ui.horizontal(|ui|{ui.spinner();ui.small("Puntenwolken verwijderen…");});
                 } else if state.editor.is_some() {
                     ui.small("De editor staat open. Sluit hem om een scan in te laden of brongegevens te wijzigen.");
                 } else if self.trench_editor.is_some() {
@@ -838,8 +920,29 @@ impl SleufBaseApp {
                     } else { "Pas de zoektekst of het projectfilter aan." });
                 } else { show_source_table(ui, &rows, &mut state, enabled, &mut action); }
             }));
+        if let Some(ids)=state.delete_confirmation.as_ref() {
+            let loaded_count=ids.iter().filter(|id|loaded.contains(*id)).count();
+            egui::Window::new("Puntenwolken verwijderen")
+                .id(egui::Id::new("confirm-pointcloud-delete"))
+                .collapsible(false).resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx,|ui|{
+                    ui.strong(format!("{} geselecteerde puntenwolk(en) verwijderen?",ids.len()));
+                    ui.label("De opgeslagen meetobjecten in het overzicht en de lokale Potree-weergave worden verwijderd. De originele .las/.laz-bronbestanden blijven op schijf.");
+                    if loaded_count>0 {
+                        ui.label(format!("{loaded_count} scan(s) zijn ook in dit project ingeladen. Deze bronobjecten worden ontkoppeld; bestaande proefsleuven en hun eigen geometrie blijven behouden."));
+                    }
+                    ui.horizontal(|ui|{
+                        if ui.button("Annuleren").clicked(){action=Some(("delete-cancel",String::new()));}
+                        if ui.add_enabled(enabled && state.queue.is_empty() && state.ortho.is_none(),
+                            egui::Button::new("Ja, verwijderen")).clicked(){
+                            action=Some(("delete-confirm",String::new()));
+                        }
+                    });
+                });
+        }
         state.open = open;
-        if !open { state.map.pause(); }
+        if !open { state.map.pause(); state.delete_confirmation=None; }
         self.pointcloud_ui = state;
         if let Some((id, title, crs)) = details {
             if !self.save_pointcloud_details(&id, title, crs) { action = None; }
@@ -870,6 +973,18 @@ impl SleufBaseApp {
                             Ok(None) => self.pointcloud_ui.status = "Er is nog geen bewaarde versie beschikbaar. Kies Opnieuw bewaren.".into(),
                             Err(error) => self.pointcloud_ui.status = error,
                         }
+                    }
+                }
+                "delete-request" => {
+                    let ids=if id.is_empty() {
+                        self.pointcloud_ui.selection.ids.iter().cloned().collect::<Vec<_>>()
+                    }else{vec![id]};
+                    if !ids.is_empty(){self.pointcloud_ui.delete_confirmation=Some(ids);}
+                }
+                "delete-cancel" => self.pointcloud_ui.delete_confirmation=None,
+                "delete-confirm" => {
+                    if let Some(ids)=self.pointcloud_ui.delete_confirmation.take(){
+                        self.delete_pointcloud_selection(ids,ctx);
                     }
                 }
                 "edit" => self.open_pointcloud_editor(&id),
@@ -1234,6 +1349,12 @@ fn show_source_details(ui: &mut egui::Ui, source: &PointCloudSource, title: &mut
                     .on_hover_text("Kies zelf de sleufbreedte, objecten en bijwerken of kopiëren.")
                     .clicked() { *action = Some(("load-options", source.id.clone())); ui.close_menu(); }
                 if ui.add_enabled(source.crs == CloudCrs::RdNew, egui::Button::new("Op kaart tonen")).clicked() { *action = Some(("locate", source.id.clone())); ui.close_menu(); }
+                ui.separator();
+                if ui.button("Puntenwolk uit lijst verwijderen…")
+                    .on_hover_text("Verwijder deze scan en lokale 3D-weergave, maar behoud het originele LAS/LAZ-bronbestand.")
+                    .clicked(){
+                    *action=Some(("delete-request",source.id.clone()));ui.close_menu();
+                }
                 if loaded {
                     ui.separator();
                     if ui.button("Bronobjecten uit huidig project verwijderen")
