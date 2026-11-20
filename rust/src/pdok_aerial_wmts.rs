@@ -527,6 +527,9 @@ impl ViewportRenderer {
                 let ox=((x-old.bounds.min_x)*sx).floor();
                 if ox<0.||ox>=f64::from(old.width){continue;}
                 let from=(oy as usize*old.width as usize+ox as usize)*4;
+                // An interrupted preview may contain transparent pixels.
+                // Never let them erase a freshly composed cached parent tile.
+                if old.rgba[from+3]==0 {continue;}
                 let to=(row as usize*width as usize+col as usize)*4;
                 target[to..to+4].copy_from_slice(&old.rgba[from..from+4]);
             }
@@ -662,7 +665,10 @@ impl ViewportRenderer {
         // A small cold preview is requested separately, interleaved with
         // full-detail tiles, instead of blocking the detailed request queue.
         if target.zoom>=2 && (previous_coverage<0.95 || high.len()*2<total){
-            let preview=if previous_coverage<0.95 {
+            // Most of the camera is still covered by already rendered sharp
+            // pixels: prioritize missing high-res tiles over another low-res
+            // network pass. For a cold/long pan, coarse preview still starts.
+            let preview=if previous_coverage<0.45 && high.len()*2<total {
                 coarse_preview_grid(bounds,target)
             }else{None};
             // Also consider parents pre-warmed for a one/two-step zoom-out.
@@ -727,7 +733,7 @@ impl ViewportRenderer {
         // UI coalesces updates during 30 ms repaints. Publish each completed
         // tile immediately; never freeze sharper imagery after a preview cap.
         let mut has_frame=preview_source;
-        Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
+        let fetched=Self::fetch_batch(&jobs,&root,cancel,target.zoom,|id,tile,when,is_stale|{
             stale|=is_stale;
             let region=Self::tile_region(bounds,width,height,id);
             if id.zoom<target.zoom{
@@ -761,7 +767,21 @@ impl ViewportRenderer {
                 has_frame=true;
             }
             Ok(())
-        })?;
+        });
+        // A cancelled pan/zoom previously discarded every *newly rendered*
+        // sharp pixel, reverting to the last completely finished viewport.
+        // Keep the partial geographic image (including old sharp imagery
+        // and the arrived detail tiles) as the next request's seed.
+        // This runs only after scoped tile workers have stopped.
+        if fetched.is_err() || cancel.load(Ordering::Relaxed) {
+            if has_frame && u64::from(width)*u64::from(height)<=12_000_000 {
+                self.previous=Some(Raster{
+                    bounds,width,height,rgba,
+                    stale_cache:stale,
+                });
+            }
+            return Err(fetched.err().unwrap_or_else(||"Kaartaanvraag geannuleerd".into()));
+        }
         input::check(cancel)?;
         // Every incoming tile was painted into its exact RD rectangle with
         // a two-pixel halo, so the final image is already pixel-identical
