@@ -1884,7 +1884,8 @@ impl SleufBaseApp {
                 prefs.offline_aerial_auto_backup,
                 prefs.offline_aerial_detail_mb,
                 prefs.offline_aerial_zoom_level,
-                prefs.offline_aerial_area);
+                prefs.offline_aerial_area,
+                prefs.offline_aerial_quality);
         }
         self.poll_pointcloud(ctx);
         if self.pointcloud_ui.busy() && ctx.input(|i|i.viewport().close_requested()) {
