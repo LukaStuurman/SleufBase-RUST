@@ -1,5 +1,5 @@
 #define MyAppName "SleufBase Rust"
-#define MyAppVersion "1.0.54"
+#define MyAppVersion "1.0.55"
 #define MyAppExeName "sleufbase-rust.exe"
 
 [Setup]
@@ -24,7 +24,7 @@ WizardResizable=no
 CloseApplications=yes
 RestartApplications=yes
 UsePreviousAppDir=yes
-VersionInfoVersion=1.0.54.0
+VersionInfoVersion=1.0.55.0
 VersionInfoDescription=SleufBase Rust installer
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
