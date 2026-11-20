@@ -133,7 +133,6 @@ impl Source {
 #[derive(Default)]
 pub struct Renderer {
     fonts: Option<(Option<Paths>, Fonts)>,
-    cadastral: Option<crate::cadastral_tiles::Client>,
 }
 /// A slot may supply either an actual GeoTIFF or its native virtual RD raster.
 /// Both use the same affine sampler, without temporary TIFF files or copies.
@@ -149,7 +148,6 @@ fn background(
     source: &Background,
     layout: &Layout,
     cancel: &AtomicBool,
-    cadastral: &mut Option<crate::cadastral_tiles::Client>,
 ) -> Result<RgbaImage, String> {
     match source {
         Background::Osm | Background::OsmCadastral => {
@@ -162,18 +160,15 @@ fn background(
             }
             let mut image = RgbaImage::from_raw(map.width, map.height, map.rgba)
                 .ok_or_else(|| "Ongeldige OSM-pixels".to_owned())?;
-            if matches!(source, Background::OsmCadastral) {
-                crate::pdok_wms::add_cadastral_overlay(&mut image, layout.bounds, cancel)?;
-            }
+            // WFS vector cadastral geometry is painted after the basemap.
             Ok(image)
         }
         Background::Cadastral => {
-            if cadastral.is_none() {
-                *cadastral = Some(crate::cadastral_tiles::Client::new(
-                    crate::project::app_data_directory().join("cadastral-tiles"),
-                )?);
-            }
-            cadastral.as_ref().unwrap().request(layout.bounds, layout.map_size, cancel)
+            // Pure Kadaster is a blank map canvas + genuine WFS vector paths.
+            let mut image=crate::raster_rotation::allocate(
+                layout.map_size[0],layout.map_size[1])?;
+            for pixel in image.pixels_mut(){*pixel=Rgba([255;4]);}
+            Ok(image)
         }
         Background::Solid { color } => {
             let mut image =
@@ -183,12 +178,8 @@ fn background(
             }
             Ok(image)
         }
-        Background::PdokCadastral => crate::pdok_wms::request_tiled_for(
-            crate::pdok_wms::Source::AerialCadastral,
-            layout.bounds,
-            layout.map_size[0],
-            layout.map_size[1],
-            cancel,
+        Background::PdokCadastral => crate::pdok_wms::request_tiled(
+            layout.bounds,layout.map_size[0],layout.map_size[1],cancel,
         ),
         Background::Pdok => crate::pdok_wms::request_tiled(
             layout.bounds,
@@ -216,6 +207,52 @@ fn background(
             Ok(image)
         }
     }
+}
+/// Cadastral boundaries, buildings and parcel labels are always fetched as
+/// real WFS features. Rendering paths into the export bitmap is not a
+/// replacement for the old raster Kadastralekaart service: the source data
+/// remain geometries in RD and are drawn at the final export resolution.
+fn paint_vector_cadastre(
+    image:&mut RgbaImage,layout:&Layout,background:&Background,
+    fonts:&mut Fonts,cancel:&AtomicBool,
+)->Result<(),String>{
+    if !matches!(background,Background::Cadastral|Background::OsmCadastral|
+        Background::PdokCadastral) {return Ok(());}
+    let width=layout.bounds.max_x-layout.bounds.min_x;
+    let height=layout.bounds.max_y-layout.bounds.min_y;
+    if width>3500. || height>3500.{
+        if matches!(background,Background::Cadastral){
+            return Err("Kadastrale WFS-kaartuitsnede is groter dan 3,5 km; gebruik een kleinere schaal of uitsnede".into());
+        }
+        // Country-scale hybrid backgrounds show imagery, never the old
+        // nationwide raster cadastre; close-up exports retain full linework.
+        return Ok(());
+    }
+    let layer=if width<=950. && height<=950.{
+        crate::cadastral::fetch_view_cadastral(layout.bounds,cancel)?
+    }else{
+        crate::cadastral::fetch_template_cadastral(layout.bounds,false,cancel)?
+    };
+    let mut budget=200_000_000u64;
+    for group in &layer.linework{
+        for path in &group.paths{
+            crate::input::check(cancel)?;
+            if path.len()<2{continue;}
+            let points=path.iter().map(|&(x,y)|layout.screen([x,y])).collect::<Vec<_>>();
+            crate::map_canvas::line(image,&points,2,[52,59,73,255],cancel,&mut budget)?;
+        }
+    }
+    let labels=if layer.labels.is_empty(){
+        crate::cadastral::fetch_template_cadastral(layout.bounds,true,cancel)?.labels
+    }else{layer.labels};
+    for label in labels{
+        crate::input::check(cancel)?;
+        if label.text.trim().is_empty(){continue;}
+        let pos=layout.screen([label.position.0,label.position.1]);
+        fonts.draw(image,&label.text,pos,11.,false,"mm",
+            [39,48,63,255],None,0.,cancel)?;
+    }
+    Ok(())
 }
 fn overlays(
     image: &mut RgbaImage,
@@ -463,7 +500,8 @@ impl Renderer {
             &mut |t, s, b| fonts.measure(t, s, b),
             cancel,
         )?;
-        let mut map = background(&source.background, &layout, cancel, &mut self.cadastral)?;
+        let mut map = background(&source.background, &layout, cancel)?;
+        paint_vector_cadastre(&mut map,&layout,&source.background,fonts,cancel)?;
         if let Some(tiff) = tiff.as_ref() {
             let (image, transform) = match tiff {
                 Raster::Tiff(tiff) => {
