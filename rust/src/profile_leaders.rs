@@ -5,6 +5,9 @@ use crate::{
     template_geometry::{self, Entity, Paint, Shape},
 };
 use std::sync::atomic::AtomicBool;
+#[path="profile_leader_layout.rs"]
+mod readable_layout;
+
 pub const BLOCK: &str = "SAL-VERWIJZING_LEIDING_BOVENKANT_INFO_DIEPTE-SOD";
 pub const LAYER: &str = "X-XX-AL-VERWIJZING-SD";
 fn normalized_number(value: f64) -> Result<String, String> {
@@ -180,19 +183,19 @@ pub fn compose(
         options.diameter_prefix,
         cancel,
     )?;
-    let placed = solve(
-        &entries,
-        options.marker_scale,
-        Options {
-            hard: &obstacles.hard,
-            soft: &obstacles.soft,
-            text: &obstacles.text,
-            min_x: Some(drawing.layout.start_x),
-            max_x: Some(drawing.layout.end_x),
-            avoid_collisions: options.avoid_collisions,
-        },
-        cancel,
-    )?;
+    let layout_options = Options {
+        hard: &obstacles.hard,
+        soft: &obstacles.soft,
+        text: &obstacles.text,
+        min_x: Some(drawing.layout.start_x),
+        max_x: Some(drawing.layout.end_x),
+        avoid_collisions: options.avoid_collisions,
+    };
+    // The original layout remains the initial, validated solution. Only
+    // when the user's collision-avoidance setting is enabled do we refine it
+    // using actual line-line intersections and text/line contact.
+    let placed = solve(&entries, options.marker_scale, layout_options, cancel)?;
+    let placed = readable_layout::improve(&entries, &layout_options, placed, cancel)?;
     append(&mut drawing.entities, &entries, &placed, cancel)?;
     Ok(Plan { entries, placed })
 }
@@ -211,6 +214,7 @@ pub struct Entry {
     pub description: String,
     pub depth_text: String,
 }
+#[derive(Clone, Copy)]
 pub struct Options<'a> {
     pub hard: &'a [Box4],
     pub soft: &'a [Box4],

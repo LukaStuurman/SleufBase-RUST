@@ -386,6 +386,10 @@ De achtergrond en kwaliteit van de export staan in dit venster. **Kaartkwaliteit
 
 De kaartresolutie en kaartschaal horen bij de locatiekaart. De **profielschaal** is een afzonderlijke instelling. Een hogere DPI geeft meer beeldpunten; een andere schaal verandert het afgebeelde gebied of de verhouding van het profiel.
 
+### Leesbare labels en leaderlijnen
+
+Schakel bij **Kaarten en profielen** de optie **Labels en leaderlijnen ontwarren** in. SleufBase plaatst de kabel- en leidingteksten automatisch rondom hun eigen meetpunt, met een zo kort mogelijke leaderlijn. De automatische indeling houdt rekening met de werkelijke kruisingen van leaderlijnen, de ruimte voor de hele tekst en bestaande profielgegevens. Eerst zoekt het programma een vrije plek dichtbij de kabel of leiding; bij drukte verschuift de tekst beperkt naar een andere positie of hoogte. De meetpunten, leidingen en maatgegevens blijven onveranderd. Bij bijzonder volle profielen kan niet iedere botsing worden voorkomen; controleer daarom altijd de definitieve tekening in CAD.
+
 ### Bronnen en sleuven controleren
 
 Onder **Proefsleuven kiezen** bepaalt **Meenemen** welke sleuven worden geëxporteerd. De oranje regelselectie is bedoeld voor bewerkingen aan volgorde, nummering en schaal. Een geselecteerde regel met Meenemen uit komt dus niet in de tekening.
